@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
-#include <exec/types.h>
-#include <exec/resident.h>
-#include <exec/io.h>
-#include <exec/devices.h>
-#include <exec/errors.h>
-#include <dos/dosextens.h>
 
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#else
 #include <proto/exec.h>
+#endif
 
 #include "settings.h"
 #include <device.h>
 #include <devices/sana2.h>
-
 #include <debug.h>
 
 

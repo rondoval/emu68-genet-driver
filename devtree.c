@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
-#include <exec/types.h>
-#include <proto/devicetree.h>
+
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#include <clib/devicetree_protos.h>
+#else
 #include <proto/exec.h>
+#include <proto/devicetree.h>
+#endif
+
+#include <exec/types.h>
 
 #include <debug.h>
 #include <device.h>

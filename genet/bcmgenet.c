@@ -17,8 +17,14 @@
  */
 
 #define __NOLIBBASE__
-#include <exec/types.h>
+
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#else
 #include <proto/exec.h>
+#endif
+
+#include <exec/types.h>
 
 #include <debug.h>
 #include <phy/phy.h>

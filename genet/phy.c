@@ -8,7 +8,12 @@
  * Based loosely off of Linux's PHY Lib
  */
 #define __NOLIBBASE__
+
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#else
 #include <proto/exec.h>
+#endif
 
 #include <debug.h>
 #include <phy/phy.h>

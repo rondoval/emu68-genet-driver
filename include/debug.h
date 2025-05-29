@@ -5,8 +5,14 @@
 #ifdef DEBUG
 #define __NOLIBBASE__
 #include <stdarg.h>
+
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#include <clib/dos_protos.h>
+#else
 #include <proto/exec.h>
 #include <proto/dos.h>
+#endif
 
 #define Kprintf PrintPistorm
 
