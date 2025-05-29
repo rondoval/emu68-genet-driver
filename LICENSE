@@ -1,0 +1,23 @@
+# License
+
+This project contains files originating from both GPL-2.0-or-later and MPL-2.0 sources, with modifications. Please refer to the SPDX headers in individual source files for specific licensing information.
+
+Upstream projects:
+- [Emu68-tools](https://github.com/michalsc/Emu68-tools)
+- [u-boot](https://github.com/u-boot/u-boot)
+
+You may use, modify, and distribute this project under the terms of either:
+
+- The GNU General Public License, version 2.0 or (at your option) any later version (GPL-2.0-or-later), or
+- The Mozilla Public License, version 2.0 (MPL-2.0),
+
+subject to the compatibility and requirements of the respective licenses as they apply to each file.
+
+When redistributing or modifying this project, you must comply with the terms and conditions of all applicable licenses as indicated in the SPDX headers.
+
+For more information, see:
+
+- [GPL-2.0-or-later](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
+- [MPL-2.0](https://www.mozilla.org/MPL/2.0/)
+
+If you have questions about licensing, please consult the license texts or contact the project maintainers.
