@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
 
+#ifdef __INTELLISENSE__
+#include <clib/utility_protos.h>
+#include <clib/exec_protos.h>
+#else
 #include <proto/utility.h>
 #include <proto/exec.h>
+#endif
 
 #include <device.h>
 #include <debug.h>
@@ -129,20 +134,25 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
     // Get destination address and check if it is a multicast
     uint64_t destAddr = ((uint64_t)*(UWORD *)&packet[0] << 32) | *(ULONG *)&packet[2];
+    //TODO use genet frame attributes
     if (destAddr != 0xffffffffffffULL && (destAddr & 0x010000000000ULL))
     {
-        // struct MulticastRange *range;
-        // accept = FALSE;
-        return;
-
-        // ForeachNode(&unit->wu_MulticastRanges, range)
-        // {
-        //     if (destAddr >= range->mr_LowerBound && destAddr <= range->mr_UpperBound)
-        //     {
-        //         accept = TRUE;
-        //         break;
-        //     }
-        // }
+        BOOL accept = FALSE;
+        struct MulticastRange *multicastRanges = (struct MulticastRange *)unit->multicastRanges.mlh_Head;
+        while(multicastRanges->node.mln_Succ)
+        {
+            if (destAddr >= multicastRanges->lowerBound && destAddr <= multicastRanges->upperBound)
+            {
+                accept = TRUE;
+                break;
+            }
+            multicastRanges = (struct MulticastRange *)multicastRanges->node.mln_Succ;
+        }
+        if (!accept)
+        {
+            // Not a multicast address we accept, drop the packet
+            return;
+        }
     }
 
     unit->stats.PacketsReceived++;

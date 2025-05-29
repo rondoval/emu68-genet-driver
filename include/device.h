@@ -30,6 +30,8 @@ packet stats from HW
 type statistics
 multicasts
 error reporting S2 compliant
+hardware filter block support
+better ring buffers handling
 */
 
 struct GenetDevice;
@@ -60,6 +62,14 @@ struct Opener
 	BOOL (*CopyFromBuff)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
 };
 
+struct MulticastRange
+{
+	struct MinNode node;
+	LONG useCount; /* How many openers use this range */
+	uint64_t lowerBound; /* Inclusive */
+	uint64_t upperBound; /* Inclusive */
+};
+
 struct GenetUnit
 {
 	struct Unit unit;
@@ -77,6 +87,7 @@ struct GenetUnit
 	struct Task *task;
 	struct Sana2DeviceStats stats;
 	struct MinList openers;
+	struct MinList multicastRanges;
 	struct SignalSemaphore semaphore;
 
 	/* Device tree */
@@ -127,5 +138,8 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener);
 int SendFrame(struct GenetUnit *unit, struct IOSana2Req *io);
 void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
 void ProcessCommand(struct IOSana2Req *io);
+
+int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io);
+int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io);
 
 #endif

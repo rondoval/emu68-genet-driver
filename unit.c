@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
+
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#include <clib/dos_protos.h>
+#else
 #include <proto/exec.h>
 #include <proto/dos.h>
+#endif
+
 #include <exec/execbase.h>
 #include <exec/types.h>
 #include <stdarg.h>
@@ -61,6 +68,7 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	unit->unit.unit_OpenCnt = 1;
 	unit->unitNumber = unitNumber;
 
+	NewMinList(&unit->multicastRanges);
 	NewMinList(&unit->openers);
 	AddTail((APTR)&unit->openers, (APTR)opener);
 	InitSemaphore(&unit->semaphore);

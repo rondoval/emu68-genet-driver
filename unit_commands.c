@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
 
+#ifdef __INTELLISENSE__
+#include <clib/timer_protos.h>
+#include <clib/exec_protos.h>
+#else
+#include <proto/timer.h>
+#include <proto/exec.h>
+#endif
+
 #include <devices/sana2.h>
 #include <devices/sana2specialstats.h>
 #include <devices/newstyle.h>
-#include <proto/timer.h>
-#include <proto/exec.h>
 
 #include <device.h>
 #include <debug.h>
@@ -19,8 +25,8 @@ static const UWORD GENET_SupportedCommands[] = {
     S2_DEVICEQUERY,
     S2_GETSTATIONADDRESS,
     S2_CONFIGINTERFACE,
-    // S2_ADDMULTICASTADDRESS,
-    // S2_DELMULTICASTADDRESS,
+    S2_ADDMULTICASTADDRESS,
+    S2_DELMULTICASTADDRESS,
     S2_MULTICAST,
     S2_BROADCAST,
     // S2_TRACKTYPE,
@@ -32,16 +38,16 @@ static const UWORD GENET_SupportedCommands[] = {
     S2_READORPHAN,
     S2_ONLINE,
     S2_OFFLINE,
-    // S2_ADDMULTICASTADDRESSES,
-    // S2_DELMULTICASTADDRESSES,
+    S2_ADDMULTICASTADDRESSES,
+    S2_DELMULTICASTADDRESSES,
 
     NSCMD_DEVICEQUERY,
     0};
 
 /* Mask of events known by the driver */
-//TODO actually generate these
-#define EVENT_MASK (S2EVENT_ONLINE | S2EVENT_OFFLINE |          \
-                    S2EVENT_TX | S2EVENT_RX | S2EVENT_BUFF |    \
+// TODO actually generate these
+#define EVENT_MASK (S2EVENT_ONLINE | S2EVENT_OFFLINE |       \
+                    S2EVENT_TX | S2EVENT_RX | S2EVENT_BUFF | \
                     S2EVENT_ERROR | S2EVENT_HARDWARE | S2EVENT_SOFTWARE)
 
 /* Report events to this unit */
@@ -409,15 +415,15 @@ void ProcessCommand(struct IOSana2Req *io)
             complete = 1;
             break;
 
-            // case S2_ADDMULTICASTADDRESS: /* Fallthrough */
-            // case S2_ADDMULTICASTADDRESSES:
-            //     complete = Do_S2_ADDMULTICASTADDRESSES(io);
-            //     break;
+        case S2_ADDMULTICASTADDRESS: /* Fallthrough */
+        case S2_ADDMULTICASTADDRESSES:
+            complete = Do_S2_ADDMULTICASTADDRESSES(io);
+            break;
 
-            // case S2_DELMULTICASTADDRESS: /* Fallthrough */
-            // case S2_DELMULTICASTADDRESSES:
-            //     complete = Do_S2_DELMULTICASTADDRESSES(io);
-            //     break;
+        case S2_DELMULTICASTADDRESS: /* Fallthrough */
+        case S2_DELMULTICASTADDRESSES:
+            complete = Do_S2_DELMULTICASTADDRESSES(io);
+            break;
 
         case S2_CONFIGINTERFACE:
             complete = Do_S2_CONFIGINTERFACE(io);
