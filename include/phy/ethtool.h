@@ -9,7 +9,6 @@
  *                                scott.feldman@intel.com)
  * Portions Copyright (C) Sun Microsystems 2008
  */
-
 #ifndef _LINUX_ETHTOOL_H
 #define _LINUX_ETHTOOL_H
 
