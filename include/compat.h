@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #ifndef _COMPAT_H
 #define _COMPAT_H
 

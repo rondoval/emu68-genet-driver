@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #ifndef _GENET_DEVICE_H
 #define _GENET_DEVICE_H
 

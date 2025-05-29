@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
 #include <exec/types.h>
 #include <exec/resident.h>

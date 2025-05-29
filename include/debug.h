@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #ifndef __DEBUG_H
 #define __DEBUG_H
 
@@ -14,14 +15,6 @@
 #else
 #define KprintfH(...)
 #endif
-
-// static inline void PrintFormatted(CONST_STRPTR fmt, ...)
-// {
-// 	va_list args;
-// 	va_start(args, fmt);
-// 	VPrintf(fmt, args);
-// 	va_end(args);
-// }
 
 static void putch(UBYTE data asm("d0"), APTR dummy asm("a3"))
 {
