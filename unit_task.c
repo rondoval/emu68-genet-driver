@@ -104,13 +104,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         {
             activity = TRUE;
             struct IOSana2Req *io;
-            ObtainSemaphore(&unit->semaphore);
             // Drain command queue and process it
             while ((io = (struct IOSana2Req *)GetMsg(&unit->unit.unit_MsgPort)))
             {
                 ProcessCommand(io);
             }
-            ReleaseSemaphore(&unit->semaphore);
         }
 
         // No matter what, let's receive some packets

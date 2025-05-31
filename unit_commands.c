@@ -45,7 +45,6 @@ static const UWORD GENET_SupportedCommands[] = {
     0};
 
 /* Mask of events known by the driver */
-// TODO actually generate these
 #define EVENT_MASK (S2EVENT_ONLINE | S2EVENT_OFFLINE |       \
                     S2EVENT_TX | S2EVENT_RX | S2EVENT_BUFF | \
                     S2EVENT_ERROR | S2EVENT_HARDWARE | S2EVENT_SOFTWARE)
