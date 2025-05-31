@@ -15,7 +15,7 @@
 
 struct GenetUnit;
 
-#define CONFIG_PHY_ANEG_TIMEOUT 4000
+#define CONFIG_PHY_ANEG_TIMEOUT 6000
 
 /* MDIO registers, BCM2711 */
 #define MDIO_START_BUSY			BIT(29)
