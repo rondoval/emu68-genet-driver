@@ -34,7 +34,7 @@
  * @param mask		Bit(s) of register that must be active
  * @param set		Selects wait condition (bit set or clear)
  * @param timeout_ms	Timeout (in milliseconds)
- * Return:		0 on success, -ETIMEDOUT or -EINTR on failure
+ * Return:		0 on success, ETIMEDOUT on failure
  */
 static inline int wait_for_bit_32(APTR reg,
 								  const ULONG mask,
@@ -64,7 +64,7 @@ static inline int wait_for_bit_32(APTR reg,
 	}
 
 	// Kprintf("[genet] %s: Timeout (reg=%ld mask=0x%lx wait_set=%ld)\n", __func__, reg, mask, set);
-	return -ETIMEDOUT;
+	return ETIMEDOUT;
 }
 
 static inline void mdio_start(struct GenetUnit *unit)
@@ -347,7 +347,7 @@ static int genphy_update_link(struct phy_device *phydev)
 			{
 				Kprintf(" TIMEOUT !\n");
 				phydev->link = 0;
-				return -ETIMEDOUT;
+				return ETIMEDOUT;
 			}
 
 			if ((i++ % 10) == 0)
@@ -356,8 +356,7 @@ static int genphy_update_link(struct phy_device *phydev)
 			}
 
 			mii_reg = mdio_read(phydev, MII_BMSR);
-			// mdelay(50);	/* 50 ms */
-			delay_us(50 * 1000);
+			delay_us(50 * 1000); /* 50 ms */
 		}
 		Kprintf(" done\n");
 		phydev->link = 1;
@@ -531,9 +530,7 @@ int phy_config(struct phy_device *phydev)
 	phydev->supported &= features;
 	phydev->advertising &= features;
 
-	genphy_config_aneg(phydev);
-
-	return 0;
+	return genphy_config_aneg(phydev);
 }
 
 int phy_startup(struct phy_device *phydev)
@@ -557,10 +554,11 @@ int phy_reset(struct phy_device *phydev)
 	if (phydev->flags & PHY_FLAG_BROKEN_RESET)
 		return 0;
 
-	if (mdio_write(phydev, MII_BMCR, BMCR_RESET) < 0)
+	reg = mdio_write(phydev, MII_BMCR, BMCR_RESET);
+	if (reg < 0)
 	{
 		Kprintf("[genet] %s: PHY reset failed\n", __func__);
-		return -1;
+		return reg;
 	}
 
 	/*
@@ -576,7 +574,7 @@ int phy_reset(struct phy_device *phydev)
 		if (reg < 0)
 		{
 			Kprintf("[genet] %s: PHY status read failed\n", __func__);
-			return -1;
+			return reg;
 		}
 		delay_us(1000);
 	}
@@ -584,7 +582,7 @@ int phy_reset(struct phy_device *phydev)
 	if (reg & BMCR_RESET)
 	{
 		Kprintf("[genet] %s: PHY reset timed out\n", __func__);
-		return -1;
+		return ETIMEDOUT;
 	}
 
 	return 0;
@@ -607,7 +605,7 @@ static int get_phy_id(struct phy_device *phydev)
 	int phy_reg = mdio_read(phydev, MII_PHYSID1);
 
 	if (phy_reg < 0)
-		return -EIO;
+		return phy_reg;
 
 	phydev->phy_id = (phy_reg & 0xffff) << 16;
 
@@ -615,7 +613,7 @@ static int get_phy_id(struct phy_device *phydev)
 	phy_reg = mdio_read(phydev, MII_PHYSID2);
 
 	if (phy_reg < 0)
-		return -EIO;
+		return phy_reg;
 
 	phydev->phy_id |= (phy_reg & 0xffff);
 
@@ -652,9 +650,9 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 		if (phydev->phy_id != 0 && (phydev->phy_id & 0x1fffffff) != 0x1fffffff)
 		{
 			Kprintf("[genet] %s: PHY ID: %08lx\n", __func__, phydev->phy_id);
+			phydev->interface = interface;
 			/* Soft Reset the PHY */
 			phy_reset(phydev);
-			phydev->interface = interface;
 
 			return phydev;
 		}

@@ -214,7 +214,7 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     int result = UnitOpen(base->unit, unitNumber, flags, opener);
     io->ios2_Req.io_Unit = (struct Unit *)base->unit;
 
-    if (result == 0)
+    if (result == S2ERR_NO_ERROR)
     {
         Kprintf("[genet] %s: Unit opened successfully\n", __func__);
         base->device.dd_Library.lib_OpenCnt++;

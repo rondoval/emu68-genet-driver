@@ -4,9 +4,11 @@
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #include <clib/devicetree_protos.h>
+#include <clib/utility_protos.h>
 #else
 #include <proto/exec.h>
 #include <proto/devicetree.h>
+#include <proto/utility.h>
 #endif
 
 #include <exec/types.h>
@@ -144,27 +146,30 @@ static CONST_STRPTR GetAlias(const char *alias)
 int DevTreeParse(struct GenetUnit *unit)
 {
 	SysBase = unit->execBase;
+	struct Library *UtilityBase = unit->utilityBase;
 
 	DeviceTreeBase = OpenResource((CONST_STRPTR) "devicetree.resource");
 	if (!DeviceTreeBase)
 	{
 		Kprintf("[genet] %s: Failed to open devicetree.resource\n", __func__);
-        return -ENODEV;
+		return S2ERR_NO_RESOURCES;
 	}
 
-	CONST_STRPTR ethernet_alias = GetAlias("ethernet0"); //TODO unit number
+	char alias[16];
+	SNPrintf((STRPTR)alias, sizeof(alias), (CONST_STRPTR) "ethernet%ld", unit->unitNumber);
+	CONST_STRPTR ethernet_alias = GetAlias(alias);
 	CONST_STRPTR gpio_alias = GetAlias("gpio");
 	if (ethernet_alias == NULL || gpio_alias == NULL)
 	{
 		Kprintf("[genet] %s: Failed to get aliases from device tree\n", __func__);
-        return -ENODEV;
+		return S2ERR_NO_RESOURCES;
 	}
 
 	APTR key = DT_OpenKey(ethernet_alias);
 	if (key == NULL)
 	{
 		Kprintf("[genet] %s: Failed to open key %s\n", __func__, ethernet_alias);
-        return -ENODEV;
+		return S2ERR_NO_RESOURCES;
 	}
 
 	unit->compatible = DT_GetPropValue(DT_FindProperty(key, (CONST_STRPTR) "compatible"));
@@ -179,7 +184,7 @@ int DevTreeParse(struct GenetUnit *unit)
 	{
 		Kprintf("[genet] %s: Failed to get base address for GENET\n", __func__);
 		DT_CloseKey(key);
-        return -ENODEV;
+		return S2ERR_NO_RESOURCES;
 	}
 
 	Kprintf("[genet] %s: Device tree info\n", __func__);
@@ -198,6 +203,12 @@ int DevTreeParse(struct GenetUnit *unit)
 		unit->phyaddr = DT_GetPropertyValueULONG(phy_key, "reg", 1, FALSE);
 		Kprintf("[genet] %s: phy-addr: %lx\n", __func__, unit->phyaddr);
 	}
+	else
+	{
+		Kprintf("[genet] %s: Failed to find phy key for handle %08lx\n", __func__, phy_handle);
+		DT_CloseKey(key);
+		return S2ERR_NO_RESOURCES;
+	}
 
 	// We also need GPIO to setup MDIO bus
 	unit->gpioBase = GetBaseAddress(gpio_alias);
@@ -205,7 +216,7 @@ int DevTreeParse(struct GenetUnit *unit)
 	{
 		Kprintf("[genet] %s: Failed to get base address for GPIO\n", __func__);
 		DT_CloseKey(key);
-        return -ENODEV;
+		return S2ERR_NO_RESOURCES;
 	}
 
 	ULONG genetOffset = GetAddressTranslationOffset(unit->genetBase);
@@ -217,5 +228,5 @@ int DevTreeParse(struct GenetUnit *unit)
 
 	// We're done with the device tree
 	DT_CloseKey(key);
-    return 0;
+	return 0;
 }

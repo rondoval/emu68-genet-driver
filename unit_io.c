@@ -39,13 +39,27 @@ int SendFrame(struct GenetUnit *unit, struct IOSana2Req *io)
         *(UWORD *)&ptr[12] = io->ios2_PacketType;
     }
 
-    if (io->ios2_DataLength != 0 && opener->CopyFromBuff)
+    if (io->ios2_DataLength != 0 && opener->CopyFromBuff && opener->CopyFromBuff(ptr + ETH_HLEN, io->ios2_Data, io->ios2_DataLength) == 0)
     {
-        opener->CopyFromBuff(ptr + ETH_HLEN, io->ios2_Data, io->ios2_DataLength);
+        KprintfH("[genet] %s: Failed to copy packet data from buffer\n", __func__);
+        io->ios2_WireError = S2WERR_BUFF_ERROR;
+        io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
+        ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
+        return COMMAND_PROCESSED;
     }
-    bcmgenet_gmac_eth_send(unit, ptr, length);
-    unit->stats.PacketsSent++;
-    return 1;
+
+    int result = bcmgenet_gmac_eth_send(unit, ptr, length);
+    if (result == S2ERR_NO_ERROR)
+    {
+        unit->stats.PacketsSent++;
+    }
+    else
+    {
+        io->ios2_WireError = (result == S2ERR_TX_FAILURE) ? S2WERR_TOO_MANY_RETRIES : S2WERR_GENERIC_ERROR;
+        io->ios2_Req.io_Error = result;
+        ReportEvents(unit, S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
+    }
+    return COMMAND_PROCESSED;
 }
 
 static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packetLength)
@@ -89,6 +103,8 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     /*
         If RAW packet is requested, copy everything, otherwise copy only contents of
         the frame without ethernet header
+        Unfortunately, forcing RAW packet on Roadshow does not work, so we have to copy
+        if the flag is not set.
     */
     if (!(io->ios2_Req.io_Flags & SANA2IOF_RAW))
     {
@@ -114,7 +130,7 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
             KprintfH("[genet] %s: Failed to copy packet data to buffer\n", __func__);
             io->ios2_WireError = S2WERR_BUFF_ERROR;
             io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
-            // TODO report error event
+            ReportEvents(unit, S2EVENT_BUFF | S2EVENT_RX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
         }
 
         /* Set number of bytes received */
@@ -134,12 +150,12 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
     // Get destination address and check if it is a multicast
     uint64_t destAddr = ((uint64_t)*(UWORD *)&packet[0] << 32) | *(ULONG *)&packet[2];
-    //TODO use genet frame attributes
+    // TODO use genet frame attributes, also try to offload this to HFB
     if (destAddr != 0xffffffffffffULL && (destAddr & 0x010000000000ULL))
     {
         BOOL accept = FALSE;
         struct MulticastRange *multicastRanges = (struct MulticastRange *)unit->multicastRanges.mlh_Head;
-        while(multicastRanges->node.mln_Succ)
+        while (multicastRanges->node.mln_Succ)
         {
             if (destAddr >= multicastRanges->lowerBound && destAddr <= multicastRanges->upperBound)
             {

@@ -12,7 +12,8 @@
 
 #include <exec/types.h>
 
-typedef enum {
+typedef enum
+{
 	PHY_INTERFACE_MODE_NA, /* don't touch */
 	PHY_INTERFACE_MODE_INTERNAL,
 	PHY_INTERFACE_MODE_MII,
@@ -60,52 +61,52 @@ typedef enum {
 	PHY_INTERFACE_MODE_MAX,
 } phy_interface_t;
 
-static const char * const phy_interface_strings[] = {
-	[PHY_INTERFACE_MODE_NA]			= "",
-	[PHY_INTERFACE_MODE_INTERNAL]		= "internal",
-	[PHY_INTERFACE_MODE_MII]		= "mii",
-	[PHY_INTERFACE_MODE_GMII]		= "gmii",
-	[PHY_INTERFACE_MODE_SGMII]		= "sgmii",
-	[PHY_INTERFACE_MODE_TBI]		= "tbi",
-	[PHY_INTERFACE_MODE_REVMII]		= "rev-mii",
-	[PHY_INTERFACE_MODE_RMII]		= "rmii",
-	[PHY_INTERFACE_MODE_REVRMII]		= "rev-rmii",
-	[PHY_INTERFACE_MODE_RGMII]		= "rgmii",
-	[PHY_INTERFACE_MODE_RGMII_ID]		= "rgmii-id",
-	[PHY_INTERFACE_MODE_RGMII_RXID]		= "rgmii-rxid",
-	[PHY_INTERFACE_MODE_RGMII_TXID]		= "rgmii-txid",
-	[PHY_INTERFACE_MODE_RTBI]		= "rtbi",
-	[PHY_INTERFACE_MODE_SMII]		= "smii",
-	[PHY_INTERFACE_MODE_XGMII]		= "xgmii",
-	[PHY_INTERFACE_MODE_XLGMII]		= "xlgmii",
-	[PHY_INTERFACE_MODE_MOCA]		= "moca",
-	[PHY_INTERFACE_MODE_QSGMII]		= "qsgmii",
-	[PHY_INTERFACE_MODE_TRGMII]		= "trgmii",
-	[PHY_INTERFACE_MODE_1000BASEX]		= "1000base-x",
-	[PHY_INTERFACE_MODE_1000BASEKX]		= "1000base-kx",
-	[PHY_INTERFACE_MODE_2500BASEX]		= "2500base-x",
-	[PHY_INTERFACE_MODE_5GBASER]		= "5gbase-r",
-	[PHY_INTERFACE_MODE_RXAUI]		= "rxaui",
-	[PHY_INTERFACE_MODE_XAUI]		= "xaui",
-	[PHY_INTERFACE_MODE_10GBASER]		= "10gbase-r",
-	[PHY_INTERFACE_MODE_25GBASER]		= "25gbase-r",
-	[PHY_INTERFACE_MODE_USXGMII]		= "usxgmii",
-	[PHY_INTERFACE_MODE_10GKR]		= "10gbase-kr",
-	[PHY_INTERFACE_MODE_100BASEX]		= "100base-x",
-	[PHY_INTERFACE_MODE_QUSGMII]		= "qusgmii",
+static const char *const phy_interface_strings[] = {
+	[PHY_INTERFACE_MODE_NA] = "",
+	[PHY_INTERFACE_MODE_INTERNAL] = "internal",
+	[PHY_INTERFACE_MODE_MII] = "mii",
+	[PHY_INTERFACE_MODE_GMII] = "gmii",
+	[PHY_INTERFACE_MODE_SGMII] = "sgmii",
+	[PHY_INTERFACE_MODE_TBI] = "tbi",
+	[PHY_INTERFACE_MODE_REVMII] = "rev-mii",
+	[PHY_INTERFACE_MODE_RMII] = "rmii",
+	[PHY_INTERFACE_MODE_REVRMII] = "rev-rmii",
+	[PHY_INTERFACE_MODE_RGMII] = "rgmii",
+	[PHY_INTERFACE_MODE_RGMII_ID] = "rgmii-id",
+	[PHY_INTERFACE_MODE_RGMII_RXID] = "rgmii-rxid",
+	[PHY_INTERFACE_MODE_RGMII_TXID] = "rgmii-txid",
+	[PHY_INTERFACE_MODE_RTBI] = "rtbi",
+	[PHY_INTERFACE_MODE_SMII] = "smii",
+	[PHY_INTERFACE_MODE_XGMII] = "xgmii",
+	[PHY_INTERFACE_MODE_XLGMII] = "xlgmii",
+	[PHY_INTERFACE_MODE_MOCA] = "moca",
+	[PHY_INTERFACE_MODE_QSGMII] = "qsgmii",
+	[PHY_INTERFACE_MODE_TRGMII] = "trgmii",
+	[PHY_INTERFACE_MODE_1000BASEX] = "1000base-x",
+	[PHY_INTERFACE_MODE_1000BASEKX] = "1000base-kx",
+	[PHY_INTERFACE_MODE_2500BASEX] = "2500base-x",
+	[PHY_INTERFACE_MODE_5GBASER] = "5gbase-r",
+	[PHY_INTERFACE_MODE_RXAUI] = "rxaui",
+	[PHY_INTERFACE_MODE_XAUI] = "xaui",
+	[PHY_INTERFACE_MODE_10GBASER] = "10gbase-r",
+	[PHY_INTERFACE_MODE_25GBASER] = "25gbase-r",
+	[PHY_INTERFACE_MODE_USXGMII] = "usxgmii",
+	[PHY_INTERFACE_MODE_10GKR] = "10gbase-kr",
+	[PHY_INTERFACE_MODE_100BASEX] = "100base-x",
+	[PHY_INTERFACE_MODE_QUSGMII] = "qusgmii",
 #if defined(CONFIG_ARCH_LX2160A) || defined(CONFIG_ARCH_LX2162A)
 	/* LX2160A SERDES modes */
-	[PHY_INTERFACE_MODE_25G_AUI]		= "25g-aui",
-	[PHY_INTERFACE_MODE_XLAUI]		= "xlaui4",
-	[PHY_INTERFACE_MODE_CAUI2]		= "caui2",
-	[PHY_INTERFACE_MODE_CAUI4]		= "caui4",
+	[PHY_INTERFACE_MODE_25G_AUI] = "25g-aui",
+	[PHY_INTERFACE_MODE_XLAUI] = "xlaui4",
+	[PHY_INTERFACE_MODE_CAUI2] = "caui2",
+	[PHY_INTERFACE_MODE_CAUI4] = "caui4",
 #endif
 #if defined(CONFIG_PHY_NCSI)
-	[PHY_INTERFACE_MODE_NCSI]		= "NC-SI",
+	[PHY_INTERFACE_MODE_NCSI] = "NC-SI",
 #endif
 };
 
-const char* phy_string_for_interface(phy_interface_t i);
-phy_interface_t interface_for_phy_string(const char* mode);
+const char *phy_string_for_interface(phy_interface_t i);
+phy_interface_t interface_for_phy_string(const char *mode);
 
 #endif /* _PHY_INTERFACE_H */

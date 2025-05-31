@@ -25,8 +25,9 @@
 static void putch(UBYTE data asm("d0"), APTR dummy asm("a3"))
 {
 	(void)dummy;
-	if(data!=0) {
-		*(UBYTE*)0xdeadbeef = data;
+	if (data != 0)
+	{
+		*(UBYTE *)0xdeadbeef = data;
 	}
 }
 
