@@ -340,7 +340,6 @@ static int Do_S2_OFFLINE(struct IOSana2Req *io)
     if (unit->state == STATE_ONLINE)
     {
         UnitOffline(unit);
-        unit->state = STATE_OFFLINE;
         ReportEvents(unit, S2EVENT_OFFLINE);
     }
 

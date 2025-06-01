@@ -23,11 +23,6 @@
 
 static inline BOOL ProcessReceive(struct GenetUnit *unit)
 {
-    if (unit->state != STATE_ONLINE)
-    {
-        return FALSE;
-    }
-
     int pkt_len = 0;
     BOOL activity = FALSE;
     do
@@ -111,8 +106,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
         }
 
-        // No matter what, let's receive some packets
-        activity |= ProcessReceive(unit);
+        if (unit->state == STATE_ONLINE)
+        {
+            activity |= ProcessReceive(unit);
+        }
+
         if (activity)
         {
             // If we received something, reset cooldown
@@ -147,6 +145,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         }
         if (sigset & SIGBREAKF_CTRL_C)
         {
+            Kprintf("[genet] %s: Received SIGBREAKF_CTRL_C, stopping genet task\n", __func__);
             AbortIO(&timerReq->tr_node);
             WaitIO(&timerReq->tr_node);
         }
@@ -227,7 +226,7 @@ void UnitTaskStop(struct GenetUnit *unit)
     struct MsgPort *timerPort = CreateMsgPort();
     struct timerequest *timerReq = CreateIORequest(timerPort, sizeof(struct timerequest));
 
-    if (timerPort != NULL || timerReq != NULL)
+    if (timerPort != NULL && timerReq != NULL)
     {
         BYTE result = OpenDevice((CONST_STRPTR) "timer.device", UNIT_VBLANK, (struct IORequest *)timerReq, LIB_MIN_VERSION);
         if (result != NULL)

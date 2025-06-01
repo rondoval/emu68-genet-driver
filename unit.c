@@ -137,8 +137,8 @@ int UnitOnline(struct GenetUnit *unit)
 void UnitOffline(struct GenetUnit *unit)
 {
 	Kprintf("[genet] %s: Stopping UMAC\n", __func__);
-	bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
 	unit->state = STATE_OFFLINE;
+	bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
 }
 
 int UnitClose(struct GenetUnit *unit, struct Opener *opener)

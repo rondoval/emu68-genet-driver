@@ -114,6 +114,10 @@
 #define DMA_TX_DO_CSUM 0x0010
 #define DMA_TX_QTAG_SHIFT 7
 
+/* Masks for the index registers. The upper half contains number of discarded packets */
+#define DMA_C_INDEX_MASK 0xffff
+#define DMA_P_INDEX_MASK 0xffff
+
 /* DMA rings size */
 #define DMA_RING_SIZE 0x40
 #define DMA_RINGS_SIZE (DMA_RING_SIZE * (DEFAULT_Q + 1))
@@ -163,6 +167,7 @@
 #define DMA_RING_CFG 0x00
 #define DMA_CTRL 0x04
 #define DMA_SCB_BURST_SIZE 0x0c
+#define DMA_TIMEOUT_VAL 5000
 
 #define RX_BUF_LENGTH 2048
 #define RX_TOTAL_BUFSIZE (RX_BUF_LENGTH * RX_DESCS)
@@ -173,23 +178,17 @@ static void bcmgenet_umac_reset(struct GenetUnit *priv)
 	Kprintf("[genet] %s: Resetting UMAC\n", __func__);
 	ULONG reg;
 
-	reg = readl((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL);
-	reg |= BIT(1);
-	writel(reg, ((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL));
+	setbits_32((APTR)((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL), BIT(1));
 	delay_us(10);
 
-	reg &= ~BIT(1);
-	writel(reg, ((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL));
+	clrbits_32((APTR)((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL), BIT(1));
 	delay_us(10);
 
-	writel(0, ((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL));
+	writel(0, (ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL);
 	delay_us(10);
-
-	writel(0, (ULONG)priv->genetBase + UMAC_CMD);
 
 	writel(CMD_SW_RESET | CMD_LCL_LOOP_EN, (ULONG)priv->genetBase + UMAC_CMD);
 	delay_us(2);
-	writel(0, (ULONG)priv->genetBase + UMAC_CMD);
 
 	/* clear tx/rx counter */
 	writel(MIB_RESET_RX | MIB_RESET_TX | MIB_RESET_RUNT,
@@ -225,6 +224,18 @@ static void bcmgenet_disable_dma(struct GenetUnit *priv)
 	clrbits_32((APTR)((ULONG)priv->genetBase + TDMA_REG_BASE + DMA_CTRL), DMA_EN);
 	clrbits_32((APTR)((ULONG)priv->genetBase + RDMA_REG_BASE + DMA_CTRL), DMA_EN);
 
+	for (int timeout = 0; timeout < DMA_TIMEOUT_VAL; timeout++)
+	{
+		ULONG tdma = readl(priv->genetBase + TDMA_REG_BASE + DMA_CTRL);
+		ULONG rdma = readl(priv->genetBase + RDMA_REG_BASE + DMA_CTRL);
+		if (!(tdma & DMA_EN) && !(rdma & DMA_EN))
+		{
+			Kprintf("[genet] %s: DMA disabled\n", __func__);
+			break;
+		}
+		delay_us(1);
+	}
+
 	writel(1, (APTR)((ULONG)priv->genetBase + UMAC_TX_FLUSH));
 	delay_us(10);
 	writel(0, (APTR)((ULONG)priv->genetBase + UMAC_TX_FLUSH));
@@ -248,7 +259,6 @@ int bcmgenet_gmac_eth_send(struct GenetUnit *priv, void *packet, ULONG length)
 	ULONG tx_prod_index = readl((ULONG)priv->genetBase + TDMA_PROD_INDEX);
 	APTR desc_base = (APTR)((ULONG)priv->tx_desc_base + (tx_prod_index & 0xff) * DMA_DESC_SIZE);
 
-	// TODO can this shorten length?
 	CachePreDMA(packet, &length, DMA_ReadFromRAM);
 
 	ULONG len_stat = length << DMA_BUFLENGTH_SHIFT;
@@ -257,11 +267,11 @@ int bcmgenet_gmac_eth_send(struct GenetUnit *priv, void *packet, ULONG length)
 
 	/* Set-up packet for transmission */
 	writel(lower_32_bits((ULONG)packet), ((ULONG)desc_base + DMA_DESC_ADDRESS_LO));
-	writel(0, ((ULONG)desc_base + DMA_DESC_ADDRESS_HI));
 	//	writel(upper_32_bits((ULONG)packet), (desc_base + DMA_DESC_ADDRESS_HI));
 	writel(len_stat, ((ULONG)desc_base + DMA_DESC_LENGTH_STATUS));
 
 	tx_prod_index++;
+	tx_prod_index &= DMA_P_INDEX_MASK;
 
 	/* Start Transmisson */
 	writel(tx_prod_index, (ULONG)priv->genetBase + TDMA_PROD_INDEX);
@@ -271,8 +281,7 @@ int bcmgenet_gmac_eth_send(struct GenetUnit *priv, void *packet, ULONG length)
 	do
 	{
 		tx_cons_index = readl((ULONG)priv->genetBase + TDMA_CONS_INDEX);
-	} while ((tx_cons_index & 0xffff) < tx_prod_index && --tries);
-	CachePostDMA(packet, &length, DMA_ReadFromRAM | DMA_NoModify);
+	} while ((tx_cons_index & DMA_C_INDEX_MASK) < tx_prod_index && --tries);
 	if (!tries)
 		return S2ERR_TX_FAILURE;
 
@@ -282,7 +291,7 @@ int bcmgenet_gmac_eth_send(struct GenetUnit *priv, void *packet, ULONG length)
 int bcmgenet_gmac_eth_recv(struct GenetUnit *priv, int flags, UBYTE **packetp)
 {
 	struct ExecBase *SysBase = priv->execBase;
-	ULONG rx_prod_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX);
+	ULONG rx_prod_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 
 	if (rx_prod_index == priv->rx_cons_index)
 		return EAGAIN;
@@ -306,16 +315,13 @@ int bcmgenet_gmac_eth_recv(struct GenetUnit *priv, int flags, UBYTE **packetp)
 
 int bcmgenet_gmac_free_pkt(struct GenetUnit *priv, UBYTE *packet, ULONG length)
 {
-	struct ExecBase *SysBase = priv->execBase;
 	KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, packet, length);
 
 	// Adjust back to the original address
 	packet -= RX_BUF_OFFSET;
 
-	CachePreDMA(packet, &length, 0);
-
 	/* Tell the MAC we have consumed that last receive buffer. */
-	priv->rx_cons_index = (priv->rx_cons_index + 1) & 0xFFFF;
+	priv->rx_cons_index = (priv->rx_cons_index + 1) & DMA_C_INDEX_MASK;
 	writel(priv->rx_cons_index, (ULONG)priv->genetBase + RDMA_CONS_INDEX);
 
 	return S2ERR_NO_ERROR;
@@ -336,8 +342,6 @@ static void rx_descs_init(struct GenetUnit *priv)
 			   (ULONG)desc_base + i * DMA_DESC_SIZE + DMA_DESC_ADDRESS_LO);
 		// writel(upper_32_bits(&rxbuffs[i * RX_BUF_LENGTH]),
 		//        desc_base + i * DMA_DESC_SIZE + DMA_DESC_ADDRESS_HI);
-		writel(0,
-			   (ULONG)desc_base + i * DMA_DESC_SIZE + DMA_DESC_ADDRESS_HI);
 		writel(len_stat,
 			   (ULONG)desc_base + i * DMA_DESC_SIZE + DMA_DESC_LENGTH_STATUS);
 	}
@@ -356,8 +360,9 @@ static void rx_ring_init(struct GenetUnit *priv)
 		   (ULONG)priv->genetBase + RDMA_RING_REG_BASE + DMA_END_ADDR);
 
 	/* cannot init RDMA_PROD_INDEX to 0, so align RDMA_CONS_INDEX on it instead */
-	priv->rx_cons_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX);
+	priv->rx_cons_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 	writel(priv->rx_cons_index, (ULONG)priv->genetBase + RDMA_CONS_INDEX);
+	Kprintf("[genet] %s: rx_cons_index=%ld\n", __func__, priv->rx_cons_index);
 	writel((RX_DESCS << DMA_RING_SIZE_SHIFT) | RX_BUF_LENGTH,
 		   (ULONG)priv->genetBase + RDMA_RING_REG_BASE + DMA_RING_BUF_SIZE);
 	writel(DMA_FC_THRESH_VALUE, (ULONG)priv->genetBase + RDMA_XON_XOFF_THRESH);
@@ -376,7 +381,7 @@ static void tx_ring_init(struct GenetUnit *priv)
 	writel(TX_DESCS * DMA_DESC_SIZE / 4 - 1,
 		   (ULONG)priv->genetBase + TDMA_RING_REG_BASE + DMA_END_ADDR);
 	/* cannot init TDMA_CONS_INDEX to 0, so align TDMA_PROD_INDEX on it instead */
-	ULONG tx_cons_index = readl((ULONG)priv->genetBase + TDMA_CONS_INDEX);
+	ULONG tx_cons_index = readl((ULONG)priv->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
 	writel(tx_cons_index, (ULONG)priv->genetBase + TDMA_PROD_INDEX);
 	writel(0x1, (ULONG)priv->genetBase + TDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH);
 	writel(0x0, (ULONG)priv->genetBase + TDMA_FLOW_PERIOD);
@@ -552,10 +557,9 @@ int bcmgenet_eth_probe(struct GenetUnit *priv)
 
 	writel(0, (ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL);
 	delay_us(10);
-	/* disable MAC while updating its registers */
-	writel(0, (ULONG)priv->genetBase + UMAC_CMD);
 	/* issue soft reset with (rg)mii loopback to ensure a stable rxclk */
 	writel(CMD_SW_RESET | CMD_LCL_LOOP_EN, (ULONG)priv->genetBase + UMAC_CMD);
+	delay_us(2);
 
 	return bcmgenet_phy_init(priv);
 }
