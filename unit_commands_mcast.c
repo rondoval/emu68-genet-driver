@@ -61,19 +61,18 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
     uint64_t upper_bound = (io->ios2_Req.io_Command == S2_ADDMULTICASTADDRESS) ? lower_bound : GetAddress(io->ios2_DstAddr);
 
     /* Go through already registered multicast ranges. If one is found, increase use count and return */
-    struct MulticastRange *range = (struct MulticastRange *)unit->multicastRanges.mlh_Head;
-    while (range->node.mln_Succ)
+    for (struct MinNode *node = unit->multicastRanges.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
+        struct MulticastRange *range = (struct MulticastRange *)node;
         if (range->lowerBound == lower_bound && range->upperBound == upper_bound)
         {
             range->useCount++;
             return COMMAND_PROCESSED;
         }
-        range = (struct MulticastRange *)range->node.mln_Succ;
     }
 
     /* No range was found. Create new one and add the multicast range on the WiFi module */
-    range = AllocPooled(unit->memoryPool, sizeof(struct MulticastRange));
+    struct MulticastRange *range = AllocPooled(unit->memoryPool, sizeof(struct MulticastRange));
     if (!range)
     {
         Kprintf("[genet] %s: Failed to allocate memory for multicast range\n", __func__);
@@ -117,9 +116,9 @@ int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
     uint64_t upper_bound = (io->ios2_Req.io_Command == S2_DELMULTICASTADDRESS) ? lower_bound : GetAddress(io->ios2_DstAddr);
 
     /* Go through already registered multicast ranges. Once found, decrease use count */
-    struct MulticastRange *range = (struct MulticastRange *)unit->multicastRanges.mlh_Head;
-    while (range->node.mln_Succ)
+    for (struct MinNode *node = unit->multicastRanges.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
+        struct MulticastRange *range = (struct MulticastRange *)node;
         if (range->lowerBound == lower_bound && range->upperBound == upper_bound)
         {
             range->useCount--;
@@ -132,7 +131,6 @@ int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
             }
             return COMMAND_PROCESSED;
         }
-        range = (struct MulticastRange *)range->node.mln_Succ;
     }
 
     return COMMAND_PROCESSED;

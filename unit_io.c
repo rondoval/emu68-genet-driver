@@ -154,16 +154,17 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
     if (destAddr != 0xffffffffffffULL && (destAddr & 0x010000000000ULL))
     {
         BOOL accept = FALSE;
-        struct MulticastRange *multicastRanges = (struct MulticastRange *)unit->multicastRanges.mlh_Head;
-        while (multicastRanges->node.mln_Succ)
+        for (struct MinNode *node = unit->multicastRanges.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
-            if (destAddr >= multicastRanges->lowerBound && destAddr <= multicastRanges->upperBound)
+            // Check if this is a multicast address we accept
+            struct MulticastRange *range = (struct MulticastRange *)node;
+            if (destAddr >= range->lowerBound && destAddr <= range->upperBound)
             {
                 accept = TRUE;
                 break;
             }
-            multicastRanges = (struct MulticastRange *)multicastRanges->node.mln_Succ;
         }
+
         if (!accept)
         {
             // Not a multicast address we accept, drop the packet
@@ -178,13 +179,13 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
     ObtainSemaphore(&unit->semaphore);
     /* Go through all openers */
-    struct Opener *opener = (struct Opener *)unit->openers.mlh_Head;
-    while (opener->node.mln_Succ)
+    for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
+        struct Opener *opener = (struct Opener *)node;
         /* Go through all IO read requests pending*/
-        struct IOSana2Req *io = (struct IOSana2Req *)opener->readPort.mp_MsgList.lh_Head;
-        while (io)
+        for (struct Node *ioNode = opener->readPort.mp_MsgList.lh_Head; ioNode->ln_Succ; ioNode = ioNode->ln_Succ)
         {
+            struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
             // EthernetII has packet type larger than 1500 (MTU),
             // 802.3 has no packet type but just length
             if (io->ios2_PacketType == packetType || (packetType <= 1500 && io->ios2_PacketType <= 1500))
@@ -197,9 +198,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                 orphan = FALSE;
                 break;
             }
-            io = (struct IOSana2Req *)io->ios2_Req.io_Message.mn_Node.ln_Succ;
         }
-        opener = (struct Opener *)opener->node.mln_Succ;
     }
     ReleaseSemaphore(&unit->semaphore);
 
@@ -210,9 +209,9 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
         ObtainSemaphore(&unit->semaphore);
         /* Go through all openers and offer orphan packet to anyone asking */
-        struct Opener *opener = (struct Opener *)unit->openers.mlh_Head;
-        while (opener->node.mln_Succ)
+        for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
+            struct Opener *opener = (struct Opener *)node;
             struct IOSana2Req *io = (APTR)opener->orphanPort.mp_MsgList.lh_Head;
             /*
                 If this is a real node, ln_Succ will be not NULL, otherwise it is just
@@ -223,7 +222,6 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                 KprintfH("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, packetType);
                 CopyPacket(io, packet, packetLength);
             }
-            opener = (struct Opener *)opener->node.mln_Succ;
         }
         ReleaseSemaphore(&unit->semaphore);
     }

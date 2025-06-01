@@ -56,13 +56,15 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
     struct ExecBase *SysBase = unit->execBase;
 
     /* Report event to every listener of every opener accepting the mask */
-    Disable();
-    for (struct Opener *opener = (struct Opener *)unit->openers.mlh_Head; opener->node.mln_Succ; opener = (struct Opener *)opener->node.mln_Succ)
+    ObtainSemaphore(&unit->semaphore);
+    for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
-        struct IOSana2Req *io = (struct IOSana2Req *)opener->eventPort.mp_MsgList.lh_Head;
-        while (io)
+        struct Opener *opener = (struct Opener *)node;
+        struct Node *ioNode, *nextIoNode;
+
+        for (ioNode = opener->eventPort.mp_MsgList.lh_Head; (nextIoNode = ioNode->ln_Succ) != NULL; ioNode = nextIoNode)
         {
-            struct IOSana2Req *next = (struct IOSana2Req *)io->ios2_Req.io_Message.mn_Node.ln_Succ;
+            struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
             /* Check if event mask in WireError fits the events occured */
             if (io->ios2_WireError & eventSet)
             {
@@ -73,10 +75,9 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
                 Remove((struct Node *)io);
                 ReplyMsg((struct Message *)io);
             }
-            io = next;
         }
     }
-    Enable();
+    ReleaseSemaphore(&unit->semaphore);
     KprintfH("[genet] %s: Reporting done\n", __func__);
 }
 
@@ -140,8 +141,9 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
     // }
 
     /* For every opener, flush orphan and even queues */
-    for (struct Opener *opener = (struct Opener *)unit->openers.mlh_Head; opener->node.mln_Succ; opener = (struct Opener *)opener->node.mln_Succ)
+    for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
+        struct Opener *opener = (struct Opener *)node;
         while ((req = (struct IOSana2Req *)GetMsg(&opener->orphanPort)))
         {
             req->ios2_Req.io_Error = IOERR_ABORTED;
