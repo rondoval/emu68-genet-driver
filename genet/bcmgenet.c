@@ -17,8 +17,14 @@
  */
 
 #define __NOLIBBASE__
-#include <exec/types.h>
+
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#else
 #include <proto/exec.h>
+#endif
+
+#include <exec/types.h>
 
 #include <debug.h>
 #include <phy/phy.h>
@@ -108,6 +114,10 @@
 #define DMA_TX_DO_CSUM 0x0010
 #define DMA_TX_QTAG_SHIFT 7
 
+/* Masks for the index registers. The upper half contains number of discarded packets */
+#define DMA_C_INDEX_MASK 0xffff
+#define DMA_P_INDEX_MASK 0xffff
+
 /* DMA rings size */
 #define DMA_RING_SIZE 0x40
 #define DMA_RINGS_SIZE (DMA_RING_SIZE * (DEFAULT_Q + 1))
@@ -157,6 +167,7 @@
 #define DMA_RING_CFG 0x00
 #define DMA_CTRL 0x04
 #define DMA_SCB_BURST_SIZE 0x0c
+#define DMA_TIMEOUT_VAL 5000
 
 #define RX_BUF_LENGTH 2048
 #define RX_TOTAL_BUFSIZE (RX_BUF_LENGTH * RX_DESCS)
@@ -167,23 +178,17 @@ static void bcmgenet_umac_reset(struct GenetUnit *priv)
 	Kprintf("[genet] %s: Resetting UMAC\n", __func__);
 	ULONG reg;
 
-	reg = readl((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL);
-	reg |= BIT(1);
-	writel(reg, ((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL));
+	setbits_32((APTR)((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL), BIT(1));
 	delay_us(10);
 
-	reg &= ~BIT(1);
-	writel(reg, ((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL));
+	clrbits_32((APTR)((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL), BIT(1));
 	delay_us(10);
 
-	writel(0, ((ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL));
+	writel(0, (ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL);
 	delay_us(10);
-
-	writel(0, (ULONG)priv->genetBase + UMAC_CMD);
 
 	writel(CMD_SW_RESET | CMD_LCL_LOOP_EN, (ULONG)priv->genetBase + UMAC_CMD);
 	delay_us(2);
-	writel(0, (ULONG)priv->genetBase + UMAC_CMD);
 
 	/* clear tx/rx counter */
 	writel(MIB_RESET_RX | MIB_RESET_TX | MIB_RESET_RUNT,
@@ -200,7 +205,7 @@ static void bcmgenet_umac_reset(struct GenetUnit *priv)
 	writel(1, ((ULONG)priv->genetBase + RBUF_TBUF_SIZE_CTRL));
 }
 
-static int bcmgenet_gmac_write_hwaddr(struct GenetUnit *priv, const UBYTE *addr)
+static void bcmgenet_gmac_write_hwaddr(struct GenetUnit *priv, const UBYTE *addr)
 {
 	Kprintf("[genet] %s: Setting MAC address to %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
 			__func__, addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
@@ -211,8 +216,6 @@ static int bcmgenet_gmac_write_hwaddr(struct GenetUnit *priv, const UBYTE *addr)
 
 	reg = addr[4] << 8 | addr[5];
 	writel_relaxed(reg, (APTR)((ULONG)priv->genetBase + UMAC_MAC1));
-
-	return 0;
 }
 
 static void bcmgenet_disable_dma(struct GenetUnit *priv)
@@ -220,6 +223,18 @@ static void bcmgenet_disable_dma(struct GenetUnit *priv)
 	Kprintf("[genet] %s: Disabling DMA\n", __func__);
 	clrbits_32((APTR)((ULONG)priv->genetBase + TDMA_REG_BASE + DMA_CTRL), DMA_EN);
 	clrbits_32((APTR)((ULONG)priv->genetBase + RDMA_REG_BASE + DMA_CTRL), DMA_EN);
+
+	for (int timeout = 0; timeout < DMA_TIMEOUT_VAL; timeout++)
+	{
+		ULONG tdma = readl(priv->genetBase + TDMA_REG_BASE + DMA_CTRL);
+		ULONG rdma = readl(priv->genetBase + RDMA_REG_BASE + DMA_CTRL);
+		if (!(tdma & DMA_EN) && !(rdma & DMA_EN))
+		{
+			Kprintf("[genet] %s: DMA disabled\n", __func__);
+			break;
+		}
+		delay_us(1);
+	}
 
 	writel(1, (APTR)((ULONG)priv->genetBase + UMAC_TX_FLUSH));
 	delay_us(10);
@@ -244,7 +259,6 @@ int bcmgenet_gmac_eth_send(struct GenetUnit *priv, void *packet, ULONG length)
 	ULONG tx_prod_index = readl((ULONG)priv->genetBase + TDMA_PROD_INDEX);
 	APTR desc_base = (APTR)((ULONG)priv->tx_desc_base + (tx_prod_index & 0xff) * DMA_DESC_SIZE);
 
-	//TODO can this shorten length?
 	CachePreDMA(packet, &length, DMA_ReadFromRAM);
 
 	ULONG len_stat = length << DMA_BUFLENGTH_SHIFT;
@@ -253,11 +267,11 @@ int bcmgenet_gmac_eth_send(struct GenetUnit *priv, void *packet, ULONG length)
 
 	/* Set-up packet for transmission */
 	writel(lower_32_bits((ULONG)packet), ((ULONG)desc_base + DMA_DESC_ADDRESS_LO));
-	writel(0, ((ULONG)desc_base + DMA_DESC_ADDRESS_HI));
 	//	writel(upper_32_bits((ULONG)packet), (desc_base + DMA_DESC_ADDRESS_HI));
 	writel(len_stat, ((ULONG)desc_base + DMA_DESC_LENGTH_STATUS));
 
 	tx_prod_index++;
+	tx_prod_index &= DMA_P_INDEX_MASK;
 
 	/* Start Transmisson */
 	writel(tx_prod_index, (ULONG)priv->genetBase + TDMA_PROD_INDEX);
@@ -267,21 +281,20 @@ int bcmgenet_gmac_eth_send(struct GenetUnit *priv, void *packet, ULONG length)
 	do
 	{
 		tx_cons_index = readl((ULONG)priv->genetBase + TDMA_CONS_INDEX);
-	} while ((tx_cons_index & 0xffff) < tx_prod_index && --tries);
-	CachePostDMA(packet, &length, DMA_ReadFromRAM | DMA_NoModify);
+	} while ((tx_cons_index & DMA_C_INDEX_MASK) < tx_prod_index && --tries);
 	if (!tries)
-		return -ETIMEDOUT;
+		return S2ERR_TX_FAILURE;
 
-	return 0;
+	return S2ERR_NO_ERROR;
 }
 
 int bcmgenet_gmac_eth_recv(struct GenetUnit *priv, int flags, UBYTE **packetp)
 {
 	struct ExecBase *SysBase = priv->execBase;
-	ULONG rx_prod_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX);
+	ULONG rx_prod_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 
 	if (rx_prod_index == priv->rx_cons_index)
-		return -EAGAIN;
+		return EAGAIN;
 
 	APTR desc_base = (APTR)((ULONG)priv->rx_desc_base + (priv->rx_cons_index & 0xFF) * DMA_DESC_SIZE);
 	ULONG length = readl((ULONG)desc_base + DMA_DESC_LENGTH_STATUS);
@@ -302,19 +315,16 @@ int bcmgenet_gmac_eth_recv(struct GenetUnit *priv, int flags, UBYTE **packetp)
 
 int bcmgenet_gmac_free_pkt(struct GenetUnit *priv, UBYTE *packet, ULONG length)
 {
-	struct ExecBase *SysBase = priv->execBase;
 	KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, packet, length);
-	
-	 // Adjust back to the original address
-	 packet -= RX_BUF_OFFSET;
 
-	CachePreDMA(packet, &length, 0);
+	// Adjust back to the original address
+	packet -= RX_BUF_OFFSET;
 
 	/* Tell the MAC we have consumed that last receive buffer. */
-	priv->rx_cons_index = (priv->rx_cons_index + 1) & 0xFFFF;
+	priv->rx_cons_index = (priv->rx_cons_index + 1) & DMA_C_INDEX_MASK;
 	writel(priv->rx_cons_index, (ULONG)priv->genetBase + RDMA_CONS_INDEX);
 
-	return 0;
+	return S2ERR_NO_ERROR;
 }
 
 static void rx_descs_init(struct GenetUnit *priv)
@@ -332,8 +342,6 @@ static void rx_descs_init(struct GenetUnit *priv)
 			   (ULONG)desc_base + i * DMA_DESC_SIZE + DMA_DESC_ADDRESS_LO);
 		// writel(upper_32_bits(&rxbuffs[i * RX_BUF_LENGTH]),
 		//        desc_base + i * DMA_DESC_SIZE + DMA_DESC_ADDRESS_HI);
-		writel(0,
-			   (ULONG)desc_base + i * DMA_DESC_SIZE + DMA_DESC_ADDRESS_HI);
 		writel(len_stat,
 			   (ULONG)desc_base + i * DMA_DESC_SIZE + DMA_DESC_LENGTH_STATUS);
 	}
@@ -352,8 +360,9 @@ static void rx_ring_init(struct GenetUnit *priv)
 		   (ULONG)priv->genetBase + RDMA_RING_REG_BASE + DMA_END_ADDR);
 
 	/* cannot init RDMA_PROD_INDEX to 0, so align RDMA_CONS_INDEX on it instead */
-	priv->rx_cons_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX);
+	priv->rx_cons_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 	writel(priv->rx_cons_index, (ULONG)priv->genetBase + RDMA_CONS_INDEX);
+	Kprintf("[genet] %s: rx_cons_index=%ld\n", __func__, priv->rx_cons_index);
 	writel((RX_DESCS << DMA_RING_SIZE_SHIFT) | RX_BUF_LENGTH,
 		   (ULONG)priv->genetBase + RDMA_RING_REG_BASE + DMA_RING_BUF_SIZE);
 	writel(DMA_FC_THRESH_VALUE, (ULONG)priv->genetBase + RDMA_XON_XOFF_THRESH);
@@ -372,7 +381,7 @@ static void tx_ring_init(struct GenetUnit *priv)
 	writel(TX_DESCS * DMA_DESC_SIZE / 4 - 1,
 		   (ULONG)priv->genetBase + TDMA_RING_REG_BASE + DMA_END_ADDR);
 	/* cannot init TDMA_CONS_INDEX to 0, so align TDMA_PROD_INDEX on it instead */
-	ULONG tx_cons_index = readl((ULONG)priv->genetBase + TDMA_CONS_INDEX);
+	ULONG tx_cons_index = readl((ULONG)priv->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
 	writel(tx_cons_index, (ULONG)priv->genetBase + TDMA_PROD_INDEX);
 	writel(0x1, (ULONG)priv->genetBase + TDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH);
 	writel(0x0, (ULONG)priv->genetBase + TDMA_FLOW_PERIOD);
@@ -401,7 +410,7 @@ static int bcmgenet_adjust_link(struct GenetUnit *priv)
 		break;
 	default:
 		Kprintf("[genet] %s: Unsupported PHY speed: %d\n", __func__, phy_dev->speed);
-		return -EINVAL;
+		return S2ERR_BAD_ARGUMENT;
 	}
 
 	clrsetbits_32((APTR)((ULONG)priv->genetBase + EXT_RGMII_OOB_CTRL), OOB_DISABLE,
@@ -413,7 +422,7 @@ static int bcmgenet_adjust_link(struct GenetUnit *priv)
 
 	writel(speed << CMD_SPEED_SHIFT, ((ULONG)priv->genetBase + UMAC_CMD));
 
-	return 0;
+	return S2ERR_NO_ERROR;
 }
 
 int bcmgenet_gmac_eth_start(struct GenetUnit *priv)
@@ -424,7 +433,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *priv)
 	if (!priv->rxbuffer_not_aligned)
 	{
 		Kprintf("[genet] %s: Failed to allocate RX buffer\n", __func__);
-		return -ENOMEM;
+		return S2ERR_NO_RESOURCES;
 	}
 
 	priv->txbuffer_not_aligned = AllocMem(RX_BUF_LENGTH + ARCH_DMA_MINALIGN, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
@@ -435,7 +444,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *priv)
 		FreeMem(priv->txbuffer_not_aligned, RX_BUF_LENGTH + ARCH_DMA_MINALIGN);
 		priv->rxbuffer_not_aligned = NULL;
 		priv->txbuffer_not_aligned = NULL;
-		return -ENOMEM;
+		return S2ERR_NO_RESOURCES;
 	}
 	priv->rxbuffer = (UBYTE *)roundup(priv->rxbuffer_not_aligned, ARCH_DMA_MINALIGN);
 	priv->txbuffer = (UBYTE *)roundup(priv->txbuffer_not_aligned, ARCH_DMA_MINALIGN);
@@ -463,12 +472,12 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *priv)
 	if (ret)
 	{
 		Kprintf("[genet] %s: PHY startup failed: %d\n", __func__, ret);
-		return ret;
+		return S2ERR_SOFTWARE;
 	}
 
 	/* Update MAC registers based on PHY property */
 	ret = bcmgenet_adjust_link(priv);
-	if (ret)
+	if (ret != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: adjust PHY link failed: %d\n", __func__, ret);
 		return ret;
@@ -478,7 +487,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *priv)
 	setbits_32((APTR)((ULONG)priv->genetBase + UMAC_CMD), CMD_TX_EN | CMD_RX_EN);
 	Kprintf("[genet] %s: UMAC started, RX/TX enabled\n", __func__);
 
-	return 0;
+	return S2ERR_NO_ERROR;
 }
 
 static int bcmgenet_phy_init(struct GenetUnit *priv)
@@ -488,15 +497,22 @@ static int bcmgenet_phy_init(struct GenetUnit *priv)
 
 	phydev = phy_create(priv, priv->phy_interface);
 	if (!phydev)
-		return -ENODEV;
+		return S2ERR_SOFTWARE;
 
 	phydev->supported &= PHY_GBIT_FEATURES;
 	phydev->advertising = phydev->supported;
 
 	priv->phydev = phydev;
-	phy_config(phydev);
+	int result = phy_config(phydev);
+	if (result < 0)
+	{
+		Kprintf("[genet] %s: PHY config failed: %d\n", __func__, result);
+		phy_destroy(phydev);
+		priv->phydev = NULL;
+		return S2ERR_SOFTWARE;
+	}
 
-	return 0;
+	return S2ERR_NO_ERROR;
 }
 
 /* We only support RGMII (as used on the RPi4). */
@@ -512,17 +528,16 @@ static int bcmgenet_interface_set(struct GenetUnit *priv)
 		break;
 	default:
 		Kprintf("[genet] %s: unknown phy mode: %d\n", __func__, priv->phy_interface);
-		return -EINVAL;
+		return S2ERR_BAD_ARGUMENT;
 	}
 
-	return 0;
+	return S2ERR_NO_ERROR;
 }
 
 int bcmgenet_eth_probe(struct GenetUnit *priv)
 {
 	/* Read GENET HW version */
 	ULONG reg = readl_relaxed((APTR)((ULONG)priv->genetBase + SYS_REV_CTRL));
-	Kprintf("[genet] %s: GENET HW version: addr:%lx val:%08lx\n", __func__, priv->genetBase + SYS_REV_CTRL, reg);
 	UBYTE major = (reg >> 24) & 0x0f;
 	if (major != 6)
 	{
@@ -531,21 +546,20 @@ int bcmgenet_eth_probe(struct GenetUnit *priv)
 		else if (major == 0)
 			major = 1;
 
-		Kprintf("[genet] %s: Unsupported GENETv%ld.%ld\n", __func__, major, (reg >> 16) & 0x0f);
-		return -ENODEV;
+		Kprintf("[genet] %s: Unsupported GENET v%ld.%ld\n", __func__, major, (reg >> 16) & 0x0f);
+		return S2ERR_SOFTWARE;
 	}
-	Kprintf("[genet] %s: GENETv%ld.%ld\n", __func__, major - 1, (reg >> 16) & 0x0f);
+	Kprintf("[genet] %s: GENET v%ld.%ld\n", __func__, major - 1, (reg >> 16) & 0x0f);
 
 	int ret = bcmgenet_interface_set(priv);
-	if (ret)
+	if (ret != S2ERR_NO_ERROR)
 		return ret;
 
 	writel(0, (ULONG)priv->genetBase + SYS_RBUF_FLUSH_CTRL);
 	delay_us(10);
-	/* disable MAC while updating its registers */
-	writel(0, (ULONG)priv->genetBase + UMAC_CMD);
 	/* issue soft reset with (rg)mii loopback to ensure a stable rxclk */
 	writel(CMD_SW_RESET | CMD_LCL_LOOP_EN, (ULONG)priv->genetBase + UMAC_CMD);
+	delay_us(2);
 
 	return bcmgenet_phy_init(priv);
 }
@@ -564,7 +578,10 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *priv)
 		priv->rxbuffer_not_aligned = NULL;
 	}
 
-	phy_destroy(priv->phydev);
-	priv->phydev = NULL;
+	if (priv->phydev)
+	{
+		phy_destroy(priv->phydev);
+		priv->phydev = NULL;
+	}
 	Kprintf("[genet] %s: PHY destroyed. GENET stopped.\n", __func__);
 }

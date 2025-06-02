@@ -4,15 +4,6 @@
 
 #include <exec/types.h>
 
-#define ENODEV 1
-#define EINVAL 2
-#define ENOMEM 3
-#define EAGAIN 4
-#define ETIMEDOUT 5
-#define EINTR 6
-#define ENOTSUPP 7
-#define EIO 8
-
 inline ULONG LE32(ULONG x) { return __builtin_bswap32(x); }
 
 inline void delay_us(ULONG us)
@@ -46,7 +37,7 @@ inline static APTR roundup(APTR x, ULONG y)
 
 inline static APTR rounddown(APTR x, ULONG y)
 {
-    return (APTR)((ULONG)x -((ULONG)x%y));
+    return (APTR)((ULONG)x - ((ULONG)x % y));
 }
 
 #define lower_32_bits(n) ((ULONG)(n))

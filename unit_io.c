@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
 
+#ifdef __INTELLISENSE__
+#include <clib/utility_protos.h>
+#include <clib/exec_protos.h>
+#else
 #include <proto/utility.h>
 #include <proto/exec.h>
+#endif
 
 #include <device.h>
 #include <debug.h>
@@ -34,13 +39,27 @@ int SendFrame(struct GenetUnit *unit, struct IOSana2Req *io)
         *(UWORD *)&ptr[12] = io->ios2_PacketType;
     }
 
-    if (io->ios2_DataLength != 0 && opener->CopyFromBuff)
+    if (io->ios2_DataLength != 0 && opener->CopyFromBuff && opener->CopyFromBuff(ptr + ETH_HLEN, io->ios2_Data, io->ios2_DataLength) == 0)
     {
-        opener->CopyFromBuff(ptr + ETH_HLEN, io->ios2_Data, io->ios2_DataLength);
+        KprintfH("[genet] %s: Failed to copy packet data from buffer\n", __func__);
+        io->ios2_WireError = S2WERR_BUFF_ERROR;
+        io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
+        ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
+        return COMMAND_PROCESSED;
     }
-    bcmgenet_gmac_eth_send(unit, ptr, length);
-    unit->stats.PacketsSent++;
-    return 1;
+
+    int result = bcmgenet_gmac_eth_send(unit, ptr, length);
+    if (result == S2ERR_NO_ERROR)
+    {
+        unit->stats.PacketsSent++;
+    }
+    else
+    {
+        io->ios2_WireError = (result == S2ERR_TX_FAILURE) ? S2WERR_TOO_MANY_RETRIES : S2WERR_GENERIC_ERROR;
+        io->ios2_Req.io_Error = result;
+        ReportEvents(unit, S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
+    }
+    return COMMAND_PROCESSED;
 }
 
 static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packetLength)
@@ -84,6 +103,8 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     /*
         If RAW packet is requested, copy everything, otherwise copy only contents of
         the frame without ethernet header
+        Unfortunately, forcing RAW packet on Roadshow does not work, so we have to copy
+        if the flag is not set.
     */
     if (!(io->ios2_Req.io_Flags & SANA2IOF_RAW))
     {
@@ -109,7 +130,7 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
             KprintfH("[genet] %s: Failed to copy packet data to buffer\n", __func__);
             io->ios2_WireError = S2WERR_BUFF_ERROR;
             io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
-            // TODO report error event
+            ReportEvents(unit, S2EVENT_BUFF | S2EVENT_RX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
         }
 
         /* Set number of bytes received */
@@ -129,20 +150,26 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
     // Get destination address and check if it is a multicast
     uint64_t destAddr = ((uint64_t)*(UWORD *)&packet[0] << 32) | *(ULONG *)&packet[2];
+    // TODO use genet frame attributes, also try to offload this to HFB
     if (destAddr != 0xffffffffffffULL && (destAddr & 0x010000000000ULL))
     {
-        // struct MulticastRange *range;
-        // accept = FALSE;
-        return;
+        BOOL accept = FALSE;
+        for (struct MinNode *node = unit->multicastRanges.mlh_Head; node->mln_Succ; node = node->mln_Succ)
+        {
+            // Check if this is a multicast address we accept
+            struct MulticastRange *range = (struct MulticastRange *)node;
+            if (destAddr >= range->lowerBound && destAddr <= range->upperBound)
+            {
+                accept = TRUE;
+                break;
+            }
+        }
 
-        // ForeachNode(&unit->wu_MulticastRanges, range)
-        // {
-        //     if (destAddr >= range->mr_LowerBound && destAddr <= range->mr_UpperBound)
-        //     {
-        //         accept = TRUE;
-        //         break;
-        //     }
-        // }
+        if (!accept)
+        {
+            // Not a multicast address we accept, drop the packet
+            return;
+        }
     }
 
     unit->stats.PacketsReceived++;
@@ -152,13 +179,13 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
     ObtainSemaphore(&unit->semaphore);
     /* Go through all openers */
-    struct Opener *opener = (struct Opener *)unit->openers.mlh_Head;
-    while (opener->node.mln_Succ)
+    for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
+        struct Opener *opener = (struct Opener *)node;
         /* Go through all IO read requests pending*/
-        struct IOSana2Req *io = (struct IOSana2Req *)opener->readPort.mp_MsgList.lh_Head;
-        while (io)
+        for (struct Node *ioNode = opener->readPort.mp_MsgList.lh_Head; ioNode->ln_Succ; ioNode = ioNode->ln_Succ)
         {
+            struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
             // EthernetII has packet type larger than 1500 (MTU),
             // 802.3 has no packet type but just length
             if (io->ios2_PacketType == packetType || (packetType <= 1500 && io->ios2_PacketType <= 1500))
@@ -171,9 +198,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                 orphan = FALSE;
                 break;
             }
-            io = (struct IOSana2Req *)io->ios2_Req.io_Message.mn_Node.ln_Succ;
         }
-        opener = (struct Opener *)opener->node.mln_Succ;
     }
     ReleaseSemaphore(&unit->semaphore);
 
@@ -184,9 +209,9 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
         ObtainSemaphore(&unit->semaphore);
         /* Go through all openers and offer orphan packet to anyone asking */
-        struct Opener *opener = (struct Opener *)unit->openers.mlh_Head;
-        while (opener->node.mln_Succ)
+        for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
+            struct Opener *opener = (struct Opener *)node;
             struct IOSana2Req *io = (APTR)opener->orphanPort.mp_MsgList.lh_Head;
             /*
                 If this is a real node, ln_Succ will be not NULL, otherwise it is just
@@ -197,7 +222,6 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                 KprintfH("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, packetType);
                 CopyPacket(io, packet, packetLength);
             }
-            opener = (struct Opener *)opener->node.mln_Succ;
         }
         ReleaseSemaphore(&unit->semaphore);
     }

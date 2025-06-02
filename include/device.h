@@ -15,7 +15,11 @@
 #include <phy/phy.h>
 #include <bcmgenet.h>
 
-#define LIB_MIN_VERSION 45
+/*
+ * SNPrintf - v47
+ * NewMinList - v45
+ */
+#define LIB_MIN_VERSION 47
 
 #define ETH_HLEN 14		  /* Total octets in header.				*/
 #define VLAN_HLEN 4		  /* The additional bytes required by VLAN	*/
@@ -25,11 +29,18 @@
 
 #define ARCH_DMA_MINALIGN 128 // TODO this is likely wrong
 
+#define COMMAND_PROCESSED 1
+#define COMMAND_SCHEDULED 0
+
+#define ETIMEDOUT -1 // Used by PHY to report errors
+#define EAGAIN -2
+
 /* Generic TODOs
 packet stats from HW
 type statistics
-multicasts
-error reporting S2 compliant
+multicasts using HFB
+hardware filter block support
+better ring buffers handling
 */
 
 struct GenetDevice;
@@ -48,8 +59,8 @@ struct Opener
 	struct MsgPort readPort;
 	struct MsgPort orphanPort;
 	struct MsgPort eventPort;
-	/* for CMD_READ, 
-     * BOOL PacketFilter(struct Hook* packetFilter asm("a0"), struct IOSana2Req* asm("a2"), APTR asm("a1"));
+	/* for CMD_READ,
+	 * BOOL PacketFilter(struct Hook* packetFilter asm("a0"), struct IOSana2Req* asm("a2"), APTR asm("a1"));
 	 * fill in ios2_DataLength, ios2_SrcAddr, ios2_DstAddr
 	 * pointer is to the buffer
 	 * TRUE - send to stack; FALSE - reject
@@ -60,12 +71,21 @@ struct Opener
 	BOOL (*CopyFromBuff)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
 };
 
+struct MulticastRange
+{
+	struct MinNode node;
+	LONG useCount;		 /* How many openers use this range */
+	uint64_t lowerBound; /* Inclusive */
+	uint64_t upperBound; /* Inclusive */
+};
+
 struct GenetUnit
 {
 	struct Unit unit;
 	struct ExecBase *execBase;
 	struct TimerBase *timerBase;
 	struct Library *utilityBase;
+	APTR memoryPool;
 
 	/* config */
 	LONG unitNumber;
@@ -77,6 +97,7 @@ struct GenetUnit
 	struct Task *task;
 	struct Sana2DeviceStats stats;
 	struct MinList openers;
+	struct MinList multicastRanges;
 	struct SignalSemaphore semaphore;
 
 	/* Device tree */
@@ -115,7 +136,7 @@ struct GenetDevice
 
 /* Unit interface */
 int DevTreeParse(struct GenetUnit *unit);
-void UnitTaskStart(struct GenetUnit *unit);
+int UnitTaskStart(struct GenetUnit *unit);
 void UnitTaskStop(struct GenetUnit *unit);
 
 int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener *opener);
@@ -128,4 +149,7 @@ int SendFrame(struct GenetUnit *unit, struct IOSana2Req *io);
 void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
 void ProcessCommand(struct IOSana2Req *io);
 
+int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io);
+int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io);
+void ReportEvents(struct GenetUnit *unit, ULONG eventSet);
 #endif

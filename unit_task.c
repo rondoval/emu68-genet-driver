@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
+
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#else
 #include <proto/exec.h>
+#endif
+
 #include <dos/dos.h>
 
 #include <device.h>
@@ -17,11 +23,6 @@
 
 static inline BOOL ProcessReceive(struct GenetUnit *unit)
 {
-    if (unit->state != STATE_ONLINE)
-    {
-        return FALSE;
-    }
-
     int pkt_len = 0;
     BOOL activity = FALSE;
     do
@@ -36,11 +37,6 @@ static inline BOOL ProcessReceive(struct GenetUnit *unit)
                 activity = TRUE;
                 ReceiveFrame(unit, buffer, pkt_len);
             }
-            // TODO there's some bug in lower layer, sometimes gets 2048 byte frames, all 0's
-            // else
-            // {
-            //     Kprintf("[genet] %s: Received packet of length %ld, but it is too long\n", __func__, pkt_len);
-            // }
             bcmgenet_gmac_free_pkt(unit, buffer, pkt_len);
         }
     } while (pkt_len > 0); // && pkt_len < ETH_HLEN + ETH_DATA_LEN);
@@ -103,17 +99,18 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         {
             activity = TRUE;
             struct IOSana2Req *io;
-            ObtainSemaphore(&unit->semaphore);
             // Drain command queue and process it
             while ((io = (struct IOSana2Req *)GetMsg(&unit->unit.unit_MsgPort)))
             {
                 ProcessCommand(io);
             }
-            ReleaseSemaphore(&unit->semaphore);
         }
 
-        // No matter what, let's receive some packets
-        activity |= ProcessReceive(unit);
+        if (unit->state == STATE_ONLINE)
+        {
+            activity |= ProcessReceive(unit);
+        }
+
         if (activity)
         {
             // If we received something, reset cooldown
@@ -148,6 +145,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         }
         if (sigset & SIGBREAKF_CTRL_C)
         {
+            Kprintf("[genet] %s: Received SIGBREAKF_CTRL_C, stopping genet task\n", __func__);
             AbortIO(&timerReq->tr_node);
             WaitIO(&timerReq->tr_node);
         }
@@ -159,7 +157,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     unit->task = NULL;
 }
 
-void UnitTaskStart(struct GenetUnit *unit)
+int UnitTaskStart(struct GenetUnit *unit)
 {
     struct ExecBase *SysBase = unit->execBase;
     Kprintf("[genet] %s: genet task starting\n", __func__);
@@ -168,6 +166,17 @@ void UnitTaskStart(struct GenetUnit *unit)
     struct MemList *ml = AllocMem(sizeof(struct MemList) + sizeof(struct MemEntry), MEMF_PUBLIC | MEMF_CLEAR);
     struct Task *task = AllocMem(sizeof(struct Task), MEMF_PUBLIC | MEMF_CLEAR);
     ULONG *stack = AllocMem(UNIT_STACK_SIZE * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+    if (!ml || !task || !stack)
+    {
+        Kprintf("[genet] %s: Failed to allocate memory for genet task\n", __func__);
+        if (ml)
+            FreeMem(ml, sizeof(struct MemList) + sizeof(struct MemEntry));
+        if (task)
+            FreeMem(task, sizeof(struct Task));
+        if (stack)
+            FreeMem(stack, UNIT_STACK_SIZE * sizeof(ULONG));
+        return S2ERR_NO_RESOURCES;
+    }
 
     // Prepare mem list, put task and its stack there
     ml->ml_NumEntries = 2;
@@ -194,9 +203,19 @@ void UnitTaskStart(struct GenetUnit *unit)
     NewMinList((struct MinList *)&task->tc_MemEntry);
     AddHead(&task->tc_MemEntry, &ml->ml_Node);
 
-    AddTask(task, UnitTask, NULL);
+    APTR result = AddTask(task, UnitTask, NULL);
+    if (result == NULL)
+    {
+        Kprintf("[genet] %s: Failed to add genet task\n", __func__);
+        FreeMem(ml, sizeof(struct MemList) + sizeof(struct MemEntry));
+        FreeMem(task, sizeof(struct Task));
+        FreeMem(&stack[0], UNIT_STACK_SIZE * sizeof(ULONG));
+        return S2ERR_NO_RESOURCES;
+    }
+
     Wait(SIGBREAKF_CTRL_F);
     Kprintf("[genet] %s: genet task started\n", __func__);
+    return S2ERR_NO_ERROR;
 }
 
 void UnitTaskStop(struct GenetUnit *unit)
@@ -207,9 +226,14 @@ void UnitTaskStop(struct GenetUnit *unit)
     struct MsgPort *timerPort = CreateMsgPort();
     struct timerequest *timerReq = CreateIORequest(timerPort, sizeof(struct timerequest));
 
-    if (timerPort != NULL || timerReq != NULL)
+    if (timerPort != NULL && timerReq != NULL)
     {
-        OpenDevice((CONST_STRPTR) "timer.device", UNIT_VBLANK, (struct IORequest *)timerReq, LIB_MIN_VERSION);
+        BYTE result = OpenDevice((CONST_STRPTR) "timer.device", UNIT_VBLANK, (struct IORequest *)timerReq, LIB_MIN_VERSION);
+        if (result != NULL)
+        {
+            Kprintf("[genet] %s: Failed to open timer device: %ld\n", __func__, result);
+            // We'll continue anyway
+        }
     }
 
     Signal(unit->task, SIGBREAKF_CTRL_C);

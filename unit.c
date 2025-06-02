@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
+
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#include <clib/dos_protos.h>
+#else
 #include <proto/exec.h>
 #include <proto/dos.h>
+#endif
+
 #include <exec/execbase.h>
 #include <exec/types.h>
 #include <stdarg.h>
@@ -46,7 +53,7 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		ObtainSemaphore(&unit->semaphore);
 		AddTail((APTR)&unit->openers, (APTR)opener);
 		ReleaseSemaphore(&unit->semaphore);
-		return 0;
+		return S2ERR_NO_ERROR;
 	}
 
 	unit->execBase = SysBase;
@@ -54,27 +61,43 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	if (unit->utilityBase == NULL)
 	{
 		Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
-		return -ENODEV;
+		return S2ERR_NO_RESOURCES;
 	}
 
 	unit->state = STATE_UNCONFIGURED;
 	unit->unit.unit_OpenCnt = 1;
 	unit->unitNumber = unitNumber;
 
+	unit->memoryPool = CreatePool(MEMF_FAST | MEMF_PUBLIC, 16384, 8192);
+	if (unit->memoryPool == NULL)
+	{
+		Kprintf("[genet] %s: Failed to create memory pool\n", __func__);
+		CloseLibrary(unit->utilityBase);
+		return S2ERR_NO_RESOURCES;
+	}
+	NewMinList(&unit->multicastRanges);
 	NewMinList(&unit->openers);
 	AddTail((APTR)&unit->openers, (APTR)opener);
 	InitSemaphore(&unit->semaphore);
 
 	int result = DevTreeParse(unit);
-	if (result < 0)
+	if (result != S2ERR_NO_ERROR)
 	{
-		Kprintf("[genet] %s: Failed to parse device tree: %d\n", __func__, result);
+		Kprintf("[genet] %s: Failed to parse device tree: %ld\n", __func__, result);
 		return result;
 	}
 
 	CopyMem(unit->localMacAddress, unit->currentMacAddress, 6);
-	UnitTaskStart(unit);
-	return 0;
+	result = UnitTaskStart(unit);
+	if (result != S2ERR_NO_ERROR)
+	{
+		Kprintf("[genet] %s: Failed to start unit task: %ld\n", __func__, result);
+		CloseLibrary(unit->utilityBase);
+		DeletePool(unit->memoryPool);
+		unit->memoryPool = NULL;
+		return result;
+	}
+	return S2ERR_NO_ERROR;
 }
 
 int UnitConfigure(struct GenetUnit *unit)
@@ -83,9 +106,9 @@ int UnitConfigure(struct GenetUnit *unit)
 	SetupRGMII(unit);
 	// TODO process PROM flag
 
-	Kprintf("[genet] %s: About to initalize UMAC\n", __func__);
+	Kprintf("[genet] %s: About to probe UMAC\n", __func__);
 	int result = bcmgenet_eth_probe(unit);
-	if (result < 0)
+	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to probe UMAC: %ld\n", __func__, result);
 		bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
@@ -93,14 +116,14 @@ int UnitConfigure(struct GenetUnit *unit)
 	}
 
 	unit->state = STATE_CONFIGURED;
-	return 0;
+	return S2ERR_NO_ERROR;
 }
 
 int UnitOnline(struct GenetUnit *unit)
 {
 	Kprintf("[genet] %s: About to start UMAC\n", __func__);
 	int result = bcmgenet_gmac_eth_start(unit);
-	if (result < 0)
+	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to start UMAC: %ld\n", __func__, result);
 		bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
@@ -108,14 +131,14 @@ int UnitOnline(struct GenetUnit *unit)
 	}
 
 	unit->state = STATE_ONLINE;
-	return 0;
+	return S2ERR_NO_ERROR;
 }
 
 void UnitOffline(struct GenetUnit *unit)
 {
 	Kprintf("[genet] %s: Stopping UMAC\n", __func__);
-	bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
 	unit->state = STATE_OFFLINE;
+	bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
 }
 
 int UnitClose(struct GenetUnit *unit, struct Opener *opener)
@@ -141,6 +164,8 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 		}
 		UnitTaskStop(unit);
 		CloseLibrary(unit->utilityBase);
+		DeletePool(unit->memoryPool);
+		unit->memoryPool = NULL;
 		unit->state = STATE_UNCONFIGURED;
 	}
 	return unit->unit.unit_OpenCnt;

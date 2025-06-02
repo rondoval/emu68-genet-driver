@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
+
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#include <clib/utility_protos.h>
+#else
+#include <proto/exec.h>
+#include <proto/utility.h>
+#endif
+
 #include <exec/types.h>
 #include <exec/resident.h>
 #include <exec/io.h>
 #include <exec/devices.h>
 #include <exec/errors.h>
 #include <dos/dosextens.h>
-
-#include <proto/exec.h>
-#include <proto/utility.h>
 
 #include <devices/sana2.h>
 #include <devices/sana2specialstats.h>
@@ -208,7 +214,7 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     int result = UnitOpen(base->unit, unitNumber, flags, opener);
     io->ios2_Req.io_Unit = (struct Unit *)base->unit;
 
-    if (result == 0)
+    if (result == S2ERR_NO_ERROR)
     {
         Kprintf("[genet] %s: Unit opened successfully\n", __func__);
         base->device.dd_Library.lib_OpenCnt++;

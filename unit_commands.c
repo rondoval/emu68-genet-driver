@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
 
+#ifdef __INTELLISENSE__
+#include <clib/timer_protos.h>
+#include <clib/exec_protos.h>
+#else
+#include <proto/timer.h>
+#include <proto/exec.h>
+#endif
+
 #include <devices/sana2.h>
 #include <devices/sana2specialstats.h>
 #include <devices/newstyle.h>
-#include <proto/timer.h>
-#include <proto/exec.h>
 
 #include <device.h>
 #include <debug.h>
@@ -19,8 +25,8 @@ static const UWORD GENET_SupportedCommands[] = {
     S2_DEVICEQUERY,
     S2_GETSTATIONADDRESS,
     S2_CONFIGINTERFACE,
-    // S2_ADDMULTICASTADDRESS,
-    // S2_DELMULTICASTADDRESS,
+    S2_ADDMULTICASTADDRESS,
+    S2_DELMULTICASTADDRESS,
     S2_MULTICAST,
     S2_BROADCAST,
     // S2_TRACKTYPE,
@@ -32,32 +38,33 @@ static const UWORD GENET_SupportedCommands[] = {
     S2_READORPHAN,
     S2_ONLINE,
     S2_OFFLINE,
-    // S2_ADDMULTICASTADDRESSES,
-    // S2_DELMULTICASTADDRESSES,
+    S2_ADDMULTICASTADDRESSES,
+    S2_DELMULTICASTADDRESSES,
 
     NSCMD_DEVICEQUERY,
     0};
 
 /* Mask of events known by the driver */
-//TODO actually generate these
-#define EVENT_MASK (S2EVENT_ONLINE | S2EVENT_OFFLINE |          \
-                    S2EVENT_TX | S2EVENT_RX | S2EVENT_BUFF |    \
+#define EVENT_MASK (S2EVENT_ONLINE | S2EVENT_OFFLINE |       \
+                    S2EVENT_TX | S2EVENT_RX | S2EVENT_BUFF | \
                     S2EVENT_ERROR | S2EVENT_HARDWARE | S2EVENT_SOFTWARE)
 
 /* Report events to this unit */
 void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
 {
-    Kprintf("[genet] %s: Reporting events %08lx\n", __func__, eventSet);
+    KprintfH("[genet] %s: Reporting events %08lx\n", __func__, eventSet);
     struct ExecBase *SysBase = unit->execBase;
 
     /* Report event to every listener of every opener accepting the mask */
-    Disable();
-    for (struct Opener *opener = (struct Opener *)unit->openers.mlh_Head; opener->node.mln_Succ; opener = (struct Opener *)opener->node.mln_Succ)
+    ObtainSemaphore(&unit->semaphore);
+    for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
-        struct IOSana2Req *io = (struct IOSana2Req *)opener->eventPort.mp_MsgList.lh_Head;
-        while (io)
+        struct Opener *opener = (struct Opener *)node;
+        struct Node *ioNode, *nextIoNode;
+
+        for (ioNode = opener->eventPort.mp_MsgList.lh_Head; (nextIoNode = ioNode->ln_Succ) != NULL; ioNode = nextIoNode)
         {
-            struct IOSana2Req *next = (struct IOSana2Req *)io->ios2_Req.io_Message.mn_Node.ln_Succ;
+            struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
             /* Check if event mask in WireError fits the events occured */
             if (io->ios2_WireError & eventSet)
             {
@@ -68,18 +75,17 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
                 Remove((struct Node *)io);
                 ReplyMsg((struct Message *)io);
             }
-            io = next;
         }
     }
-    Enable();
-    Kprintf("[genet] %s: Reporting done\n", __func__);
+    ReleaseSemaphore(&unit->semaphore);
+    KprintfH("[genet] %s: Reporting done\n", __func__);
 }
 
 static int Do_S2_ONEVENT(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     struct ExecBase *SysBase = unit->execBase;
-    Kprintf("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
+    KprintfH("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
 
     ULONG preset;
     if (unit->state == STATE_ONLINE)
@@ -93,24 +99,24 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
         Kprintf("[genet] %s: Unsupported event requested: %08lx\n", __func__, io->ios2_WireError);
         io->ios2_Req.io_Error = S2ERR_NOT_SUPPORTED;
         io->ios2_WireError = S2WERR_BAD_EVENT;
-        return 1;
+        return COMMAND_PROCESSED;
     }
 
     /* If expected flags match preset, return back (almost) immediately */
     if (io->ios2_WireError & preset)
     {
-        Kprintf("[genet] %s: Event preset %08lx matches requested %08lx, returning immediately\n", __func__, preset, io->ios2_WireError);
+        KprintfH("[genet] %s: Event preset %08lx matches requested %08lx, returning immediately\n", __func__, preset, io->ios2_WireError);
         io->ios2_WireError &= preset;
-        return 1;
+        return COMMAND_PROCESSED;
     }
     else
     {
-        Kprintf("[genet] %s: Adding to event listener list, preset %08lx\n", __func__, preset);
+        KprintfH("[genet] %s: Adding to event listener list, preset %08lx\n", __func__, preset);
         /* Remove QUICK flag and put message on event listener list */
         struct Opener *opener = io->ios2_BufferManagement;
         io->ios2_Req.io_Flags &= ~IOF_QUICK;
         PutMsg(&opener->eventPort, (struct Message *)io);
-        return 0;
+        return COMMAND_SCHEDULED;
     }
 }
 
@@ -118,7 +124,7 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     struct ExecBase *SysBase = unit->execBase;
-    Kprintf("[genet] %s: CMD_FLUSH\n", __func__);
+    KprintfH("[genet] %s: CMD_FLUSH\n", __func__);
 
     struct IOSana2Req *req;
     /* Flush and cancel all write requests */
@@ -135,8 +141,9 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
     // }
 
     /* For every opener, flush orphan and even queues */
-    for (struct Opener *opener = (struct Opener *)unit->openers.mlh_Head; opener->node.mln_Succ; opener = (struct Opener *)opener->node.mln_Succ)
+    for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
+        struct Opener *opener = (struct Opener *)node;
         while ((req = (struct IOSana2Req *)GetMsg(&opener->orphanPort)))
         {
             req->ios2_Req.io_Error = IOERR_ABORTED;
@@ -158,14 +165,14 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
             ReplyMsg((struct Message *)req);
         }
     }
-    Kprintf("[genet] %s: Flush completed\n", __func__);
+    KprintfH("[genet] %s: Flush completed\n", __func__);
 
-    return 1;
+    return COMMAND_PROCESSED;
 }
 
 static int Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
 {
-    Kprintf("[genet] %s: NSCMD_DEVICEQUERY\n", __func__);
+    KprintfH("[genet] %s: NSCMD_DEVICEQUERY\n", __func__);
     struct NSDeviceQueryResult *dq = io->io_Data;
 
     /* Fill out structure */
@@ -176,7 +183,7 @@ static int Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
     dq->nsdqr_SizeAvailable = io->io_Actual;
     io->io_Error = 0;
 
-    return 1;
+    return COMMAND_PROCESSED;
 }
 
 static inline int Do_CMD_READ(struct IOSana2Req *io)
@@ -190,33 +197,33 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
         Kprintf("[genet] %s: Unit is offline, cannot read\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
         io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
-        return 1;
+        return COMMAND_PROCESSED;
     }
 
     struct Opener *opener = io->ios2_BufferManagement;
     io->ios2_Req.io_Flags &= ~IOF_QUICK;
     PutMsg(&opener->readPort, (struct Message *)io);
-    return 0;
+    return COMMAND_SCHEDULED;
 }
 
 static inline int Do_S2_READORPHAN(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     struct ExecBase *SysBase = unit->execBase;
-    Kprintf("[genet] %s: S2_READORPHAN\n", __func__);
+    KprintfH("[genet] %s: S2_READORPHAN\n", __func__);
 
     if (unit->state != STATE_ONLINE)
     {
         Kprintf("[genet] %s: Unit is offline, cannot read orphan\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
         io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
-        return 1;
+        return COMMAND_PROCESSED;
     }
 
     struct Opener *opener = io->ios2_BufferManagement;
     io->ios2_Req.io_Flags &= ~IOF_QUICK;
     PutMsg(&opener->orphanPort, (struct Message *)io);
-    return 0;
+    return COMMAND_SCHEDULED;
 }
 
 static inline int Do_CMD_WRITE(struct IOSana2Req *io)
@@ -229,7 +236,7 @@ static inline int Do_CMD_WRITE(struct IOSana2Req *io)
         Kprintf("[genet] %s: Unit is offline, cannot write\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
         io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
-        return 1;
+        return COMMAND_PROCESSED;
     }
 
     io->ios2_Req.io_Flags &= ~IOF_QUICK;
@@ -254,7 +261,7 @@ int Do_S2_DEVICEQUERY(struct IOSana2Req *io)
         info->RawMTU = ETH_DATA_LEN + ETH_HLEN + VLAN_HLEN;
         info->SizeSupplied += sizeof(info->RawMTU);
     }
-    return 1;
+    return COMMAND_PROCESSED;
 }
 
 static int Do_S2_ONLINE(struct IOSana2Req *io)
@@ -272,18 +279,19 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
         Kprintf("[genet] %s: statistics zeroed, LastStart: %ld\n", __func__, unit->stats.LastStart.tv_secs);
 
         int result = UnitOnline(unit);
-        if (result < 0)
+        if (result != S2ERR_NO_ERROR)
         {
             Kprintf("[genet] %s: Failed to bring unit online: %ld\n", __func__, result);
-            io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
+            io->ios2_Req.io_Error = result;
             io->ios2_WireError = S2WERR_GENERIC_ERROR;
-            return 1;
+            ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
+            return COMMAND_PROCESSED;
         }
         Kprintf("[genet] %s: Unit online, about to report events\n", __func__);
         ReportEvents(unit, S2EVENT_ONLINE);
     }
 
-    return 1;
+    return COMMAND_PROCESSED;
 }
 
 static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
@@ -297,19 +305,18 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
         /* We are already configured */
         io->ios2_Req.io_Error = S2ERR_BAD_STATE;
         io->ios2_WireError = S2WERR_IS_CONFIGURED;
-        return 1;
+        return COMMAND_PROCESSED;
     }
 
     int result = UnitConfigure(unit);
-    // TODO proper SANA error codes
-    if (result < 0)
+    if (result != S2ERR_NO_ERROR)
     {
         Kprintf("[genet] %s: Failed to configure unit: %ld\n", __func__, result);
-        io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
+        io->ios2_Req.io_Error = result;
         io->ios2_WireError = S2WERR_GENERIC_ERROR;
-        return 1;
+        ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
     }
-    return 1;
+    return COMMAND_PROCESSED;
 }
 
 static int Do_S2_OFFLINE(struct IOSana2Req *io)
@@ -335,11 +342,10 @@ static int Do_S2_OFFLINE(struct IOSana2Req *io)
     if (unit->state == STATE_ONLINE)
     {
         UnitOffline(unit);
-        unit->state = STATE_OFFLINE;
         ReportEvents(unit, S2EVENT_OFFLINE);
     }
 
-    return 1;
+    return COMMAND_PROCESSED;
 }
 
 void ProcessCommand(struct IOSana2Req *io)
@@ -348,7 +354,7 @@ void ProcessCommand(struct IOSana2Req *io)
     struct ExecBase *SysBase = unit->execBase;
     ObtainSemaphore(&unit->semaphore);
 
-    ULONG complete = 0;
+    ULONG complete = COMMAND_SCHEDULED;
 
     /*
         Only NSCMD_DEVICEQUERY can use standard sized request. All other must be of
@@ -358,11 +364,11 @@ void ProcessCommand(struct IOSana2Req *io)
         io->ios2_Req.io_Command != NSCMD_DEVICEQUERY)
     {
         io->ios2_Req.io_Error = IOERR_BADLENGTH;
-        complete = 1;
+        complete = COMMAND_PROCESSED;
     }
     else
     {
-        io->ios2_Req.io_Error = 0;
+        io->ios2_Req.io_Error = S2ERR_NO_ERROR;
 
         switch (io->ios2_Req.io_Command)
         {
@@ -398,26 +404,26 @@ void ProcessCommand(struct IOSana2Req *io)
             Kprintf("[genet] %s: S2_GETSTATIONADDRESS\n", __func__);
             CopyMem(unit->localMacAddress, io->ios2_DstAddr, 6);
             CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, 6);
-            io->ios2_Req.io_Error = 0;
-            complete = 1;
+            io->ios2_Req.io_Error = S2ERR_NO_ERROR;
+            complete = COMMAND_PROCESSED;
             break;
 
         case S2_GETGLOBALSTATS:
-            Kprintf("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
+            KprintfH("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
             CopyMem(&unit->stats, io->ios2_StatData, sizeof(struct Sana2DeviceStats));
-            io->ios2_Req.io_Error = 0;
-            complete = 1;
+            io->ios2_Req.io_Error = S2ERR_NO_ERROR;
+            complete = COMMAND_PROCESSED;
             break;
 
-            // case S2_ADDMULTICASTADDRESS: /* Fallthrough */
-            // case S2_ADDMULTICASTADDRESSES:
-            //     complete = Do_S2_ADDMULTICASTADDRESSES(io);
-            //     break;
+        case S2_ADDMULTICASTADDRESS: /* Fallthrough */
+        case S2_ADDMULTICASTADDRESSES:
+            complete = Do_S2_ADDMULTICASTADDRESSES(io);
+            break;
 
-            // case S2_DELMULTICASTADDRESS: /* Fallthrough */
-            // case S2_DELMULTICASTADDRESSES:
-            //     complete = Do_S2_DELMULTICASTADDRESSES(io);
-            //     break;
+        case S2_DELMULTICASTADDRESS: /* Fallthrough */
+        case S2_DELMULTICASTADDRESSES:
+            complete = Do_S2_DELMULTICASTADDRESSES(io);
+            break;
 
         case S2_CONFIGINTERFACE:
             complete = Do_S2_CONFIGINTERFACE(io);
@@ -441,13 +447,13 @@ void ProcessCommand(struct IOSana2Req *io)
 
         default:
             io->ios2_Req.io_Error = IOERR_NOCMD;
-            complete = 1;
+            complete = COMMAND_PROCESSED;
             break;
         }
     }
 
     // If command is complete and not quick, reply it now
-    if (complete && !(io->ios2_Req.io_Flags & IOF_QUICK))
+    if (complete == COMMAND_PROCESSED && !(io->ios2_Req.io_Flags & IOF_QUICK))
     {
         ReplyMsg((struct Message *)io);
     }

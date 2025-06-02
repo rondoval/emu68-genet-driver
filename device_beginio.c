@@ -1,20 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #define __NOLIBBASE__
-#include <exec/types.h>
-#include <exec/resident.h>
-#include <exec/io.h>
-#include <exec/devices.h>
-#include <exec/errors.h>
-#include <dos/dosextens.h>
 
+#ifdef __INTELLISENSE__
+#include <clib/exec_protos.h>
+#else
 #include <proto/exec.h>
+#endif
 
 #include "settings.h"
 #include <device.h>
 #include <devices/sana2.h>
-
 #include <debug.h>
-
 
 void beginIO(struct IOSana2Req *io asm("a1"))
 {
@@ -33,7 +29,7 @@ void beginIO(struct IOSana2Req *io asm("a1"))
     {
         KprintfH("[genet] %s: Unit is busy, queuing %04lx\n", __func__, io->ios2_Req.io_Command);
         /* Unit was busy, remove QUICK flag so that Exec will wait for completion properly */
-        io->ios2_Req.io_Error = 0;
+        io->ios2_Req.io_Error = S2ERR_NO_ERROR;
         io->ios2_Req.io_Flags &= ~IOF_QUICK;
         PutMsg(&unit->unit.unit_MsgPort, (struct Message *)io);
     }
