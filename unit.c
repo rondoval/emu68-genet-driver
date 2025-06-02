@@ -106,7 +106,7 @@ int UnitConfigure(struct GenetUnit *unit)
 	SetupRGMII(unit);
 	// TODO process PROM flag
 
-	Kprintf("[genet] %s: About to initalize UMAC\n", __func__);
+	Kprintf("[genet] %s: About to probe UMAC\n", __func__);
 	int result = bcmgenet_eth_probe(unit);
 	if (result != S2ERR_NO_ERROR)
 	{

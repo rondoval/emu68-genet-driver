@@ -85,7 +85,7 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     struct ExecBase *SysBase = unit->execBase;
-    Kprintf("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
+    KprintfH("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
 
     ULONG preset;
     if (unit->state == STATE_ONLINE)
@@ -105,13 +105,13 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
     /* If expected flags match preset, return back (almost) immediately */
     if (io->ios2_WireError & preset)
     {
-        Kprintf("[genet] %s: Event preset %08lx matches requested %08lx, returning immediately\n", __func__, preset, io->ios2_WireError);
+        KprintfH("[genet] %s: Event preset %08lx matches requested %08lx, returning immediately\n", __func__, preset, io->ios2_WireError);
         io->ios2_WireError &= preset;
         return COMMAND_PROCESSED;
     }
     else
     {
-        Kprintf("[genet] %s: Adding to event listener list, preset %08lx\n", __func__, preset);
+        KprintfH("[genet] %s: Adding to event listener list, preset %08lx\n", __func__, preset);
         /* Remove QUICK flag and put message on event listener list */
         struct Opener *opener = io->ios2_BufferManagement;
         io->ios2_Req.io_Flags &= ~IOF_QUICK;
@@ -124,7 +124,7 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     struct ExecBase *SysBase = unit->execBase;
-    Kprintf("[genet] %s: CMD_FLUSH\n", __func__);
+    KprintfH("[genet] %s: CMD_FLUSH\n", __func__);
 
     struct IOSana2Req *req;
     /* Flush and cancel all write requests */
@@ -165,14 +165,14 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
             ReplyMsg((struct Message *)req);
         }
     }
-    Kprintf("[genet] %s: Flush completed\n", __func__);
+    KprintfH("[genet] %s: Flush completed\n", __func__);
 
     return COMMAND_PROCESSED;
 }
 
 static int Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
 {
-    Kprintf("[genet] %s: NSCMD_DEVICEQUERY\n", __func__);
+    KprintfH("[genet] %s: NSCMD_DEVICEQUERY\n", __func__);
     struct NSDeviceQueryResult *dq = io->io_Data;
 
     /* Fill out structure */
@@ -210,7 +210,7 @@ static inline int Do_S2_READORPHAN(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     struct ExecBase *SysBase = unit->execBase;
-    Kprintf("[genet] %s: S2_READORPHAN\n", __func__);
+    KprintfH("[genet] %s: S2_READORPHAN\n", __func__);
 
     if (unit->state != STATE_ONLINE)
     {
@@ -409,7 +409,7 @@ void ProcessCommand(struct IOSana2Req *io)
             break;
 
         case S2_GETGLOBALSTATS:
-            Kprintf("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
+            KprintfH("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
             CopyMem(&unit->stats, io->ios2_StatData, sizeof(struct Sana2DeviceStats));
             io->ios2_Req.io_Error = S2ERR_NO_ERROR;
             complete = COMMAND_PROCESSED;
