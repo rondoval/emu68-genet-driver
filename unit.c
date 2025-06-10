@@ -65,6 +65,7 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	}
 
 	unit->state = STATE_UNCONFIGURED;
+	unit->flags = flags;
 	unit->unit.unit_OpenCnt = 1;
 	unit->unitNumber = unitNumber;
 
@@ -76,6 +77,8 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		return S2ERR_NO_RESOURCES;
 	}
 	NewMinList(&unit->multicastRanges);
+	unit->multicastCount = 0;
+	
 	NewMinList(&unit->openers);
 	AddTail((APTR)&unit->openers, (APTR)opener);
 	InitSemaphore(&unit->semaphore);
@@ -104,7 +107,6 @@ int UnitConfigure(struct GenetUnit *unit)
 {
 	SetupMDIO(unit);
 	SetupRGMII(unit);
-	// TODO process PROM flag
 
 	Kprintf("[genet] %s: About to probe UMAC\n", __func__);
 	int result = bcmgenet_eth_probe(unit);

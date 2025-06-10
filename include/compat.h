@@ -40,34 +40,19 @@ inline static APTR rounddown(APTR x, ULONG y)
     return (APTR)((ULONG)x - ((ULONG)x % y));
 }
 
-#define lower_32_bits(n) ((ULONG)(n))
-
 #define BIT(nr) (1UL << (nr))
 
 #define readl(addr) in_le32((volatile ULONG *)(addr))
 #define writel(b, addr) out_le32((volatile ULONG *)(addr), (b))
 
-static inline void writel_relaxed(ULONG val, APTR addr)
-{
-    *(volatile ULONG *)addr = LE32(val);
-    // asm volatile("nop");
-}
-
-static inline ULONG readl_relaxed(APTR addr)
+static inline ULONG in_le32(volatile ULONG *addr)
 {
     ULONG val = LE32(*(volatile ULONG *)addr);
     // asm volatile("nop");
     return val;
 }
 
-static inline unsigned in_le32(volatile ULONG *addr)
-{
-    ULONG val = LE32(*(volatile ULONG *)addr);
-    // asm volatile("nop");
-    return val;
-}
-
-static inline void out_le32(volatile ULONG *addr, int val)
+static inline void out_le32(volatile ULONG *addr, ULONG val)
 {
     *(volatile ULONG *)addr = LE32(val);
     // asm volatile("nop");

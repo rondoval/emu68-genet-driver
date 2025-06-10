@@ -86,6 +86,9 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
     range->upperBound = upper_bound;
     AddHead((APTR)&unit->multicastRanges, (APTR)range);
 
+    ULONG count = upper_bound - lower_bound + 1;
+    unit->multicastCount += count;
+
     return COMMAND_PROCESSED;
 }
 
@@ -128,6 +131,9 @@ int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
             {
                 Remove((APTR)range);
                 FreePooled(unit->memoryPool, range, sizeof(struct MulticastRange));
+                
+                ULONG count = upper_bound - lower_bound + 1;
+                unit->multicastCount -= count;
             }
             return COMMAND_PROCESSED;
         }

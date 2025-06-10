@@ -41,6 +41,9 @@ type statistics
 multicasts using HFB
 hardware filter block support
 better ring buffers handling
+
+Long shot:
+- use checksum offload (changes in SANA-II and stack)
 */
 
 struct GenetDevice;
@@ -69,6 +72,8 @@ struct Opener
 	/* result TRUE - success; FALSE - error */
 	BOOL (*CopyToBuff)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
 	BOOL (*CopyFromBuff)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
+	APTR (*DMACopyToBuff)(APTR cookie asm("a0"));
+	APTR (*DMACopyFromBuff)(APTR cookie asm("a0"));
 };
 
 struct MulticastRange
@@ -77,6 +82,42 @@ struct MulticastRange
 	LONG useCount;		 /* How many openers use this range */
 	uint64_t lowerBound; /* Inclusive */
 	uint64_t upperBound; /* Inclusive */
+};
+
+struct bcmgenet_tx_ring
+{
+	ULONG packets;
+	ULONG bytes;
+
+	struct enet_cb *tx_control_block; /* tx ring buffer control block*/
+	UBYTE clean_ptr;				  /* Tx ring clean pointer */
+	ULONG tx_cons_index;			  /* last consumer index of each ring*/
+	UWORD free_bds;					  /* # of free bds for each ring */
+	UBYTE write_ptr;				  /* Tx ring write pointer SW copy */
+	ULONG tx_prod_index;				  /* Tx ring producer index SW copy */
+};
+
+struct bcmgenet_rx_ring
+{
+	ULONG bytes;
+	ULONG packets;
+	ULONG errors;
+	ULONG dropped;
+
+	struct enet_cb *rx_control_block; /* Rx ring buffer control block */
+	unsigned int rx_cons_index;		  /* Rx last consumer index */
+	unsigned int read_ptr;			  /* Rx ring read pointer */
+	unsigned int old_discards;
+	ULONG rx_max_coalesced_frames;
+	ULONG rx_coalesce_usecs;
+};
+
+struct enet_cb
+{
+	struct IOSana2Req *ioReq;
+	APTR descriptor_address;
+	APTR internal_buffer; /* Used when data needs to be copied from IP stack */
+	APTR data_buffer;
 };
 
 struct GenetUnit
@@ -98,6 +139,7 @@ struct GenetUnit
 	struct Sana2DeviceStats stats;
 	struct MinList openers;
 	struct MinList multicastRanges;
+	ULONG multicastCount;
 	struct SignalSemaphore semaphore;
 
 	/* Device tree */
@@ -113,15 +155,16 @@ struct GenetUnit
 
 	/* MAC layer */
 	/* RX */
+	struct bcmgenet_rx_ring rx_ring;
+
 	UBYTE *rxbuffer_not_aligned;
 	UBYTE *rxbuffer;
-	APTR rx_desc_base;
-	ULONG rx_cons_index;
 
 	/* TX */
+	struct bcmgenet_tx_ring tx_ring;
+
 	UBYTE *txbuffer_not_aligned;
 	UBYTE *txbuffer;
-	APTR tx_desc_base;
 };
 
 struct GenetDevice
@@ -145,11 +188,11 @@ int UnitOnline(struct GenetUnit *unit);
 void UnitOffline(struct GenetUnit *unit);
 int UnitClose(struct GenetUnit *unit, struct Opener *opener);
 
-int SendFrame(struct GenetUnit *unit, struct IOSana2Req *io);
 void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
 void ProcessCommand(struct IOSana2Req *io);
 
 int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io);
 int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io);
 void ReportEvents(struct GenetUnit *unit, ULONG eventSet);
+
 #endif

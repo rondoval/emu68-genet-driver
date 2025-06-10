@@ -135,6 +135,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             {
                 WaitIO(&timerReq->tr_node);
             }
+
+            if(unit->state == STATE_ONLINE)
+            {
+                bcmgenet_timeout(unit);
+            }
             // TODO check link state on PHY
 
             // Schedule next run

@@ -142,8 +142,12 @@ struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
     opener->packetFilter = (struct Hook *)GetTagData(S2_PacketFilter, NULL, tags);
     opener->CopyToBuff = (BOOL (*)(APTR, APTR, ULONG))GetTagData(S2_CopyToBuff, NULL, tags);
     opener->CopyFromBuff = (BOOL (*)(APTR, APTR, ULONG))GetTagData(S2_CopyFromBuff, NULL, tags);
+    opener->DMACopyToBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyToBuff32, NULL, tags);
+    opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);
     Kprintf("[genet] %s: CopyToBuff=%lx, CopyFromBuff=%lx, PacketFilter=%lx\n",
             __func__, opener->CopyToBuff, opener->CopyFromBuff, opener->packetFilter);
+    Kprintf("[genet] %s: DMACopyToBuff=%lx, DMACopyFromBuff=%lx\n",
+            __func__, opener->DMACopyToBuff, opener->DMACopyFromBuff);
     CloseLibrary(UtilityBase);
 
     NewMinList((struct MinList *)&opener->readPort.mp_MsgList);
