@@ -39,7 +39,7 @@ static inline BOOL ProcessReceive(struct GenetUnit *unit)
             }
             bcmgenet_gmac_free_pkt(unit, buffer, pkt_len);
         }
-    } while (pkt_len > 0); // && pkt_len < ETH_HLEN + ETH_DATA_LEN);
+    } while (pkt_len > 0);
     return activity;
 }
 

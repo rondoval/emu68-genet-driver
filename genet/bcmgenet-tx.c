@@ -25,7 +25,7 @@ static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
 	writel(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
 }
 
-static struct enet_cb *bcmgenet_get_txcb(struct GenetUnit *priv,
+static inline struct enet_cb *bcmgenet_get_txcb(struct GenetUnit *priv,
 										 struct bcmgenet_tx_ring *ring)
 {
 	struct enet_cb *tx_cb_ptr;
@@ -44,7 +44,7 @@ static struct enet_cb *bcmgenet_get_txcb(struct GenetUnit *priv,
  * Returns an skb when the last transmit control block associated with the
  * skb is freed.  The skb should be freed by the caller if necessary.
  */
-static struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
+static inline struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
 {
 	struct IOSana2Req *ioReq = cb->ioReq;
 
@@ -63,13 +63,13 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *priv)
 	struct ExecBase *SysBase = priv->execBase;
 	struct bcmgenet_tx_ring *ring = &priv->tx_ring;
 	/* Compute how many buffers are transmitted since last xmit call */
-	ULONG tx_cons_index = readl((ULONG)priv->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
-	ULONG txbds_ready = (tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK;
+	UWORD tx_cons_index = readl((ULONG)priv->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
+	UWORD txbds_ready = (tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK;
 
 	/* Reclaim transmitted buffers */
-	ULONG txbds_processed = 0;
+	UWORD txbds_processed = 0;
 	ULONG bytes_compl = 0;
-	ULONG pkts_compl = 0;
+	UWORD pkts_compl = 0;
 	KprintfH("[genet] %s: clean_ptr %ld, tx_cons_index %ld, txbds_ready %ld\n", __func__, ring->clean_ptr, ring->tx_cons_index, txbds_ready);
 	while (txbds_processed < txbds_ready)
 	{

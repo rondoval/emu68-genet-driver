@@ -91,10 +91,10 @@ struct bcmgenet_tx_ring
 
 	struct enet_cb *tx_control_block; /* tx ring buffer control block*/
 	UBYTE clean_ptr;				  /* Tx ring clean pointer */
-	ULONG tx_cons_index;			  /* last consumer index of each ring*/
+	UWORD tx_cons_index;			  /* last consumer index of each ring*/
 	UWORD free_bds;					  /* # of free bds for each ring */
 	UBYTE write_ptr;				  /* Tx ring write pointer SW copy */
-	ULONG tx_prod_index;				  /* Tx ring producer index SW copy */
+	UWORD tx_prod_index;			  /* Tx ring producer index SW copy */
 };
 
 struct bcmgenet_rx_ring
@@ -105,9 +105,9 @@ struct bcmgenet_rx_ring
 	ULONG dropped;
 
 	struct enet_cb *rx_control_block; /* Rx ring buffer control block */
-	unsigned int rx_cons_index;		  /* Rx last consumer index */
-	unsigned int read_ptr;			  /* Rx ring read pointer */
-	unsigned int old_discards;
+	UWORD rx_cons_index;			  /* Rx last consumer index */
+	UBYTE read_ptr;					  /* Rx ring read pointer */
+	ULONG old_discards;
 	ULONG rx_max_coalesced_frames;
 	ULONG rx_coalesce_usecs;
 };
@@ -140,6 +140,7 @@ struct GenetUnit
 	struct MinList openers;
 	struct MinList multicastRanges;
 	ULONG multicastCount;
+	BOOL mdfEnabled; /* Multicast filter enabled */
 	struct SignalSemaphore semaphore;
 
 	/* Device tree */
@@ -156,13 +157,11 @@ struct GenetUnit
 	/* MAC layer */
 	/* RX */
 	struct bcmgenet_rx_ring rx_ring;
-
 	UBYTE *rxbuffer_not_aligned;
 	UBYTE *rxbuffer;
 
 	/* TX */
 	struct bcmgenet_tx_ring tx_ring;
-
 	UBYTE *txbuffer_not_aligned;
 	UBYTE *txbuffer;
 };

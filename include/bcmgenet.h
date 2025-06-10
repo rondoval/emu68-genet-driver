@@ -8,7 +8,7 @@ int bcmgenet_eth_probe(struct GenetUnit *priv);
 int bcmgenet_gmac_eth_start(struct GenetUnit *priv);
 void bcmgenet_gmac_eth_stop(struct GenetUnit *priv);
 int bcmgenet_set_coalesce(struct GenetUnit *priv, ULONG tx_max_coalesced_frames, ULONG rx_max_coalesced_frames, ULONG rx_coalesce_usecs);
-void bcmgenet_set_rx_mode(struct GenetUnit *priv);
+void bcmgenet_set_rx_mode(struct GenetUnit *priv); /* Updates PROMISC flag and sets up MDF if possible */
 
 /* RX functions */
 int bcmgenet_gmac_eth_recv(struct GenetUnit *priv, int flags, UBYTE **packetp);

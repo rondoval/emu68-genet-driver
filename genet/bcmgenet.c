@@ -125,7 +125,7 @@ static void bcmgenet_enable_dma(struct GenetUnit *priv)
 int bcmgenet_gmac_eth_recv(struct GenetUnit *priv, int flags, UBYTE **packetp)
 {
 	struct ExecBase *SysBase = priv->execBase;
-	ULONG rx_prod_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
+	UWORD rx_prod_index = readl((ULONG)priv->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 
 	if (rx_prod_index == priv->rx_ring.rx_cons_index)
 		return EAGAIN;
@@ -438,14 +438,16 @@ void bcmgenet_set_rx_mode(struct GenetUnit *priv)
 	ULONG reg = readl((ULONG)priv->genetBase + UMAC_CMD);
 	if ((priv->flags & SANA2OPF_PROM) || nfilter > MAX_MDF_FILTER)
 	{
-		Kprintf("[genet] %s: Enabling promiscuous mode, nfilter=%d\n", __func__, nfilter);
+		Kprintf("[genet] %s: Enabling promiscuous mode, nfilter=%ld\n", __func__, nfilter);
 		reg |= CMD_PROMISC;
 		writel(reg, (ULONG)priv->genetBase + UMAC_CMD);
 		writel(0, (ULONG)priv->genetBase + UMAC_MDF_CTRL);
+
+		priv->mdfEnabled = FALSE;
 		return;
 	}
 
-	Kprintf("[genet] %s: Setting RX mode, nfilter=%d\n", __func__, nfilter);
+	Kprintf("[genet] %s: Setting RX mode, nfilter=%ld\n", __func__, nfilter);
 
 	reg &= ~CMD_PROMISC;
 	writel(reg, (ULONG)priv->genetBase + UMAC_CMD);
@@ -480,6 +482,8 @@ void bcmgenet_set_rx_mode(struct GenetUnit *priv)
 	/* Enable filters */
 	reg = GENMASK(MAX_MDF_FILTER - 1, MAX_MDF_FILTER - nfilter);
 	writel(reg, (ULONG)priv->genetBase + UMAC_MDF_CTRL);
+
+	priv->mdfEnabled = TRUE;
 }
 
 int bcmgenet_gmac_eth_start(struct GenetUnit *priv)

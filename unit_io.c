@@ -75,7 +75,7 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     /* Packet not filtered. Send it now and reply request. */
     if (!packetFiltered)
     {
-        if (packetLength != 0 && opener->CopyToBuff && opener->CopyToBuff(io->ios2_Data, packet, packetLength) == 0)
+        if (packetLength == 0 || !opener->CopyToBuff || opener->CopyToBuff(io->ios2_Data, packet, packetLength) == 0)
         {
             KprintfH("[genet] %s: Failed to copy packet data to buffer\n", __func__);
             io->ios2_WireError = S2WERR_BUFF_ERROR;
@@ -94,31 +94,37 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     }
 }
 
-void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
+static inline BOOL MulticastFilter(struct GenetUnit *unit, uint64_t destAddr)
 {
-    struct ExecBase *SysBase = unit->execBase;
-
-    // Get destination address and check if it is a multicast
-    uint64_t destAddr = ((uint64_t)*(UWORD *)&packet[0] << 32) | *(ULONG *)&packet[2];
-    // TODO use genet frame attributes, also try to offload this to HFB
+    // TODO this looks slow
+    // TODO use genet attributes to recognize multicast addresses
     if (destAddr != 0xffffffffffffULL && (destAddr & 0x010000000000ULL))
     {
-        BOOL accept = FALSE;
         for (struct MinNode *node = unit->multicastRanges.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             // Check if this is a multicast address we accept
             struct MulticastRange *range = (struct MulticastRange *)node;
             if (destAddr >= range->lowerBound && destAddr <= range->upperBound)
             {
-                accept = TRUE;
-                break;
+                return TRUE; /* Multicast on our list */
             }
         }
+        return FALSE; /* Multicast not on our list */
+    }
+    return TRUE; /* Broadcast or unicast */
+}
 
-        if (!accept)
+void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
+{
+    struct ExecBase *SysBase = unit->execBase;
+
+    /* We only need to filter in software if MDF is not enabled */
+    if (!unit->mdfEnabled)
+    {
+        uint64_t destAddr = ((uint64_t)*(UWORD *)&packet[0] << 32) | *(ULONG *)&packet[2];
+        if (!MulticastFilter(unit, destAddr))
         {
-            // Not a multicast address we accept, drop the packet
-            return;
+            return; // Not a multicast address we accept, drop the packet
         }
     }
 
