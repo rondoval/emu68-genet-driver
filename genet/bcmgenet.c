@@ -132,10 +132,12 @@ int bcmgenet_gmac_eth_recv(struct GenetUnit *priv, int flags, UBYTE **packetp)
 
 	KprintfH("[genet] %s: rx_prod_index=%ld, rx_cons_index=%ld\n", __func__, rx_prod_index, priv->rx_ring.rx_cons_index);
 
-	APTR desc_base = priv->rx_ring.rx_control_block[priv->rx_ring.rx_cons_index & 0xff].descriptor_address;
+	struct enet_cb *rx_cb = &priv->rx_ring.rx_control_block[priv->rx_ring.rx_cons_index & 0xff];
+	APTR desc_base = rx_cb->descriptor_address;
 	ULONG length = readl((ULONG)desc_base + DMA_DESC_LENGTH_STATUS);
 	length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
-	APTR addr = (APTR)readl((ULONG)desc_base + DMA_DESC_ADDRESS_LO);
+	APTR addr = rx_cb->internal_buffer;
+	// APTR addr = (APTR)readl((ULONG)desc_base + DMA_DESC_ADDRESS_LO);
 
 	CachePostDMA(addr, &length, 0);
 

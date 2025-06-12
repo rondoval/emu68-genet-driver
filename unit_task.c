@@ -94,6 +94,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         sigset = Wait((1 << unit->unit.unit_MsgPort.mp_SigBit) | 1 << timerPort->mp_SigBit | SIGBREAKF_CTRL_C);
         BOOL activity = FALSE;
 
+        if (unit->state == STATE_ONLINE)
+        {
+            activity |= ProcessReceive(unit);
+        }
+
         // IO queue got a new message
         if (sigset & (1 << unit->unit.unit_MsgPort.mp_SigBit))
         {
@@ -104,11 +109,6 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             {
                 ProcessCommand(io);
             }
-        }
-
-        if (unit->state == STATE_ONLINE)
-        {
-            activity |= ProcessReceive(unit);
         }
 
         if (activity)

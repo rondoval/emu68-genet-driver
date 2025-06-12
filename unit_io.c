@@ -129,6 +129,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
     }
 
     unit->stats.PacketsReceived++;
+    unit->internalStats.rx_packets++;
     UWORD packetType = *(UWORD *)&packet[12];
     UBYTE orphan = TRUE;
     KprintfH("[genet] %s: Received packet of length %ld with type 0x%lx\n", __func__, packetLength, packetType);

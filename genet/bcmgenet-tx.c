@@ -26,7 +26,7 @@ static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
 }
 
 static inline struct enet_cb *bcmgenet_get_txcb(struct GenetUnit *priv,
-										 struct bcmgenet_tx_ring *ring)
+												struct bcmgenet_tx_ring *ring)
 {
 	struct enet_cb *tx_cb_ptr;
 
@@ -91,8 +91,24 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *priv)
 	KprintfH("[genet] %s: tx_cons_index %ld, clean_ptr %ld, free_bds %ld\n",
 			 __func__, ring->tx_cons_index, ring->clean_ptr, ring->free_bds);
 
-	ring->packets += pkts_compl;
-	ring->bytes += bytes_compl;
+	priv->stats.PacketsSent += pkts_compl;
+	priv->internalStats.tx_packets += pkts_compl;
+	priv->internalStats.tx_bytes += bytes_compl;
+
+	// Print every time we cross a multiple of 5000 PacketsSent
+	static ULONG last_printed = 0;
+	ULONG packets = priv->stats.PacketsSent;
+	if (packets - last_printed >= 5000)
+	{
+		last_printed = packets;
+		// print all internalStats tx_
+		KprintfH("[genet] %s: tx_packets %ld, tx_dma %ld, tx_copy %ld, tx_bytes %ld, tx_dropped %ld\n",
+				 __func__, priv->internalStats.tx_packets,
+				 priv->internalStats.tx_dma,
+				 priv->internalStats.tx_copy,
+				 priv->internalStats.tx_bytes,
+				 priv->internalStats.tx_dropped);
+	}
 }
 
 static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
@@ -106,6 +122,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	if (unlikely(ring->free_bds <= bds_required))
 	{
 		KprintfH("[genet] %s: Not enough free BDs\n", __func__);
+		unit->internalStats.tx_dropped++;
 		io->ios2_WireError = S2WERR_BUFF_ERROR;
 		io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
 		ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
@@ -116,6 +133,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	{
 		// TODO handle a case where DMA is not available - use copy
 		KprintfH("[genet] %s: No data to send\n", __func__);
+		unit->internalStats.tx_dropped++;
 		io->ios2_WireError = S2WERR_BUFF_ERROR;
 		io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
 		ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
@@ -164,6 +182,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	if (likely(opener->DMACopyFromBuff && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL))
 	{
 		KprintfH("[genet] %s: Using DMA copy from buffer\n", __func__);
+		unit->internalStats.tx_dma++;
 	}
 	else
 	{
@@ -177,6 +196,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			return COMMAND_PROCESSED;
 		}
 		tx_cb_ptr->data_buffer = tx_cb_ptr->internal_buffer;
+		unit->internalStats.tx_copy++;
 	}
 
 	ULONG len_stat = (io->ios2_DataLength << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT);
@@ -202,7 +222,6 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	ring->tx_prod_index &= DMA_P_INDEX_MASK;
 
 	writel(ring->tx_prod_index, (ULONG)unit->genetBase + TDMA_PROD_INDEX);
-	unit->stats.PacketsSent++;
 	KprintfH("[genet] %s: Transmitting packet, tx_prod_index %ld, free_bds %ld\n",
 			 __func__, ring->tx_prod_index, ring->free_bds);
 	return COMMAND_SCHEDULED;
@@ -212,6 +231,11 @@ int bcmgenet_tx_poll(struct GenetUnit *unit, struct IOSana2Req *io)
 {
 	struct ExecBase *SysBase = unit->execBase;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
+
+	if (ring->free_bds > 2) // we usually send two fragments
+	{
+		return bcmgenet_xmit(io, unit);
+	}
 
 	bcmgenet_tx_reclaim(unit);
 	if (ring->free_bds > 2) // we usually send two fragments
@@ -226,5 +250,5 @@ int bcmgenet_tx_poll(struct GenetUnit *unit, struct IOSana2Req *io)
 void bcmgenet_timeout(struct GenetUnit *unit)
 {
 	bcmgenet_tx_reclaim(unit);
-	// TODO priv->stats.tx_errors++;
+	// TODO unit->internalStats.tx_errors++;
 }

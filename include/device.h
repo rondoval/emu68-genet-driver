@@ -86,9 +86,6 @@ struct MulticastRange
 
 struct bcmgenet_tx_ring
 {
-	ULONG packets;
-	ULONG bytes;
-
 	struct enet_cb *tx_control_block; /* tx ring buffer control block*/
 	UBYTE clean_ptr;				  /* Tx ring clean pointer */
 	UWORD tx_cons_index;			  /* last consumer index of each ring*/
@@ -99,15 +96,10 @@ struct bcmgenet_tx_ring
 
 struct bcmgenet_rx_ring
 {
-	ULONG bytes;
-	ULONG packets;
-	ULONG errors;
-	ULONG dropped;
-
 	struct enet_cb *rx_control_block; /* Rx ring buffer control block */
 	UWORD rx_cons_index;			  /* Rx last consumer index */
 	UBYTE read_ptr;					  /* Rx ring read pointer */
-	ULONG old_discards;
+	UWORD old_discards;
 	ULONG rx_max_coalesced_frames;
 	ULONG rx_coalesce_usecs;
 };
@@ -118,6 +110,24 @@ struct enet_cb
 	APTR descriptor_address;
 	APTR internal_buffer; /* Used when data needs to be copied from IP stack */
 	APTR data_buffer;
+};
+
+struct internal_stats
+{
+	ULONG rx_packets;
+	ULONG rx_bytes;
+	ULONG rx_multicast;
+	ULONG rx_dropped;
+	ULONG rx_crc_errors;
+	ULONG rx_over_errors;
+	ULONG rx_frame_errors;
+	ULONG rx_length_errors;
+
+	ULONG tx_packets;
+	ULONG tx_dma;
+	ULONG tx_copy;
+	ULONG tx_bytes;
+	ULONG tx_dropped;
 };
 
 struct GenetUnit
@@ -137,6 +147,7 @@ struct GenetUnit
 	UnitState state;
 	struct Task *task;
 	struct Sana2DeviceStats stats;
+	struct internal_stats internalStats;
 	struct MinList openers;
 	struct MinList multicastRanges;
 	ULONG multicastCount;

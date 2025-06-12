@@ -80,9 +80,14 @@
 #define DMA_TX_DO_CSUM 0x0010
 #define DMA_TX_QTAG_SHIFT 7
 
-/* Masks for the index registers. The upper half contains number of discarded packets */
-#define DMA_C_INDEX_MASK 0xffff
-#define DMA_P_INDEX_MASK 0xffff
+/* DMA registers common definitions */
+#define DMA_RW_POINTER_MASK		0x1FF
+#define DMA_P_INDEX_DISCARD_CNT_MASK	0xFFFF
+#define DMA_P_INDEX_DISCARD_CNT_SHIFT	16
+#define DMA_BUFFER_DONE_CNT_MASK	0xFFFF
+#define DMA_BUFFER_DONE_CNT_SHIFT	16
+#define DMA_P_INDEX_MASK		0xFFFF
+#define DMA_C_INDEX_MASK		0xFFFF
 
 /* DMA rings size */
 #define DMA_RING_SIZE 0x40
@@ -181,6 +186,20 @@
 #define RX_TOTAL_BUFSIZE (RX_BUF_LENGTH * RX_DESCS)
 #define TX_TOTAL_BUFSIZE (RX_BUF_LENGTH * TX_DESCS)
 // #define RX_BUF_OFFSET 2
+
+/* Rx Specific Dma descriptor bits */
+#define DMA_RX_CHK_V3PLUS		0x8000
+#define DMA_RX_CHK_V12			0x1000
+#define DMA_RX_BRDCAST			0x0040
+#define DMA_RX_MULT			0x0020
+#define DMA_RX_LG			0x0010
+#define DMA_RX_NO			0x0008
+#define DMA_RX_RXER			0x0004
+#define DMA_RX_CRC_ERROR		0x0002
+#define DMA_RX_OV			0x0001
+#define DMA_RX_FI_MASK			0x001F
+#define DMA_RX_FI_SHIFT			0x0007
+#define DMA_DESC_ALLOC_MASK		0x00FF
 
 #define GENMASK(h, l) \
 	(((~0UL) << (l)) & (~0UL >> (sizeof(ULONG) * CHAR_BIT - 1 - (h))))
