@@ -25,7 +25,7 @@ static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
 	writel(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
 }
 
-static inline struct enet_cb *bcmgenet_get_txcb(struct GenetUnit *priv,
+static inline struct enet_cb *bcmgenet_get_txcb(struct GenetUnit *unit,
 												struct bcmgenet_tx_ring *ring)
 {
 	struct enet_cb *tx_cb_ptr;
@@ -57,13 +57,13 @@ static inline struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
 }
 
 /* Unlocked version of the reclaim routine */
-static void bcmgenet_tx_reclaim(struct GenetUnit *priv)
+static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 {
 	KprintfH("[genet] %s: Reclaiming TX buffers\n", __func__);
-	struct ExecBase *SysBase = priv->execBase;
-	struct bcmgenet_tx_ring *ring = &priv->tx_ring;
+	struct ExecBase *SysBase = unit->execBase;
+	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 	/* Compute how many buffers are transmitted since last xmit call */
-	UWORD tx_cons_index = readl((ULONG)priv->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
+	UWORD tx_cons_index = readl((ULONG)unit->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
 	UWORD txbds_ready = (tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK;
 
 	/* Reclaim transmitted buffers */
@@ -91,23 +91,23 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *priv)
 	KprintfH("[genet] %s: tx_cons_index %ld, clean_ptr %ld, free_bds %ld\n",
 			 __func__, ring->tx_cons_index, ring->clean_ptr, ring->free_bds);
 
-	priv->stats.PacketsSent += pkts_compl;
-	priv->internalStats.tx_packets += pkts_compl;
-	priv->internalStats.tx_bytes += bytes_compl;
+	unit->stats.PacketsSent += pkts_compl;
+	unit->internalStats.tx_packets += pkts_compl;
+	unit->internalStats.tx_bytes += bytes_compl;
 
 	// Print every time we cross a multiple of 5000 PacketsSent
 	static ULONG last_printed = 0;
-	ULONG packets = priv->stats.PacketsSent;
+	ULONG packets = unit->stats.PacketsSent;
 	if (packets - last_printed >= 5000)
 	{
 		last_printed = packets;
 		// print all internalStats tx_
 		KprintfH("[genet] %s: tx_packets %ld, tx_dma %ld, tx_copy %ld, tx_bytes %ld, tx_dropped %ld\n",
-				 __func__, priv->internalStats.tx_packets,
-				 priv->internalStats.tx_dma,
-				 priv->internalStats.tx_copy,
-				 priv->internalStats.tx_bytes,
-				 priv->internalStats.tx_dropped);
+				 __func__, unit->internalStats.tx_packets,
+				 unit->internalStats.tx_dma,
+				 unit->internalStats.tx_copy,
+				 unit->internalStats.tx_bytes,
+				 unit->internalStats.tx_dropped);
 	}
 }
 
@@ -179,7 +179,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(unit, ring);
 	tx_cb_ptr->ioReq = io;
 
-	if (likely(opener->DMACopyFromBuff && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL))
+	if (opener->DMACopyFromBuff && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
 	{
 		KprintfH("[genet] %s: Using DMA copy from buffer\n", __func__);
 		unit->internalStats.tx_dma++;
