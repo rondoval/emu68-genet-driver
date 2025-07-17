@@ -240,7 +240,7 @@ static inline int Do_CMD_WRITE(struct IOSana2Req *io)
     }
 
     io->ios2_Req.io_Flags &= ~IOF_QUICK;
-    return SendFrame(unit, io);
+    return bcmgenet_tx_poll(unit, io);
 }
 
 int Do_S2_DEVICEQUERY(struct IOSana2Req *io)

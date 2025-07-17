@@ -28,18 +28,15 @@ static inline BOOL ProcessReceive(struct GenetUnit *unit)
     do
     {
         UBYTE *buffer = NULL;
-        pkt_len = bcmgenet_gmac_eth_recv(unit, 0, &buffer);
+        pkt_len = bcmgenet_gmac_eth_recv(unit, &buffer);
         // Distribute received packets to openers
         if (pkt_len > 0)
         {
-            if (pkt_len < ETH_HLEN + ETH_DATA_LEN)
-            {
-                activity = TRUE;
-                ReceiveFrame(unit, buffer, pkt_len);
-            }
+            activity = TRUE;
+            ReceiveFrame(unit, buffer, pkt_len);
             bcmgenet_gmac_free_pkt(unit, buffer, pkt_len);
         }
-    } while (pkt_len > 0); // && pkt_len < ETH_HLEN + ETH_DATA_LEN);
+    } while (pkt_len > 0);
     return activity;
 }
 
@@ -94,6 +91,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         sigset = Wait((1 << unit->unit.unit_MsgPort.mp_SigBit) | 1 << timerPort->mp_SigBit | SIGBREAKF_CTRL_C);
         BOOL activity = FALSE;
 
+        if (unit->state == STATE_ONLINE)
+        {
+            activity |= ProcessReceive(unit);
+        }
+
         // IO queue got a new message
         if (sigset & (1 << unit->unit.unit_MsgPort.mp_SigBit))
         {
@@ -104,11 +106,6 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             {
                 ProcessCommand(io);
             }
-        }
-
-        if (unit->state == STATE_ONLINE)
-        {
-            activity |= ProcessReceive(unit);
         }
 
         if (activity)
@@ -134,6 +131,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             if (CheckIO(&timerReq->tr_node))
             {
                 WaitIO(&timerReq->tr_node);
+            }
+
+            if (unit->state == STATE_ONLINE)
+            {
+                bcmgenet_timeout(unit);
             }
             // TODO check link state on PHY
 

@@ -15,7 +15,7 @@ void gpioSetPull(tGpioRegs *pGpio, UBYTE ubIndex, tGpioPull ePull)
 	ULONG ulClearMask = ~(0b11 << ubRegShift);
 	ULONG ulWriteMask = ePull << ubRegShift;
 
-	writel_relaxed((readl_relaxed(&pGpio->GPIO_PUP_PDN_CNTRL_REG[ubRegIndex]) & ulClearMask) | ulWriteMask, &pGpio->GPIO_PUP_PDN_CNTRL_REG[ubRegIndex]);
+	writel((readl(&pGpio->GPIO_PUP_PDN_CNTRL_REG[ubRegIndex]) & ulClearMask) | ulWriteMask, &pGpio->GPIO_PUP_PDN_CNTRL_REG[ubRegIndex]);
 }
 
 void gpioSetAlternate(tGpioRegs *pGpio, UBYTE ubIndex, tGpioAlternativeFunction eAlternativeFunction)
@@ -26,7 +26,7 @@ void gpioSetAlternate(tGpioRegs *pGpio, UBYTE ubIndex, tGpioAlternativeFunction 
 	ULONG ulClearMask = ~(0b111 << ubRegShift);
 	ULONG ulWriteMask = eAlternativeFunction << ubRegShift;
 
-	writel_relaxed((readl_relaxed(&pGpio->GPFSEL[ubRegIndex]) & ulClearMask) | ulWriteMask, &pGpio->GPFSEL[ubRegIndex]);
+	writel((readl(&pGpio->GPFSEL[ubRegIndex]) & ulClearMask) | ulWriteMask, &pGpio->GPFSEL[ubRegIndex]);
 }
 
 void gpioSetLevel(tGpioRegs *pGpio, UBYTE ubIndex, UBYTE ubState)
@@ -36,10 +36,10 @@ void gpioSetLevel(tGpioRegs *pGpio, UBYTE ubIndex, UBYTE ubState)
 	ULONG ulRegState = (1 << ubRegShift);
 	if (ubState)
 	{
-		writel_relaxed(ulRegState, &pGpio->GPSET[ubRegIndex]);
+		writel(ulRegState, &pGpio->GPSET[ubRegIndex]);
 	}
 	else
 	{
-		writel_relaxed(ulRegState, &pGpio->GPCLR[ubRegIndex]);
+		writel(ulRegState, &pGpio->GPCLR[ubRegIndex]);
 	}
 }

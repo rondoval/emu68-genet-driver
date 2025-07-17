@@ -42,18 +42,18 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
     if (io->ios2_Req.io_Command == S2_ADDMULTICASTADDRESSES)
     {
         KprintfH("[genet] %s: Adding multicast address range %02lx:%02lx:%02lx:%02lx:%02lx:%02lx - %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
-                __func__,
-                io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
-                io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5],
-                io->ios2_DstAddr[0], io->ios2_DstAddr[1], io->ios2_DstAddr[2],
-                io->ios2_DstAddr[3], io->ios2_DstAddr[4], io->ios2_DstAddr[5]);
+                 __func__,
+                 io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
+                 io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5],
+                 io->ios2_DstAddr[0], io->ios2_DstAddr[1], io->ios2_DstAddr[2],
+                 io->ios2_DstAddr[3], io->ios2_DstAddr[4], io->ios2_DstAddr[5]);
     }
     else
     {
         KprintfH("[genet] %s: Adding multicast address %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
-                __func__,
-                io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
-                io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5]);
+                 __func__,
+                 io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
+                 io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5]);
     }
 #endif
 
@@ -86,6 +86,12 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
     range->upperBound = upper_bound;
     AddHead((APTR)&unit->multicastRanges, (APTR)range);
 
+    ULONG count = upper_bound - lower_bound + 1;
+    unit->multicastCount += count;
+
+    /* Update PROMISC and MDF filter */
+    bcmgenet_set_rx_mode(unit);
+
     return COMMAND_PROCESSED;
 }
 
@@ -97,18 +103,18 @@ int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
     if (io->ios2_Req.io_Command == S2_DELMULTICASTADDRESSES)
     {
         KprintfH("[genet] %s: Removing multicast address range %02lx:%02lx:%02lx:%02lx:%02lx:%02lx - %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
-                __func__,
-                io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
-                io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5],
-                io->ios2_DstAddr[0], io->ios2_DstAddr[1], io->ios2_DstAddr[2],
-                io->ios2_DstAddr[3], io->ios2_DstAddr[4], io->ios2_DstAddr[5]);
+                 __func__,
+                 io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
+                 io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5],
+                 io->ios2_DstAddr[0], io->ios2_DstAddr[1], io->ios2_DstAddr[2],
+                 io->ios2_DstAddr[3], io->ios2_DstAddr[4], io->ios2_DstAddr[5]);
     }
     else
     {
         KprintfH("[genet] %s: Removing multicast address %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
-                __func__,
-                io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
-                io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5]);
+                 __func__,
+                 io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
+                 io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5]);
     }
 #endif
 
@@ -128,6 +134,12 @@ int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
             {
                 Remove((APTR)range);
                 FreePooled(unit->memoryPool, range, sizeof(struct MulticastRange));
+
+                ULONG count = upper_bound - lower_bound + 1;
+                unit->multicastCount -= count;
+
+                /* Update PROMISC and MDF filter */
+                bcmgenet_set_rx_mode(unit);
             }
             return COMMAND_PROCESSED;
         }

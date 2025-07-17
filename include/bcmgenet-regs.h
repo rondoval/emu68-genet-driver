@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Broadcom GENET (Gigabit Ethernet) controller driver
+ *
+ * Copyright (c) 2014-2025 Broadcom
+ */
+
+/* Register definitions derived from Linux source */
+#ifndef _BCMGENET_REGS_H
+#define _BCMGENET_REGS_H
+
+#define SYS_REV_CTRL 0x00
+
+#define SYS_PORT_CTRL 0x04
+#define PORT_MODE_EXT_GPHY 3
+
+#define GENET_SYS_OFF 0x0000
+#define SYS_RBUF_FLUSH_CTRL (GENET_SYS_OFF + 0x08)
+#define SYS_TBUF_FLUSH_CTRL (GENET_SYS_OFF + 0x0c)
+
+#define GENET_EXT_OFF 0x0080
+#define EXT_RGMII_OOB_CTRL (GENET_EXT_OFF + 0x0c)
+#define RGMII_LINK BIT(4)
+#define OOB_DISABLE BIT(5)
+#define RGMII_MODE_EN BIT(6)
+#define ID_MODE_DIS BIT(16)
+
+#define GENET_RBUF_OFF 0x0300
+#define RBUF_TBUF_SIZE_CTRL (GENET_RBUF_OFF + 0xb4)
+#define RBUF_CTRL (GENET_RBUF_OFF + 0x00)
+#define RBUF_ALIGN_2B BIT(1)
+
+#define GENET_UMAC_OFF 0x0800
+#define UMAC_MIB_CTRL (GENET_UMAC_OFF + 0x580)
+#define UMAC_MAX_FRAME_LEN (GENET_UMAC_OFF + 0x014)
+#define UMAC_MAC0 (GENET_UMAC_OFF + 0x00c)
+#define UMAC_MAC1 (GENET_UMAC_OFF + 0x010)
+#define UMAC_CMD (GENET_UMAC_OFF + 0x008)
+#define UMAC_TX_FLUSH (GENET_UMAC_OFF + 0x334)
+#define MDIO_CMD (GENET_UMAC_OFF + 0x614)
+#define UMAC_MDF_CTRL (GENET_UMAC_OFF + 0x650)
+#define UMAC_MDF_ADDR (GENET_UMAC_OFF + 0x654)
+
+#define MIB_RESET_RX BIT(0)
+#define MIB_RESET_RUNT BIT(1)
+#define MIB_RESET_TX BIT(2)
+
+/* total number of Buffer Descriptors, same for Rx/Tx */
+#define TOTAL_DESCS 256
+#define RX_DESCS TOTAL_DESCS
+#define TX_DESCS TOTAL_DESCS
+
+#define DEFAULT_Q 0x10
+
+/* Body(1500) + EH_SIZE(14) + VLANTAG(4) + BRCMTAG(6) + FCS(4) = 1528.
+ * 1536 is multiple of 256 bytes
+ */
+#define ENET_BRCM_TAG_LEN 6
+#define ENET_PAD 8
+#define ENET_MAX_MTU_SIZE (ETH_DATA_LEN + ETH_HLEN +       \
+						   VLAN_HLEN + ENET_BRCM_TAG_LEN + \
+						   ETH_FCS_LEN + ENET_PAD)
+
+/* Tx/Rx Dma Descriptor common bits */
+#define DMA_EN BIT(0)
+#define DMA_RING_BUF_EN_SHIFT 0x01
+#define DMA_RING_BUF_EN_MASK 0xffff
+#define DMA_BUFLENGTH_MASK 0x0fff
+#define DMA_BUFLENGTH_SHIFT 16
+#define DMA_RING_SIZE_SHIFT 16
+#define DMA_OWN 0x8000
+#define DMA_EOP 0x4000
+#define DMA_SOP 0x2000
+#define DMA_WRAP 0x1000
+#define DMA_MAX_BURST_LENGTH 0x8
+/* Tx specific DMA descriptor bits */
+#define DMA_TX_UNDERRUN 0x0200
+#define DMA_TX_APPEND_CRC 0x0040
+#define DMA_TX_OW_CRC 0x0020
+#define DMA_TX_DO_CSUM 0x0010
+#define DMA_TX_QTAG_SHIFT 7
+
+/* DMA registers common definitions */
+#define DMA_RW_POINTER_MASK		0x1FF
+#define DMA_P_INDEX_DISCARD_CNT_MASK	0xFFFF
+#define DMA_P_INDEX_DISCARD_CNT_SHIFT	16
+#define DMA_BUFFER_DONE_CNT_MASK	0xFFFF
+#define DMA_BUFFER_DONE_CNT_SHIFT	16
+#define DMA_P_INDEX_MASK		0xFFFF
+#define DMA_C_INDEX_MASK		0xFFFF
+
+/* DMA rings size */
+#define DMA_RING_SIZE 0x40
+#define DMA_RINGS_SIZE (DMA_RING_SIZE * (DEFAULT_Q + 1))
+
+/* DMA descriptor */
+#define DMA_DESC_LENGTH_STATUS 0x00
+#define DMA_DESC_ADDRESS_LO 0x04
+#define DMA_DESC_ADDRESS_HI 0x08
+#define DMA_DESC_SIZE 12
+
+#define GENET_RX_OFF 0x2000
+#define GENET_RDMA_REG_OFF (GENET_RX_OFF + TOTAL_DESCS * DMA_DESC_SIZE)
+#define GENET_TX_OFF 0x4000
+#define GENET_TDMA_REG_OFF (GENET_TX_OFF + TOTAL_DESCS * DMA_DESC_SIZE)
+
+#define DMA_FC_THRESH_HI (RX_DESCS >> 4)
+#define DMA_FC_THRESH_LO 5
+#define DMA_FC_THRESH_VALUE ((DMA_FC_THRESH_LO << 16) | DMA_FC_THRESH_HI)
+
+#define DMA_XOFF_THRESHOLD_SHIFT 16
+
+/* RDMA/TDMA ring registers and accessors
+ * we merge the common fields and just prefix with T/D the registers
+ * having different meaning depending on the direction
+ */
+#define TDMA_RING_REG_BASE \
+	(GENET_TDMA_REG_OFF + DEFAULT_Q * DMA_RING_SIZE)
+#define TDMA_READ_PTR (TDMA_RING_REG_BASE + 0x00)
+#define TDMA_CONS_INDEX (TDMA_RING_REG_BASE + 0x08)
+#define TDMA_PROD_INDEX (TDMA_RING_REG_BASE + 0x0c)
+#define DMA_RING_BUF_SIZE 0x10
+#define DMA_START_ADDR 0x14
+#define DMA_END_ADDR 0x1c
+#define DMA_MBUF_DONE_THRESH 0x24
+#define TDMA_FLOW_PERIOD (TDMA_RING_REG_BASE + 0x28)
+#define TDMA_WRITE_PTR (TDMA_RING_REG_BASE + 0x2c)
+
+#define RDMA_RING_REG_BASE \
+	(GENET_RDMA_REG_OFF + DEFAULT_Q * DMA_RING_SIZE)
+#define RDMA_WRITE_PTR (RDMA_RING_REG_BASE + 0x00)
+#define RDMA_PROD_INDEX (RDMA_RING_REG_BASE + 0x08)
+#define RDMA_CONS_INDEX (RDMA_RING_REG_BASE + 0x0c)
+#define RDMA_XON_XOFF_THRESH (RDMA_RING_REG_BASE + 0x28)
+#define RDMA_READ_PTR (RDMA_RING_REG_BASE + 0x2c)
+
+#define TDMA_REG_BASE (GENET_TDMA_REG_OFF + DMA_RINGS_SIZE)
+#define RDMA_REG_BASE (GENET_RDMA_REG_OFF + DMA_RINGS_SIZE)
+#define DMA_RING_CFG 0x00
+#define DMA_CTRL 0x04
+#define DMA_STATUS 0x08
+#define DMA_SCB_BURST_SIZE 0x0C
+#define DMA_ARB_CTRL 0x2C
+#define DMA_PRIORITY_0 0x30
+#define DMA_PRIORITY_1 0x34
+#define DMA_PRIORITY_2 0x38
+
+#define DMA_RING0_TIMEOUT 0x2C
+#define DMA_RING1_TIMEOUT 0x30
+#define DMA_RING2_TIMEOUT 0x34
+#define DMA_RING3_TIMEOUT 0x38
+#define DMA_RING4_TIMEOUT 0x3c
+#define DMA_RING5_TIMEOUT 0x40
+#define DMA_RING6_TIMEOUT 0x44
+#define DMA_RING7_TIMEOUT 0x48
+#define DMA_RING8_TIMEOUT 0x4c
+#define DMA_RING9_TIMEOUT 0x50
+#define DMA_RING10_TIMEOUT 0x54
+#define DMA_RING11_TIMEOUT 0x58
+#define DMA_RING12_TIMEOUT 0x5c
+#define DMA_RING13_TIMEOUT 0x60
+#define DMA_RING14_TIMEOUT 0x64
+#define DMA_RING15_TIMEOUT 0x68
+#define DMA_RING16_TIMEOUT 0x6C
+#define DMA_INDEX2RING_0 0x70
+#define DMA_INDEX2RING_1 0x74
+#define DMA_INDEX2RING_2 0x78
+#define DMA_INDEX2RING_3 0x7C
+#define DMA_INDEX2RING_4 0x80
+#define DMA_INDEX2RING_5 0x84
+#define DMA_INDEX2RING_6 0x88
+#define DMA_INDEX2RING_7 0x8C
+
+/* DMA timeout register */
+#define DMA_TIMEOUT_MASK 0xFFFF
+#define DMA_TIMEOUT_VAL 5000 /* micro seconds */
+
+#define DMA_ARBITER_RR 0x00
+#define DMA_ARBITER_WRR 0x01
+#define DMA_ARBITER_SP 0x02
+
+/* DMA interrupt threshold register */
+#define DMA_INTR_THRESHOLD_MASK 0x01FF
+
+#define RX_BUF_LENGTH 2048
+#define RX_TOTAL_BUFSIZE (RX_BUF_LENGTH * RX_DESCS)
+#define TX_TOTAL_BUFSIZE (RX_BUF_LENGTH * TX_DESCS)
+// #define RX_BUF_OFFSET 2
+
+/* Rx Specific Dma descriptor bits */
+#define DMA_RX_CHK_V3PLUS		0x8000
+#define DMA_RX_CHK_V12			0x1000
+#define DMA_RX_BRDCAST			0x0040
+#define DMA_RX_MULT			0x0020
+#define DMA_RX_LG			0x0010
+#define DMA_RX_NO			0x0008
+#define DMA_RX_RXER			0x0004
+#define DMA_RX_CRC_ERROR		0x0002
+#define DMA_RX_OV			0x0001
+#define DMA_RX_FI_MASK			0x001F
+#define DMA_RX_FI_SHIFT			0x0007
+#define DMA_DESC_ALLOC_MASK		0x00FF
+
+#define GENMASK(h, l) \
+	(((~0UL) << (l)) & (~0UL >> (sizeof(ULONG) * CHAR_BIT - 1 - (h))))
+
+#define GENET_QTAG_MASK 0x3F
+
+#endif

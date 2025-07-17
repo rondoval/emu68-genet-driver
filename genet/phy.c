@@ -82,7 +82,7 @@ static int mdio_write(struct phy_device *phy, int reg, UWORD value)
 	/* Prepare the read operation */
 	val = MDIO_WR | (phy->addr << MDIO_PMD_SHIFT) |
 		  (reg << MDIO_REG_SHIFT) | (0xffff & value);
-	writel_relaxed(val, unit->genetBase + MDIO_CMD);
+	writel(val, unit->genetBase + MDIO_CMD);
 
 	/* Start MDIO transaction */
 	mdio_start(unit);
@@ -100,7 +100,7 @@ static int mdio_read(struct phy_device *phy, int reg)
 
 	/* Prepare the read operation */
 	val = MDIO_RD | (phy->addr << MDIO_PMD_SHIFT) | (reg << MDIO_REG_SHIFT);
-	writel_relaxed(val, unit->genetBase + MDIO_CMD);
+	writel(val, unit->genetBase + MDIO_CMD);
 
 	/* Start MDIO transaction */
 	mdio_start(unit);
@@ -110,7 +110,7 @@ static int mdio_read(struct phy_device *phy, int reg)
 	if (ret)
 		return ret;
 
-	val = readl_relaxed(unit->genetBase + MDIO_CMD);
+	val = readl(unit->genetBase + MDIO_CMD);
 	// Kprintf("[genet] %s: phy=%ld reg=%ld value=0x%lx\n", __func__, phy->addr, reg, val);
 
 	return val & 0xffff;
