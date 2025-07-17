@@ -11,7 +11,7 @@ int bcmgenet_set_coalesce(struct GenetUnit *unit, ULONG tx_max_coalesced_frames,
 void bcmgenet_set_rx_mode(struct GenetUnit *unit); /* Updates PROMISC flag and sets up MDF if possible */
 
 /* RX functions */
-int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, int flags, UBYTE **packetp);
+int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp);
 void bcmgenet_gmac_free_pkt(struct GenetUnit *unit, UBYTE *packet, ULONG length);
 
 /* TX functions */

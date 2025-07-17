@@ -122,7 +122,7 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 	setbits_32((APTR)((ULONG)unit->genetBase + TDMA_REG_BASE + DMA_CTRL), DMA_EN);
 }
 
-int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, int flags, UBYTE **packetp)
+int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
 {
 	struct ExecBase *SysBase = unit->execBase;
 	UWORD rx_prod_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;

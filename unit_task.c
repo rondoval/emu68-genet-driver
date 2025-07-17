@@ -28,7 +28,7 @@ static inline BOOL ProcessReceive(struct GenetUnit *unit)
     do
     {
         UBYTE *buffer = NULL;
-        pkt_len = bcmgenet_gmac_eth_recv(unit, 0, &buffer);
+        pkt_len = bcmgenet_gmac_eth_recv(unit, &buffer);
         // Distribute received packets to openers
         if (pkt_len > 0)
         {

@@ -25,8 +25,7 @@ static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
 	writel(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
 }
 
-static inline struct enet_cb *bcmgenet_get_txcb(struct GenetUnit *unit,
-												struct bcmgenet_tx_ring *ring)
+static inline struct enet_cb *bcmgenet_get_txcb(struct bcmgenet_tx_ring *ring)
 {
 	struct enet_cb *tx_cb_ptr;
 
@@ -144,7 +143,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	{
 		KprintfH("[genet] %s: adding ethernet header\n", __func__);
 
-		struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(unit, ring);
+		struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(ring);
 		UBYTE *ptr = (UBYTE *)tx_cb_ptr->internal_buffer;
 		tx_cb_ptr->data_buffer = NULL;
 		tx_cb_ptr->ioReq = NULL;
@@ -176,7 +175,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	}
 
 	// Then the body from upstream
-	struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(unit, ring);
+	struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(ring);
 	tx_cb_ptr->ioReq = io;
 
 	if (opener->DMACopyFromBuff && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
