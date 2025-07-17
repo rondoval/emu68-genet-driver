@@ -130,7 +130,6 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 
 	if (unlikely(io->ios2_DataLength == 0))
 	{
-		// TODO handle a case where DMA is not available - use copy
 		KprintfH("[genet] %s: No data to send\n", __func__);
 		unit->internalStats.tx_dropped++;
 		io->ios2_WireError = S2WERR_BUFF_ERROR;

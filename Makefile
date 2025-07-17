@@ -4,7 +4,7 @@ AS := m68k-amigaos-as
 
 INCLUDE := -Iinclude
 
-CFLAGS  := -m68040 -O2 -MMD -MP -Wall $(INCLUDE) -DDEBUG # -Wno-unused-parameter -Wextra
+CFLAGS  := -m68040 -O2 -MMD -MP -Wall $(INCLUDE) -DDEBUG -Wextra # -Wno-unused-parameter
 CXXFLAGS:= -m68040 -std=c++0x -O2 -MMD -MP -Wall $(INCLUDE)
 ASFLAGS := -m68040
 LDFLAGS := -s -nostdlib -nostartfiles

@@ -20,7 +20,6 @@ LONG abortIO(struct IOSana2Req *io asm("a1"))
     struct ExecBase *SysBase = base->execBase;
     KprintfH("[genet] %s: Aborting IO request %lx\n", __func__, io);
 
-    /* AbortIO is a *wish* call. Someone would like to abort current IORequest */
     if (io->ios2_Req.io_Unit != NULL)
     {
         ObtainSemaphore(&((struct GenetUnit *)io->ios2_Req.io_Unit)->semaphore);
