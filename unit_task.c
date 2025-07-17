@@ -32,11 +32,8 @@ static inline BOOL ProcessReceive(struct GenetUnit *unit)
         // Distribute received packets to openers
         if (pkt_len > 0)
         {
-            if (pkt_len < ETH_HLEN + ETH_DATA_LEN)
-            {
-                activity = TRUE;
-                ReceiveFrame(unit, buffer, pkt_len);
-            }
+            activity = TRUE;
+            ReceiveFrame(unit, buffer, pkt_len);
             bcmgenet_gmac_free_pkt(unit, buffer, pkt_len);
         }
     } while (pkt_len > 0);
@@ -136,7 +133,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 WaitIO(&timerReq->tr_node);
             }
 
-            if(unit->state == STATE_ONLINE)
+            if (unit->state == STATE_ONLINE)
             {
                 bcmgenet_timeout(unit);
             }
