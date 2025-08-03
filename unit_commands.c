@@ -296,26 +296,30 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
 
 static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
 {
+    struct ExecBase *SysBase = *((struct ExecBase **)4UL);
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     Kprintf("[genet] %s: S2_CONFIGINTERFACE\n", __func__);
 
-    if (unit->state != STATE_UNCONFIGURED)
+    if (unit->state == STATE_UNCONFIGURED)
     {
-        Kprintf("[genet] %s: Unit is already configured, cannot configure\n", __func__);
-        /* We are already configured */
-        io->ios2_Req.io_Error = S2ERR_BAD_STATE;
-        io->ios2_WireError = S2WERR_IS_CONFIGURED;
-        return COMMAND_PROCESSED;
+        CopyMem(io->ios2_SrcAddr, unit->currentMacAddress, sizeof(unit->currentMacAddress));
+        Kprintf("[genet] %s: Setting current MAC address to %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
+                __func__,
+                unit->currentMacAddress[0], unit->currentMacAddress[1],
+                unit->currentMacAddress[2], unit->currentMacAddress[3],
+                unit->currentMacAddress[4], unit->currentMacAddress[5]);
+
+        int result = UnitConfigure(unit);
+        if (result != S2ERR_NO_ERROR)
+        {
+            Kprintf("[genet] %s: Failed to configure unit: %ld\n", __func__, result);
+            io->ios2_Req.io_Error = result;
+            io->ios2_WireError = S2WERR_GENERIC_ERROR;
+            ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
+        }
     }
 
-    int result = UnitConfigure(unit);
-    if (result != S2ERR_NO_ERROR)
-    {
-        Kprintf("[genet] %s: Failed to configure unit: %ld\n", __func__, result);
-        io->ios2_Req.io_Error = result;
-        io->ios2_WireError = S2WERR_GENERIC_ERROR;
-        ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
-    }
+    CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, sizeof(unit->currentMacAddress));
     return COMMAND_PROCESSED;
 }
 

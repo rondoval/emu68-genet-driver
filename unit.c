@@ -90,7 +90,8 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		return result;
 	}
 
-	CopyMem(unit->localMacAddress, unit->currentMacAddress, 6);
+	/* On first open, we initialize current MAC to 0 to indicate it was not set yet */
+	_memset(unit->currentMacAddress, 0, sizeof(unit->currentMacAddress));
 	result = UnitTaskStart(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
