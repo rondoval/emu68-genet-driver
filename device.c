@@ -157,6 +157,10 @@ struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
     opener->orphanPort.mp_Flags = PA_IGNORE;
     _NewMinList((struct MinList *)&opener->eventPort.mp_MsgList);
     opener->eventPort.mp_Flags = PA_IGNORE;
+    _NewMinList((struct MinList *)&opener->ipv4Queue.mp_MsgList);
+    opener->ipv4Queue.mp_Flags = PA_IGNORE;
+    _NewMinList((struct MinList *)&opener->arpQueue.mp_MsgList);
+    opener->arpQueue.mp_Flags = PA_IGNORE;
 
     return opener;
 }

@@ -164,6 +164,20 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
             req->ios2_WireError = 0;
             ReplyMsg((struct Message *)req);
         }
+
+        while ((req = (struct IOSana2Req *)GetMsg(&opener->ipv4Queue)))
+        {
+            req->ios2_Req.io_Error = IOERR_ABORTED;
+            req->ios2_WireError = 0;
+            ReplyMsg((struct Message *)req);
+        }
+
+        while ((req = (struct IOSana2Req *)GetMsg(&opener->arpQueue)))
+        {
+            req->ios2_Req.io_Error = IOERR_ABORTED;
+            req->ios2_WireError = 0;
+            ReplyMsg((struct Message *)req);
+        }
     }
     KprintfH("[genet] %s: Flush completed\n", __func__);
 
@@ -190,7 +204,7 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     struct ExecBase *SysBase = unit->execBase;
-    KprintfH("[genet] %s: CMD_READ\n", __func__);
+    KprintfH("[genet] %s: CMD_READ for packet type 0x%lx\n", __func__, io->ios2_PacketType);
 
     if (unlikely(unit->state != STATE_ONLINE))
     {
@@ -201,8 +215,16 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
     }
 
     struct Opener *opener = io->ios2_BufferManagement;
+    UWORD packetType = io->ios2_PacketType;
+    
+    /* Get the appropriate queue for this packet type */
+    struct MsgPort *queue = GetPacketTypeQueue(opener, packetType);
+    
+    /* Queue the request */
     io->ios2_Req.io_Flags &= ~IOF_QUICK;
-    PutMsg(&opener->readPort, (struct Message *)io);
+    PutMsg(queue, (struct Message *)io);
+    
+    KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%x\n", __func__, packetType);
     return COMMAND_SCHEDULED;
 }
 

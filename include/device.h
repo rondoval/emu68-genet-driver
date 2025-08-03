@@ -58,6 +58,11 @@ struct Opener
 	struct MsgPort readPort;
 	struct MsgPort orphanPort;
 	struct MsgPort eventPort;
+	
+	/* Optimized queues for common packet types */
+	struct MsgPort ipv4Queue;  /* For 0x0800 */
+	struct MsgPort arpQueue;   /* For 0x0806 */
+	
 	/* for CMD_READ,
 	 * BOOL PacketFilter(struct Hook* packetFilter asm("a0"), struct IOSana2Req* asm("a2"), APTR asm("a1"));
 	 * fill in ios2_DataLength, ios2_SrcAddr, ios2_DstAddr
@@ -196,6 +201,20 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener);
 
 void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
 void ProcessCommand(struct IOSana2Req *io);
+
+/* Inline function for fast packet type queue lookup */
+static inline struct MsgPort* GetPacketTypeQueue(struct Opener *opener, UWORD packetType)
+{
+    switch (packetType)
+    {
+        case 0x0800: /* IPv4 */
+            return &opener->ipv4Queue;
+        case 0x0806: /* ARP */
+            return &opener->arpQueue;
+        default:
+            return &opener->readPort; /* Fallback to legacy port */
+    }
+}
 
 int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io);
 int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io);

@@ -123,7 +123,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
     struct ExecBase *SysBase = unit->execBase;
 
     /* We only need to filter in software if MDF is not enabled */
-    if (!unit->mdfEnabled)
+    if (unlikely(!unit->mdfEnabled))
     {
         uint64_t destAddr = ((uint64_t)*(UWORD *)&packet[0] << 32) | *(ULONG *)&packet[2];
         if (!MulticastFilter(unit, destAddr))
@@ -139,51 +139,67 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
     KprintfH("[genet] %s: Received packet of length %ld with type 0x%lx\n", __func__, packetLength, packetType);
 
     ObtainSemaphore(&unit->semaphore);
-    /* Go through all openers */
-    for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
-    {
-        struct Opener *opener = (struct Opener *)node;
-        /* Go through all IO read requests pending*/
-        for (struct Node *ioNode = opener->readPort.mp_MsgList.lh_Head; ioNode->ln_Succ; ioNode = ioNode->ln_Succ)
-        {
-            struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
-            // EthernetII has packet type larger than 1500 (MTU),
-            // 802.3 has no packet type but just length
-            if (io->ios2_PacketType == packetType || (packetType <= 1500 && io->ios2_PacketType <= 1500))
-            {
-                KprintfH("[genet] %s: Found opener for packet type 0x%lx\n", __func__, packetType);
-                /* Match, copy packet, break loop for this opener */
-                CopyPacket(io, packet, packetLength);
 
-                /* The packet is sent at least to one opener, not an orphan anymore */
+    /* Fast path for common packet types */
+    if (likely(packetType == 0x0800 || packetType == 0x0806))
+    {
+        for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
+        {
+            struct MsgPort *queue = GetPacketTypeQueue((struct Opener *)node, packetType);
+            struct IOSana2Req *io = (struct IOSana2Req *)queue->mp_MsgList.lh_Head;
+
+            if (likely(io != NULL))
+            {
+                CopyPacket(io, packet, packetLength);
                 orphan = FALSE;
-                break;
+                /* Continue to deliver to other openers */
             }
         }
     }
-    ReleaseSemaphore(&unit->semaphore);
+    else
+    {
+        /* Fallback path for other packet types */
+        for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
+        {
+            struct Opener *opener = (struct Opener *)node;
+            /* Go through all IO read requests pending*/
+            for (struct Node *ioNode = opener->readPort.mp_MsgList.lh_Head; ioNode->ln_Succ; ioNode = ioNode->ln_Succ)
+            {
+                struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
+                // EthernetII has packet type larger than 1500 (MTU),
+                // 802.3 has no packet type but just length
+                if (io->ios2_PacketType == packetType || (packetType <= 1500 && io->ios2_PacketType <= 1500))
+                {
+                    KprintfH("[genet] %s: Found opener for packet type 0x%lx\n", __func__, packetType);
+                    /* Match, copy packet, break loop for this opener */
+                    CopyPacket(io, packet, packetLength);
+
+                    /* The packet is sent at least to one opener, not an orphan anymore */
+                    orphan = FALSE;
+                    break;
+                }
+            }
+        }
+    }
 
     /* No receiver for this packet found? It's an orphan then */
-    if (orphan)
+    if (unlikely(orphan))
     {
         unit->stats.UnknownTypesReceived++;
 
-        ObtainSemaphore(&unit->semaphore);
         /* Go through all openers and offer orphan packet to anyone asking */
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
-            struct IOSana2Req *io = (APTR)opener->orphanPort.mp_MsgList.lh_Head;
-            /*
-                If this is a real node, ln_Succ will be not NULL, otherwise it is just
-                protector node of empty list
-            */
-            if (io->ios2_Req.io_Message.mn_Node.ln_Succ)
+            /* Check if orphan port has any pending requests */
+            if (unlikely(!IsMsgPortEmpty(&opener->orphanPort)))
             {
+                struct IOSana2Req *io = (struct IOSana2Req *)opener->orphanPort.mp_MsgList.lh_Head;
                 KprintfH("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, packetType);
                 CopyPacket(io, packet, packetLength);
+                /* Continue to offer to other openers with orphan requests */
             }
         }
-        ReleaseSemaphore(&unit->semaphore);
     }
+    ReleaseSemaphore(&unit->semaphore);
 }
