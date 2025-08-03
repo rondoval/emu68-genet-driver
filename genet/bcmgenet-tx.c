@@ -151,7 +151,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			ptr[i] = io->ios2_DstAddr[i];
 
 		for (int i = 0; i < 6; i++)
-			ptr[6 + i] = io->ios2_SrcAddr[i];
+			ptr[6 + i] = unit->currentMacAddress[i];
 
 		*(UWORD *)&ptr[12] = io->ios2_PacketType;
 
