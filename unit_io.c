@@ -10,6 +10,7 @@
 #endif
 
 #include <device.h>
+#include <compat.h>
 #include <debug.h>
 
 static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packetLength)
@@ -20,11 +21,14 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     struct Opener *opener = io->ios2_BufferManagement;
     struct Library *UtilityBase = unit->utilityBase;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
     /* Copy source and dest addresses */
-    for (int i = 0; i < 6; i++)
-        io->ios2_DstAddr[i] = packet[i];
-    for (int i = 0; i < 6; i++)
-        io->ios2_SrcAddr[i] = packet[6 + i];
+    *(ULONG *)&io->ios2_DstAddr[0] = *(ULONG *)&packet[0];
+    *(UWORD *)&io->ios2_DstAddr[4] = *(UWORD *)&packet[4];
+    *(ULONG *)&io->ios2_SrcAddr[0] = *(ULONG *)&packet[6];
+    *(UWORD *)&io->ios2_SrcAddr[4] = *(UWORD *)&packet[10];
+#pragma GCC diagnostic pop
     io->ios2_PacketType = *(UWORD *)&packet[12];
     KprintfH("[genet] %s: Source address: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__,
              io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
@@ -73,7 +77,7 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     }
 
     /* Packet not filtered. Send it now and reply request. */
-    if (!packetFiltered)
+    if (likely(!packetFiltered))
     {
         if (packetLength == 0 || !opener->CopyToBuff || opener->CopyToBuff(io->ios2_Data, packet, packetLength) == 0)
         {

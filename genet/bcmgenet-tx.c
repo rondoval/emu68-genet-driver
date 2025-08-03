@@ -94,6 +94,7 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 	unit->internalStats.tx_packets += pkts_compl;
 	unit->internalStats.tx_bytes += bytes_compl;
 
+#ifdef DEBUG_HIGH
 	// Print every time we cross a multiple of 5000 PacketsSent
 	static ULONG last_printed = 0;
 	ULONG packets = unit->stats.PacketsSent;
@@ -108,6 +109,7 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 				 unit->internalStats.tx_bytes,
 				 unit->internalStats.tx_dropped);
 	}
+#endif
 }
 
 static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
@@ -147,11 +149,16 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 		tx_cb_ptr->data_buffer = NULL;
 		tx_cb_ptr->ioReq = NULL;
 
-		for (int i = 0; i < 6; i++)
-			ptr[i] = io->ios2_DstAddr[i];
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+		// Copy destination MAC address (6 bytes)
+		*(ULONG *)&ptr[0] = *(ULONG *)&io->ios2_DstAddr[0];
+		*(UWORD *)&ptr[4] = *(UWORD *)&io->ios2_DstAddr[4];
 
-		for (int i = 0; i < 6; i++)
-			ptr[6 + i] = unit->currentMacAddress[i];
+		// Copy source MAC address (6 bytes)
+		*(ULONG *)&ptr[6] = *(ULONG *)&unit->currentMacAddress[0];
+		*(UWORD *)&ptr[10] = *(UWORD *)&unit->currentMacAddress[4];
+#pragma GCC diagnostic pop
 
 		*(UWORD *)&ptr[12] = io->ios2_PacketType;
 
@@ -179,11 +186,18 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 
 	if (opener->DMACopyFromBuff && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
 	{
+		if (unlikely(tx_cb_ptr->data_buffer <= (APTR)0x1FFFFF))
+		{
+			KprintfH("[genet] %s: Cannot use buffers in CHIP memory, falling back to copying.\n", __func__);
+			// opener->DMACopyFromBuff = NULL; // Disable DMA copy
+			goto use_software_copy;
+		}
 		KprintfH("[genet] %s: Using DMA copy from buffer\n", __func__);
 		unit->internalStats.tx_dma++;
 	}
 	else
 	{
+	use_software_copy:
 		KprintfH("[genet] %s: Using software copy from buffer\n", __func__);
 		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, io->ios2_DataLength) == 0)
 		{
@@ -229,11 +243,6 @@ int bcmgenet_tx_poll(struct GenetUnit *unit, struct IOSana2Req *io)
 {
 	struct ExecBase *SysBase = unit->execBase;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
-
-	if (ring->free_bds > 2) // we usually send two fragments
-	{
-		return bcmgenet_xmit(io, unit);
-	}
 
 	bcmgenet_tx_reclaim(unit);
 	if (ring->free_bds > 2) // we usually send two fragments

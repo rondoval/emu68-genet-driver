@@ -192,7 +192,7 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
     struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: CMD_READ\n", __func__);
 
-    if (unit->state != STATE_ONLINE)
+    if (unlikely(unit->state != STATE_ONLINE))
     {
         Kprintf("[genet] %s: Unit is offline, cannot read\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
@@ -212,7 +212,7 @@ static inline int Do_S2_READORPHAN(struct IOSana2Req *io)
     struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: S2_READORPHAN\n", __func__);
 
-    if (unit->state != STATE_ONLINE)
+    if (unlikely(unit->state != STATE_ONLINE))
     {
         Kprintf("[genet] %s: Unit is offline, cannot read orphan\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
@@ -231,7 +231,7 @@ static inline int Do_CMD_WRITE(struct IOSana2Req *io)
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfH("[genet] %s: CMD_WRITE\n", __func__);
 
-    if (unit->state != STATE_ONLINE)
+    if (unlikely(unit->state != STATE_ONLINE))
     {
         Kprintf("[genet] %s: Unit is offline, cannot write\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
@@ -377,12 +377,11 @@ void ProcessCommand(struct IOSana2Req *io)
         switch (io->ios2_Req.io_Command)
         {
         case S2_BROADCAST: /* Fallthrough */
-            io->ios2_DstAddr[0] = 0xff;
-            io->ios2_DstAddr[1] = 0xff;
-            io->ios2_DstAddr[2] = 0xff;
-            io->ios2_DstAddr[3] = 0xff;
-            io->ios2_DstAddr[4] = 0xff;
-            io->ios2_DstAddr[5] = 0xff;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+            *(ULONG *)&io->ios2_DstAddr[0] = 0xFFFFFFFF;
+            *(UWORD *)&io->ios2_DstAddr[4] = 0xFFFF;
+#pragma GCC diagnostic pop
         case S2_MULTICAST: /* Fallthrough */
         case CMD_WRITE:
             complete = Do_CMD_WRITE(io);
