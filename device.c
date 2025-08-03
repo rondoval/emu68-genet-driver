@@ -20,6 +20,7 @@
 #include <devices/sana2specialstats.h>
 
 #include <device.h>
+#include <minlist.h>
 #include <debug.h>
 #include "settings.h"
 
@@ -150,11 +151,11 @@ struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
             __func__, opener->DMACopyToBuff, opener->DMACopyFromBuff);
     CloseLibrary(UtilityBase);
 
-    NewMinList((struct MinList *)&opener->readPort.mp_MsgList);
+    _NewMinList((struct MinList *)&opener->readPort.mp_MsgList);
     opener->readPort.mp_Flags = PA_IGNORE;
-    NewMinList((struct MinList *)&opener->orphanPort.mp_MsgList);
+    _NewMinList((struct MinList *)&opener->orphanPort.mp_MsgList);
     opener->orphanPort.mp_Flags = PA_IGNORE;
-    NewMinList((struct MinList *)&opener->eventPort.mp_MsgList);
+    _NewMinList((struct MinList *)&opener->eventPort.mp_MsgList);
     opener->eventPort.mp_Flags = PA_IGNORE;
 
     return opener;

@@ -15,11 +15,7 @@
 #include <phy/phy.h>
 #include <bcmgenet.h>
 
-/*
- * SNPrintf - v47
- * NewMinList - v45
- */
-#define LIB_MIN_VERSION 47
+#define LIB_MIN_VERSION 37
 
 #define ETH_HLEN 14		  /* Total octets in header.				*/
 #define VLAN_HLEN 4		  /* The additional bytes required by VLAN	*/

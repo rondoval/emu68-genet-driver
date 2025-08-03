@@ -17,6 +17,7 @@
 #include <device.h>
 #include <gpio/bcm_gpio.h>
 #include <compat.h>
+#include <minlist.h>
 
 static void SetupMDIO(struct GenetUnit *unit)
 {
@@ -76,10 +77,10 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		CloseLibrary(unit->utilityBase);
 		return S2ERR_NO_RESOURCES;
 	}
-	NewMinList(&unit->multicastRanges);
+	_NewMinList(&unit->multicastRanges);
 	unit->multicastCount = 0;
 	
-	NewMinList(&unit->openers);
+	_NewMinList(&unit->openers);
 	AddTail((APTR)&unit->openers, (APTR)opener);
 	InitSemaphore(&unit->semaphore);
 

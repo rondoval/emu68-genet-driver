@@ -10,6 +10,7 @@
 #include <dos/dos.h>
 
 #include <device.h>
+#include <minlist.h>
 #include <debug.h>
 
 #define UNIT_STACK_SIZE (65536 / sizeof(ULONG))
@@ -45,7 +46,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     struct ExecBase *SysBase = unit->execBase;
 
     // Initialize the built in msg port, well receive commands here
-    NewMinList((struct MinList *)&unit->unit.unit_MsgPort.mp_MsgList);
+    _NewMinList((struct MinList *)&unit->unit.unit_MsgPort.mp_MsgList);
     unit->unit.unit_MsgPort.mp_SigTask = FindTask(NULL);
     unit->unit.unit_MsgPort.mp_SigBit = AllocSignal(-1);
     unit->unit.unit_MsgPort.mp_Flags = PA_SIGNAL;
@@ -202,7 +203,7 @@ int UnitTaskStart(struct GenetUnit *unit)
     task->tc_Node.ln_Type = NT_TASK;
     task->tc_Node.ln_Pri = UNIT_TASK_PRIORITY;
 
-    NewMinList((struct MinList *)&task->tc_MemEntry);
+    _NewMinList((struct MinList *)&task->tc_MemEntry);
     AddHead(&task->tc_MemEntry, &ml->ml_Node);
 
     APTR result = AddTask(task, UnitTask, NULL);
