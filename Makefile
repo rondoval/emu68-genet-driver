@@ -37,9 +37,11 @@ $(OBJDIR)/$(OBJNAME): $(addprefix $(OBJDIR)/, $(OBJS))
 
 $(OBJDIR)/%.o: %.cpp
 	$(CXX) -c $(CXXFLAGS) $< -o $@
+	$(CXX) -S -fverbose-asm $(CXXFLAGS) $< -o $(@:.o=.s)
 
 $(OBJDIR)/%.o: %.c
 	$(CC) -c $(CFLAGS) $< -o $@
+	$(CC) -S -fverbose-asm $(CFLAGS) $< -o $(@:.o=.s)
 
 $(OBJDIR)/%.o: %.s
 	$(AS) $(ASFLAGS) -c $< -o $@
