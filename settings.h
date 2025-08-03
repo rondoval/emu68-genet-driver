@@ -3,7 +3,7 @@
 #define _SETTINGS_H
 
 #define DEVICE_NAME     "genet.device"
-#define DEVICE_IDSTRING "genet 1.2 (17 Jul 2025)"
+#define DEVICE_IDSTRING "genet 1.3 (03 Aug 2025)"
 #define DEVICE_VERSION  1
 #define DEVICE_REVISION 2
 #define DEVICE_PRIORITY -90
