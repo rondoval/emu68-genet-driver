@@ -8,4 +8,6 @@
 #define DEVICE_REVISION 3
 #define DEVICE_PRIORITY -90
 
+#define UNIT_TASK_PRIORITY 0
+
 #endif /* _SETTINGS_H */

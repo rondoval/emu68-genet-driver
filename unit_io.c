@@ -90,9 +90,6 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
         /* Set number of bytes received */
         io->ios2_DataLength = packetLength;
 
-        ObtainSemaphore(&unit->semaphore);
-        Remove((struct Node *)io);
-        ReleaseSemaphore(&unit->semaphore);
         ReplyMsg((struct Message *)io);
         KprintfH("[genet] %s: Packet copied and request replied\n", __func__);
     }
@@ -138,15 +135,16 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
     UBYTE orphan = TRUE;
     KprintfH("[genet] %s: Received packet of length %ld with type 0x%lx\n", __func__, packetLength, packetType);
 
-    ObtainSemaphore(&unit->semaphore);
-
     /* Fast path for common packet types */
     if (likely(packetType == 0x0800 || packetType == 0x0806))
     {
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
-            struct MsgPort *queue = GetPacketTypeQueue((struct Opener *)node, packetType);
-            struct IOSana2Req *io = (struct IOSana2Req *)queue->mp_MsgList.lh_Head;
+            struct Opener *opener = (struct Opener *)node;
+            struct MinList *queue = GetPacketTypeQueue(opener, packetType);
+            ObtainSemaphore(&opener->semaphore);
+            struct IOSana2Req *io = (struct IOSana2Req *)RemHeadMinList(queue);
+            ReleaseSemaphore(&opener->semaphore);
 
             if (likely(io != NULL))
             {
@@ -162,8 +160,9 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
+            ObtainSemaphore(&opener->semaphore);
             /* Go through all IO read requests pending*/
-            for (struct Node *ioNode = opener->readPort.mp_MsgList.lh_Head; ioNode->ln_Succ; ioNode = ioNode->ln_Succ)
+            for (struct MinNode *ioNode = opener->readQueue.mlh_Head; ioNode->mln_Succ; ioNode = ioNode->mln_Succ)
             {
                 struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
                 // EthernetII has packet type larger than 1500 (MTU),
@@ -171,6 +170,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                 if (io->ios2_PacketType == packetType || (packetType <= 1500 && io->ios2_PacketType <= 1500))
                 {
                     KprintfH("[genet] %s: Found opener for packet type 0x%lx\n", __func__, packetType);
+                    Remove((struct Node *)io);
                     /* Match, copy packet, break loop for this opener */
                     CopyPacket(io, packet, packetLength);
 
@@ -179,6 +179,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                     break;
                 }
             }
+            ReleaseSemaphore(&opener->semaphore);
         }
     }
 
@@ -191,15 +192,16 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
+            ObtainSemaphore(&opener->semaphore);
             /* Check if orphan port has any pending requests */
-            if (unlikely(!IsMsgPortEmpty(&opener->orphanPort)))
+            struct IOSana2Req *io = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue);
+            ReleaseSemaphore(&opener->semaphore);
+            if (unlikely(io != NULL))
             {
-                struct IOSana2Req *io = (struct IOSana2Req *)opener->orphanPort.mp_MsgList.lh_Head;
                 KprintfH("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, packetType);
                 CopyPacket(io, packet, packetLength);
-                /* Continue to offer to other openers with orphan requests */
             }
+            /* Continue to offer to other openers with orphan requests */
         }
     }
-    ReleaseSemaphore(&unit->semaphore);
 }

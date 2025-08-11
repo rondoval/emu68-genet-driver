@@ -12,9 +12,9 @@
 #include <device.h>
 #include <minlist.h>
 #include <debug.h>
+#include "settings.h"
 
 #define UNIT_STACK_SIZE (65536 / sizeof(ULONG))
-#define UNIT_TASK_PRIORITY 0
 
 // Max 1000000
 #define PACKET_WAIT_DELAY_MIN 1000
@@ -24,6 +24,7 @@
 
 static inline BOOL ProcessReceive(struct GenetUnit *unit)
 {
+    struct ExecBase *SysBase = unit->execBase;
     int pkt_len = 0;
     BOOL activity = FALSE;
     do
@@ -34,7 +35,9 @@ static inline BOOL ProcessReceive(struct GenetUnit *unit)
         if (pkt_len > 0)
         {
             activity = TRUE;
+            ObtainSemaphore(&unit->semaphore);
             ReceiveFrame(unit, buffer, pkt_len);
+            ReleaseSemaphore(&unit->semaphore);
             bcmgenet_gmac_free_pkt(unit, buffer, pkt_len);
         }
     } while (pkt_len > 0);
@@ -136,7 +139,9 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
             if (unit->state == STATE_ONLINE)
             {
+                ObtainSemaphore(&unit->semaphore);
                 bcmgenet_timeout(unit);
+                ReleaseSemaphore(&unit->semaphore);
             }
             // TODO check link state on PHY
 

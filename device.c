@@ -151,16 +151,13 @@ struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
             __func__, opener->DMACopyToBuff, opener->DMACopyFromBuff);
     CloseLibrary(UtilityBase);
 
-    _NewMinList((struct MinList *)&opener->readPort.mp_MsgList);
-    opener->readPort.mp_Flags = PA_IGNORE;
-    _NewMinList((struct MinList *)&opener->orphanPort.mp_MsgList);
-    opener->orphanPort.mp_Flags = PA_IGNORE;
-    _NewMinList((struct MinList *)&opener->eventPort.mp_MsgList);
-    opener->eventPort.mp_Flags = PA_IGNORE;
-    _NewMinList((struct MinList *)&opener->ipv4Queue.mp_MsgList);
-    opener->ipv4Queue.mp_Flags = PA_IGNORE;
-    _NewMinList((struct MinList *)&opener->arpQueue.mp_MsgList);
-    opener->arpQueue.mp_Flags = PA_IGNORE;
+    _NewMinList(&opener->readQueue);
+    _NewMinList(&opener->orphanQueue);
+    _NewMinList(&opener->eventQueue);
+    _NewMinList(&opener->ipv4Queue);
+    _NewMinList(&opener->arpQueue);
+
+    InitSemaphore(&opener->semaphore);
 
     return opener;
 }
@@ -194,6 +191,7 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
             io->ios2_Req.io_Error = IOERR_OPENFAIL;
             return;
         }
+        InitSemaphore(&base->unit->semaphore);
     }
 
     if (flags & SANA2OPF_MINE && base->unit->unit.unit_OpenCnt > 0)
@@ -246,7 +244,12 @@ ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6
     struct ExecBase *SysBase = base->execBase;
     Kprintf("[genet] %s: Closing device\n", __func__);
 
-    struct Opener *opener = io->ios2_BufferManagement;
+    struct Opener *opener = NULL;
+    if (io->ios2_Req.io_Message.mn_Length >= sizeof(struct IOSana2Req))
+    {
+        opener = io->ios2_BufferManagement;
+    }
+    
     int result = UnitClose(unit, opener);
     if (result == 0) // last user of Unit disappeared
     {
@@ -254,7 +257,7 @@ ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6
         FreeMem(unit, sizeof(struct GenetUnit));
         base->unit = NULL;
     }
-    if (opener)
+    if (opener != NULL)
     {
         Kprintf("[genet] %s: Freeing opener resources\n", __func__);
         FreeMem(opener, sizeof(struct Opener));
@@ -288,7 +291,9 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
         ULONG segList = base->segList;
 
         /* Remove yourself from list of devices */
+        Forbid();
         Remove((struct Node *)base);
+        Permit();
 
         /* Calculate size of device base and deallocate memory */
         ULONG size = base->device.dd_Library.lib_NegSize + base->device.dd_Library.lib_PosSize;

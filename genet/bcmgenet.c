@@ -656,8 +656,6 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 	// /* Really kill the PHY state machine and disconnect from it */
 	// phy_disconnect(dev->phydev);
 
-	// TODO cancel pending requests in ring buffers
-
 	unit->rxbuffer = NULL;
 	if (unit->rxbuffer_not_aligned)
 	{

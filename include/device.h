@@ -15,7 +15,7 @@
 #include <phy/phy.h>
 #include <bcmgenet.h>
 
-#define LIB_MIN_VERSION 37
+#define LIB_MIN_VERSION 39 /* 3.0, since we use shared semaphores*/
 
 #define ETH_HLEN 14		  /* Total octets in header.				*/
 #define VLAN_HLEN 4		  /* The additional bytes required by VLAN	*/
@@ -23,7 +23,7 @@
 #define ETH_FCS_LEN 4	  /* Octets in the FCS             			*/
 #define ETH_DATA_LEN 1500 /* Max. octets in payload					*/
 
-#define ARCH_DMA_MINALIGN 128 // TODO this is likely wrong
+#define ARCH_DMA_MINALIGN 128 // TODO this is likely too much
 
 #define COMMAND_PROCESSED 1
 #define COMMAND_SCHEDULED 0
@@ -34,12 +34,15 @@
 /* Generic TODOs
 packet stats from HW
 type statistics
-multicasts using HFB
-hardware filter block support
-better ring buffers handling
+better RX ring buffers handling
+PHY link state updates at runtime
 
 Long shot:
 - use checksum offload (changes in SANA-II and stack)
+
+Not tested:
+Promiscuous mode
+Multicast support
 */
 
 struct GenetDevice;
@@ -55,14 +58,17 @@ typedef enum
 struct Opener
 {
 	struct MinNode node;
-	struct MsgPort readPort;
-	struct MsgPort orphanPort;
-	struct MsgPort eventPort;
+	struct MinList readQueue;
+	struct MinList orphanQueue;
+	struct MinList eventQueue;
 	
 	/* Optimized queues for common packet types */
-	struct MsgPort ipv4Queue;  /* For 0x0800 */
-	struct MsgPort arpQueue;   /* For 0x0806 */
-	
+	struct MinList ipv4Queue;  /* For 0x0800 */
+	struct MinList arpQueue;   /* For 0x0806 */
+
+	/* This is used to synchronize access to the opener lists */
+	struct SignalSemaphore semaphore;
+
 	/* for CMD_READ,
 	 * BOOL PacketFilter(struct Hook* packetFilter asm("a0"), struct IOSana2Req* asm("a2"), APTR asm("a1"));
 	 * fill in ios2_DataLength, ios2_SrcAddr, ios2_DstAddr
@@ -153,6 +159,7 @@ struct GenetUnit
 	struct MinList multicastRanges;
 	ULONG multicastCount;
 	BOOL mdfEnabled; /* Multicast filter enabled */
+	
 	struct SignalSemaphore semaphore;
 
 	/* Device tree */
@@ -203,7 +210,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
 void ProcessCommand(struct IOSana2Req *io);
 
 /* Inline function for fast packet type queue lookup */
-static inline struct MsgPort* GetPacketTypeQueue(struct Opener *opener, UWORD packetType)
+static inline struct MinList* GetPacketTypeQueue(struct Opener *opener, UWORD packetType)
 {
     switch (packetType)
     {
@@ -212,7 +219,7 @@ static inline struct MsgPort* GetPacketTypeQueue(struct Opener *opener, UWORD pa
         case 0x0806: /* ARP */
             return &opener->arpQueue;
         default:
-            return &opener->readPort; /* Fallback to legacy port */
+            return &opener->readQueue; /* Fallback to legacy port */
     }
 }
 
