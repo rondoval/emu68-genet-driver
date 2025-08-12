@@ -13,10 +13,9 @@
 #include <device.h>
 #include <debug.h>
 
-LONG abortIO(struct IOSana2Req *io asm("a1"))
+LONG abortIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     /* AbortIO is a *wish* call. Someone would like to abort current IORequest */
-    struct GenetDevice *base = (struct GenetDevice *)io->ios2_Req.io_Device;
     struct ExecBase *SysBase = base->execBase;
     KprintfH("[genet] %s: Aborting IO request %lx\n", __func__, io);
 

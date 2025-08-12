@@ -71,7 +71,7 @@ static struct Resident const genetDeviceResident __attribute__((used)) = {
     can be sizeof(struct Library), sizeof(struct Device) or any size necessary to
     store user defined object extending the Device structure.
 */
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"));
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct GenetDevice *dev_base asm("a6"));
 
 static const APTR funcTable[];
 static const APTR initTable[4] = {
@@ -80,8 +80,7 @@ static const APTR initTable[4] = {
     NULL,
     (APTR)initFunction};
 
-void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
-             ULONG flags asm("d1"), struct GenetDevice *base asm("a6"));
+void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"), ULONG flags asm("d1"), struct GenetDevice *base asm("a6"));
 ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"));
 ULONG expungeLib(struct GenetDevice *base asm("a6"));
 APTR extFunc(struct GenetDevice *base asm("a6"));
@@ -97,7 +96,7 @@ static const APTR funcTable[] = {
     (APTR)abortIO,
     (APTR)-1};
 
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"))
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct GenetDevice *dev_base asm("a6"))
 {
     struct ExecBase *SysBase = *(struct ExecBase **)4UL;
     Kprintf("[genet] %s: Initializing device\n", __func__);
@@ -249,7 +248,7 @@ ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6
     {
         opener = io->ios2_BufferManagement;
     }
-    
+
     int result = UnitClose(unit, opener);
     if (result == 0) // last user of Unit disappeared
     {

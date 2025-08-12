@@ -12,9 +12,8 @@
 #include <devices/sana2.h>
 #include <debug.h>
 
-void beginIO(struct IOSana2Req *io asm("a1"))
+void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
-    struct GenetDevice *base = (struct GenetDevice *)io->ios2_Req.io_Device;
     struct ExecBase *SysBase = base->execBase;
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
 

@@ -367,6 +367,8 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
             io->ios2_Req.io_Error = result;
             io->ios2_WireError = S2WERR_GENERIC_ERROR;
             ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
+        } else {
+            Do_S2_ONLINE(io);
         }
     }
 
