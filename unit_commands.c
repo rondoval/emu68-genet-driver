@@ -142,7 +142,7 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
         ReplyMsg((struct Message *)req);
     }
 
-    /* For every opener, flush orphan and even queues */
+    /* For every opener, flush all internal queues */
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
         struct Opener *opener = (struct Opener *)node;
@@ -334,10 +334,12 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
             io->ios2_Req.io_Error = result;
             io->ios2_WireError = S2WERR_GENERIC_ERROR;
             ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
-            return COMMAND_PROCESSED;
         }
-        Kprintf("[genet] %s: Unit online, about to report events\n", __func__);
-        ReportEvents(unit, S2EVENT_ONLINE);
+        else
+        {
+            Kprintf("[genet] %s: Unit online, about to report events\n", __func__);
+            ReportEvents(unit, S2EVENT_ONLINE);
+        }
     }
     ReleaseSemaphore(&unit->semaphore);
 
@@ -367,7 +369,9 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
             io->ios2_Req.io_Error = result;
             io->ios2_WireError = S2WERR_GENERIC_ERROR;
             ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
-        } else {
+        }
+        else
+        {
             Do_S2_ONLINE(io);
         }
     }

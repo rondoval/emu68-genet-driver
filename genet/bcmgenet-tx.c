@@ -183,6 +183,8 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	// Then the body from upstream
 	struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(ring);
 	tx_cb_ptr->ioReq = io;
+	/* We'll use this to mark it is on the TX ring now and can't be aborted */
+	io->ios2_Req.io_Message.mn_Node.ln_Type = NT_UNKNOWN;
 
 	if (opener->DMACopyFromBuff && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
 	{
