@@ -31,7 +31,7 @@ static inline struct enet_cb *bcmgenet_get_txcb(struct bcmgenet_tx_ring *ring)
 
 	tx_cb_ptr = ring->tx_control_block;
 	tx_cb_ptr += ring->write_ptr;
-	KprintfH("[genet] %s: tx_cb_ptr %lx, write_ptr %ld\n", __func__, tx_cb_ptr, ring->write_ptr);
+	KprintfH("[genet] %s: tx_cb_ptr 0x%lx, write_ptr %ld\n", __func__, tx_cb_ptr, ring->write_ptr);
 
 	/* Advancing local write pointer */
 	ring->write_ptr++;
@@ -58,7 +58,6 @@ static inline struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
 /* Unlocked version of the reclaim routine */
 static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Reclaiming TX buffers\n", __func__);
 	struct ExecBase *SysBase = unit->execBase;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 	/* Compute how many buffers are transmitted since last xmit call */
@@ -69,7 +68,7 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 	UWORD txbds_processed = 0;
 	ULONG bytes_compl = 0;
 	UWORD pkts_compl = 0;
-	KprintfH("[genet] %s: clean_ptr %ld, tx_cons_index %ld, txbds_ready %ld\n", __func__, ring->clean_ptr, ring->tx_cons_index, txbds_ready);
+	BOOL nudged = FALSE;
 	while (txbds_processed < txbds_ready)
 	{
 		struct IOSana2Req *io = bcmgenet_free_tx_cb(&ring->tx_control_block[ring->clean_ptr]);
@@ -77,8 +76,14 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 		{
 			pkts_compl++;
 			bytes_compl += io->ios2_DataLength;
-			KprintfH("[genet] %s: Reclaimed tx buffer %lx, length %ld\n", __func__, io, io->ios2_DataLength);
+			KprintfH("[genet] %s: Reclaimed tx buffer 0x%lx, length %ld\n", __func__, io, io->ios2_DataLength);
 			ReplyMsg((struct Message *)io);
+			if(!nudged)
+			{
+				/* Nudge UnitTask (adaptive backoff collapse) */
+				Signal(unit->task, 1UL << unit->activitySigBit);
+				nudged = TRUE;
+			}
 		}
 
 		txbds_processed++;
@@ -87,8 +92,6 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 
 	ring->free_bds += txbds_processed;
 	ring->tx_cons_index = tx_cons_index;
-	KprintfH("[genet] %s: tx_cons_index %ld, clean_ptr %ld, free_bds %ld\n",
-			 __func__, ring->tx_cons_index, ring->clean_ptr, ring->free_bds);
 
 	unit->stats.PacketsSent += pkts_compl;
 	unit->internalStats.tx_packets += pkts_compl;
@@ -114,10 +117,13 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 
 static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: unit %ld, io %lx, flags %lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
+	KprintfH("[genet] %s: unit %ld, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
 	struct ExecBase *SysBase = unit->execBase;
 	struct Opener *opener = io->ios2_BufferManagement;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
+
+	KprintfH("[genet] %s: pre: tx_cons_index %ld, tx_prod_index %ld, write_ptr %ld, clean_ptr %ld\n", __func__,
+			 ring->tx_cons_index, ring->tx_prod_index, ring->write_ptr, ring->clean_ptr);
 
 	UBYTE bds_required = (io->ios2_Req.io_Flags & SANA2IOF_RAW) ? 1 : 2;
 	if (unlikely(ring->free_bds <= bds_required))
@@ -178,6 +184,9 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 		ring->free_bds--;
 		ring->tx_prod_index++;
 		ring->tx_prod_index &= DMA_P_INDEX_MASK;
+		KprintfH("[genet] %s: ETH header sent type: 0x%lx dst addr: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__, io->ios2_PacketType,
+				 io->ios2_DstAddr[0], io->ios2_DstAddr[1], io->ios2_DstAddr[2],
+				 io->ios2_DstAddr[3], io->ios2_DstAddr[4], io->ios2_DstAddr[5]);
 	}
 
 	// Then the body from upstream
@@ -194,7 +203,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			// opener->DMACopyFromBuff = NULL; // Disable DMA copy
 			goto use_software_copy;
 		}
-		KprintfH("[genet] %s: Using DMA copy from buffer\n", __func__);
+		KprintfH("[genet] %s: Using DMA copy from buffer 0x%lx\n", __func__, (ULONG)tx_cb_ptr->data_buffer);
 		unit->internalStats.tx_dma++;
 	}
 	else
@@ -223,7 +232,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 		len_stat |= DMA_SOP;
 	}
 	len_stat |= DMA_EOP;
-	KprintfH("[genet] %s: Setting descriptor address %lx, data buffer %lx, len_stat %lx\n",
+	KprintfH("[genet] %s: Setting descriptor address 0x%lx, data buffer 0x%lx, len_stat 0x%lx\n",
 			 __func__, tx_cb_ptr->descriptor_address, tx_cb_ptr->data_buffer, len_stat);
 
 	dmadesc_set(tx_cb_ptr->descriptor_address, tx_cb_ptr->data_buffer, len_stat);

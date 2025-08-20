@@ -239,7 +239,7 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
     AddTailMinList(queue, (struct MinNode *)io);
     ReleaseSemaphore(&opener->semaphore);
 
-    KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%x\n", __func__, packetType);
+    KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%lx\n", __func__, packetType);
     return COMMAND_SCHEDULED;
 }
 

@@ -34,9 +34,8 @@ static inline BOOL ProcessReceive(struct GenetUnit *unit)
         // Distribute received packets to openers
         if (pkt_len > 0)
         {
-            activity = TRUE;
             ObtainSemaphore(&unit->semaphore);
-            ReceiveFrame(unit, buffer, pkt_len);
+            activity |= ReceiveFrame(unit, buffer, pkt_len);
             ReleaseSemaphore(&unit->semaphore);
             bcmgenet_gmac_free_pkt(unit, buffer, pkt_len);
         }
@@ -48,10 +47,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 {
     struct ExecBase *SysBase = unit->execBase;
 
-    // Initialize the built in msg port, well receive commands here
+    // Initialize the built in msg port, we'll receive commands here
     _NewMinList((struct MinList *)&unit->unit.unit_MsgPort.mp_MsgList);
     unit->unit.unit_MsgPort.mp_SigTask = FindTask(NULL);
     unit->unit.unit_MsgPort.mp_SigBit = AllocSignal(-1);
+    unit->activitySigBit = AllocSignal(-1); /* separate wakeup for tx fast-path */
     unit->unit.unit_MsgPort.mp_Flags = PA_SIGNAL;
     unit->unit.unit_MsgPort.mp_Node.ln_Type = NT_MSGPORT;
 
@@ -90,18 +90,18 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     Signal(parent, SIGBREAKF_CTRL_F);
 
     ULONG sigset;
+    BOOL activity = FALSE;
+    ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
+                     (1UL << timerPort->mp_SigBit) |
+                     (1UL << unit->activitySigBit) |
+                     SIGBREAKF_CTRL_C;
+
     do
     {
-        sigset = Wait((1 << unit->unit.unit_MsgPort.mp_SigBit) | 1 << timerPort->mp_SigBit | SIGBREAKF_CTRL_C);
-        BOOL activity = FALSE;
-
-        if (unit->state == STATE_ONLINE)
-        {
-            activity |= ProcessReceive(unit);
-        }
+        sigset = Wait(waitMask);
 
         // IO queue got a new message
-        if (sigset & (1 << unit->unit.unit_MsgPort.mp_SigBit))
+        if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
         {
             activity = TRUE;
             struct IOSana2Req *io;
@@ -112,15 +112,39 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
         }
 
-        if (activity)
+        // Moved after ProcessCommand
+        // Reasoning is the commands may be new receive requests
+        if (unit->state == STATE_ONLINE)
         {
-            // If we received something, reset cooldown
+            activity |= ProcessReceive(unit);
+        }
+
+        /* Fast-path signalled activity. */
+        if (sigset & (1UL << unit->activitySigBit))
+        {
+            activity = TRUE;
             cooldown = PACKET_WAIT_COOLDOWN;
-            delay = PACKET_WAIT_DELAY_MIN;
+
+            if (delay != PACKET_WAIT_DELAY_MIN)
+            {
+                /* Collapse delay parameters immediately. */
+                delay = PACKET_WAIT_DELAY_MIN;
+
+                BOOL timerExpired = (sigset & (1UL << timerPort->mp_SigBit)) != 0; /* old request done? */
+                if (!timerExpired && CheckIO(&timerReq->tr_node) == 0)
+                {
+                    AbortIO(&timerReq->tr_node);
+                    WaitIO(&timerReq->tr_node);
+                    timerReq->tr_node.io_Command = TR_ADDREQUEST;
+                    timerReq->tr_time.tv_secs = 0;
+                    timerReq->tr_time.tv_micro = delay;
+                    SendIO(&timerReq->tr_node);
+                }
+            }
         }
 
         // Timer expired, query PHY for link state
-        if (sigset & (1 << timerPort->mp_SigBit))
+        if (sigset & (1UL << timerPort->mp_SigBit))
         {
             if (activity == FALSE)
             {
@@ -132,18 +156,29 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                     delay = (delay == PACKET_WAIT_DELAY_MIN) ? PACKET_WAIT_DELAY_STANDBY : PACKET_WAIT_DELAY_MAX;
                 }
             }
+            else
+            {
+                // If we received something, reset cooldown and delay
+                cooldown = PACKET_WAIT_COOLDOWN;
+                delay = PACKET_WAIT_DELAY_MIN;
+            }
+
+            if (unit->state == STATE_ONLINE)
+            {
+                // TODO do we really need to block entire unit
+                ObtainSemaphore(&unit->semaphore);
+                bcmgenet_timeout(unit);
+                ReleaseSemaphore(&unit->semaphore);
+            }
+
+            // TODO check link state on PHY
+
             if (CheckIO(&timerReq->tr_node))
             {
                 WaitIO(&timerReq->tr_node);
             }
 
-            if (unit->state == STATE_ONLINE)
-            {
-                ObtainSemaphore(&unit->semaphore);
-                bcmgenet_timeout(unit);
-                ReleaseSemaphore(&unit->semaphore);
-            }
-            // TODO check link state on PHY
+            activity = FALSE;
 
             // Schedule next run
             timerReq->tr_node.io_Command = TR_ADDREQUEST;
@@ -159,6 +194,8 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         }
     } while ((sigset & SIGBREAKF_CTRL_C) == 0);
 
+    FreeSignal(unit->unit.unit_MsgPort.mp_SigBit);
+    FreeSignal(unit->activitySigBit);
     CloseDevice(&timerReq->tr_node);
     DeleteIORequest(&timerReq->tr_node);
     DeleteMsgPort(timerPort);

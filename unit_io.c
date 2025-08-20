@@ -115,7 +115,7 @@ static inline BOOL MulticastFilter(struct GenetUnit *unit, uint64_t destAddr)
     return TRUE; /* Broadcast or unicast */
 }
 
-void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
+BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 {
     struct ExecBase *SysBase = unit->execBase;
 
@@ -125,7 +125,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
         uint64_t destAddr = ((uint64_t)*(UWORD *)&packet[0] << 32) | *(ULONG *)&packet[2];
         if (!MulticastFilter(unit, destAddr))
         {
-            return; // Not a multicast address we accept, drop the packet
+            return FALSE; // Not a multicast address we accept, drop the packet
         }
     }
 
@@ -133,6 +133,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
     unit->internalStats.rx_packets++;
     UWORD packetType = *(UWORD *)&packet[12];
     UBYTE orphan = TRUE;
+    BOOL activity = FALSE;
     KprintfH("[genet] %s: Received packet of length %ld with type 0x%lx\n", __func__, packetLength, packetType);
 
     /* Fast path for common packet types */
@@ -150,6 +151,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
             {
                 CopyPacket(io, packet, packetLength);
                 orphan = FALSE;
+                activity = TRUE;
                 /* Continue to deliver to other openers */
             }
         }
@@ -176,6 +178,7 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
                     /* The packet is sent at least to one opener, not an orphan anymore */
                     orphan = FALSE;
+                    activity = TRUE;
                     break;
                 }
             }
@@ -200,8 +203,10 @@ void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
             {
                 KprintfH("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, packetType);
                 CopyPacket(io, packet, packetLength);
+                activity = TRUE;
             }
             /* Continue to offer to other openers with orphan requests */
         }
     }
+    return activity;
 }

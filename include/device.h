@@ -161,6 +161,7 @@ struct GenetUnit
 	BOOL mdfEnabled; /* Multicast filter enabled */
 	
 	struct SignalSemaphore semaphore;
+	BYTE activitySigBit; /* Dedicated signal bit for fast-path activity wakeups */
 
 	/* Device tree */
 	CONST_STRPTR compatible;
@@ -206,7 +207,7 @@ int UnitOnline(struct GenetUnit *unit);
 void UnitOffline(struct GenetUnit *unit);
 int UnitClose(struct GenetUnit *unit, struct Opener *opener);
 
-void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
+BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
 void ProcessCommand(struct IOSana2Req *io);
 
 /* Inline function for fast packet type queue lookup */

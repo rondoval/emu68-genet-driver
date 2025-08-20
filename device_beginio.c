@@ -17,6 +17,9 @@ void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6")
     struct ExecBase *SysBase = base->execBase;
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
 
+    /* experimental workaround for application bugs */
+    io->ios2_Req.io_Message.mn_Node.ln_Type = NT_UNKNOWN;
+
     // Try to do the request directly by obtaining the lock, otherwise put it in unit's CMD queue
     if (AttemptSemaphore(&unit->semaphore))
     {
