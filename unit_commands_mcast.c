@@ -60,7 +60,6 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
     uint64_t lower_bound = GetAddress(io->ios2_SrcAddr);
     uint64_t upper_bound = (io->ios2_Req.io_Command == S2_ADDMULTICASTADDRESS) ? lower_bound : GetAddress(io->ios2_DstAddr);
 
-    ObtainSemaphore(&unit->semaphore);
     /* Go through already registered multicast ranges. If one is found, increase use count and return */
     for (struct MinNode *node = unit->multicastRanges.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
@@ -68,7 +67,6 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
         if (range->lowerBound == lower_bound && range->upperBound == upper_bound)
         {
             range->useCount++;
-            ReleaseSemaphore(&unit->semaphore);
             return COMMAND_PROCESSED;
         }
     }
@@ -80,7 +78,6 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
         Kprintf("[genet] %s: Failed to allocate memory for multicast range\n", __func__);
         io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
         ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
-        ReleaseSemaphore(&unit->semaphore);
         return COMMAND_PROCESSED;
     }
     _memset(range, 0, sizeof(struct MulticastRange));
@@ -94,7 +91,6 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
 
     /* Update PROMISC and MDF filter */
     bcmgenet_set_rx_mode(unit);
-    ReleaseSemaphore(&unit->semaphore);
     return COMMAND_PROCESSED;
 }
 
@@ -124,7 +120,6 @@ int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
     uint64_t lower_bound = GetAddress(io->ios2_SrcAddr);
     uint64_t upper_bound = (io->ios2_Req.io_Command == S2_DELMULTICASTADDRESS) ? lower_bound : GetAddress(io->ios2_DstAddr);
 
-    ObtainSemaphore(&unit->semaphore);
     /* Go through already registered multicast ranges. Once found, decrease use count */
     for (struct MinNode *node = unit->multicastRanges.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
@@ -145,10 +140,8 @@ int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
                 /* Update PROMISC and MDF filter */
                 bcmgenet_set_rx_mode(unit);
             }
-            ReleaseSemaphore(&unit->semaphore);
             return COMMAND_PROCESSED;
         }
     }
-    ReleaseSemaphore(&unit->semaphore);
     return COMMAND_PROCESSED;
 }

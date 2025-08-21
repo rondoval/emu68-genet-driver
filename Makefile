@@ -4,8 +4,8 @@ AS := m68k-amigaos-as
 
 INCLUDE := -Iinclude
 
-CFLAGS  := -m68040 -O2 -MMD -MP -Wall $(INCLUDE) -DDEBUG -Wextra # -Wno-unused-parameter
-CXXFLAGS:= -m68040 -std=c++0x -O2 -MMD -MP -Wall $(INCLUDE)
+CFLAGS  := -m68040 -O3 -fomit-frame-pointer -MMD -MP -Wall $(INCLUDE) -DDEBUG -Wextra # -Wno-unused-parameter
+CXXFLAGS:= -m68040 -std=c++0x -O3 -fomit-frame-pointer -MMD -MP -Wall $(INCLUDE)
 ASFLAGS := -m68040
 LDFLAGS := -s -nostdlib -nostartfiles
 
@@ -37,11 +37,9 @@ $(OBJDIR)/$(OBJNAME): $(addprefix $(OBJDIR)/, $(OBJS))
 
 $(OBJDIR)/%.o: %.cpp
 	$(CXX) -c $(CXXFLAGS) $< -o $@
-	$(CXX) -S -fverbose-asm $(CXXFLAGS) $< -o $(@:.o=.s)
 
 $(OBJDIR)/%.o: %.c
 	$(CC) -c $(CFLAGS) $< -o $@
-	$(CC) -S -fverbose-asm $(CFLAGS) $< -o $(@:.o=.s)
 
 $(OBJDIR)/%.o: %.s
 	$(AS) $(ASFLAGS) -c $< -o $@

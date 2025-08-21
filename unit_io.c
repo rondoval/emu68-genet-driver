@@ -131,6 +131,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
     unit->stats.PacketsReceived++;
     unit->internalStats.rx_packets++;
+    unit->internalStats.rx_bytes += packetLength;
     UWORD packetType = *(UWORD *)&packet[12];
     UBYTE orphan = TRUE;
     BOOL activity = FALSE;
@@ -143,9 +144,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
         {
             struct Opener *opener = (struct Opener *)node;
             struct MinList *queue = GetPacketTypeQueue(opener, packetType);
-            ObtainSemaphore(&opener->semaphore);
             struct IOSana2Req *io = (struct IOSana2Req *)RemHeadMinList(queue);
-            ReleaseSemaphore(&opener->semaphore);
 
             if (likely(io != NULL))
             {
@@ -153,6 +152,10 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                 orphan = FALSE;
                 activity = TRUE;
                 /* Continue to deliver to other openers */
+            }
+            else
+            {
+                unit->internalStats.rx_arp_ip_dropped++;
             }
         }
     }
@@ -162,7 +165,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
-            ObtainSemaphore(&opener->semaphore);
             /* Go through all IO read requests pending*/
             for (struct MinNode *ioNode = opener->readQueue.mlh_Head; ioNode->mln_Succ; ioNode = ioNode->mln_Succ)
             {
@@ -182,7 +184,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                     break;
                 }
             }
-            ReleaseSemaphore(&opener->semaphore);
         }
     }
 
@@ -190,15 +191,14 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
     if (unlikely(orphan))
     {
         unit->stats.UnknownTypesReceived++;
+        unit->internalStats.rx_dropped++;
 
         /* Go through all openers and offer orphan packet to anyone asking */
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
-            ObtainSemaphore(&opener->semaphore);
             /* Check if orphan port has any pending requests */
             struct IOSana2Req *io = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue);
-            ReleaseSemaphore(&opener->semaphore);
             if (unlikely(io != NULL))
             {
                 KprintfH("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, packetType);

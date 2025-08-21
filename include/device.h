@@ -15,7 +15,7 @@
 #include <phy/phy.h>
 #include <bcmgenet.h>
 
-#define LIB_MIN_VERSION 39 /* 3.0, since we use shared semaphores*/
+#define LIB_MIN_VERSION 39 /* we use memory pools */
 
 #define ETH_HLEN 14		  /* Total octets in header.				*/
 #define VLAN_HLEN 4		  /* The additional bytes required by VLAN	*/
@@ -23,7 +23,8 @@
 #define ETH_FCS_LEN 4	  /* Octets in the FCS             			*/
 #define ETH_DATA_LEN 1500 /* Max. octets in payload					*/
 
-#define ARCH_DMA_MINALIGN 128 // TODO this is likely too much
+#define ARCH_DMA_MINALIGN 64 /* Minimum DMA alignment. That is in bytes. */
+#define ARCH_DMA_MINALIGN_MASK (ARCH_DMA_MINALIGN - 1)
 
 #define COMMAND_PROCESSED 1
 #define COMMAND_SCHEDULED 0
@@ -66,9 +67,6 @@ struct Opener
 	struct MinList ipv4Queue;  /* For 0x0800 */
 	struct MinList arpQueue;   /* For 0x0806 */
 
-	/* This is used to synchronize access to the opener lists */
-	struct SignalSemaphore semaphore;
-
 	/* for CMD_READ,
 	 * BOOL PacketFilter(struct Hook* packetFilter asm("a0"), struct IOSana2Req* asm("a2"), APTR asm("a1"));
 	 * fill in ios2_DataLength, ios2_SrcAddr, ios2_DstAddr
@@ -106,7 +104,6 @@ struct bcmgenet_rx_ring
 	struct enet_cb *rx_control_block; /* Rx ring buffer control block */
 	UWORD rx_cons_index;			  /* Rx last consumer index */
 	UBYTE read_ptr;					  /* Rx ring read pointer */
-	UWORD old_discards;
 	ULONG rx_max_coalesced_frames;
 	ULONG rx_coalesce_usecs;
 };
@@ -123,17 +120,18 @@ struct internal_stats
 {
 	ULONG rx_packets;
 	ULONG rx_bytes;
-	ULONG rx_multicast;
 	ULONG rx_dropped;
-	ULONG rx_crc_errors;
-	ULONG rx_over_errors;
-	ULONG rx_frame_errors;
-	ULONG rx_length_errors;
+	ULONG rx_arp_ip_dropped;
+	ULONG rx_overruns;
+	// ULONG rx_crc_errors;
+	// ULONG rx_over_errors;
+	// ULONG rx_frame_errors;
+	// ULONG rx_length_errors;
 
 	ULONG tx_packets;
+	ULONG tx_bytes;
 	ULONG tx_dma;
 	ULONG tx_copy;
-	ULONG tx_bytes;
 	ULONG tx_dropped;
 };
 
@@ -159,9 +157,6 @@ struct GenetUnit
 	struct MinList multicastRanges;
 	ULONG multicastCount;
 	BOOL mdfEnabled; /* Multicast filter enabled */
-	
-	struct SignalSemaphore semaphore;
-	BYTE activitySigBit; /* Dedicated signal bit for fast-path activity wakeups */
 
 	/* Device tree */
 	CONST_STRPTR compatible;
@@ -184,6 +179,8 @@ struct GenetUnit
 	struct bcmgenet_tx_ring tx_ring;
 	UBYTE *txbuffer_not_aligned;
 	UBYTE *txbuffer;
+
+	UWORD tx_watchdog_fast_ticks;/* remaining fast polls while data on TX ring */
 };
 
 struct GenetDevice

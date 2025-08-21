@@ -17,6 +17,7 @@
 #include <bcmgenet-regs.h>
 #include <compat.h>
 #include <debug.h>
+#include <settings.h>
 
 /* Combined address + length/status setter */
 static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
@@ -27,15 +28,8 @@ static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
 
 static inline struct enet_cb *bcmgenet_get_txcb(struct bcmgenet_tx_ring *ring)
 {
-	struct enet_cb *tx_cb_ptr;
-
-	tx_cb_ptr = ring->tx_control_block;
-	tx_cb_ptr += ring->write_ptr;
-	KprintfH("[genet] %s: tx_cb_ptr 0x%lx, write_ptr %ld\n", __func__, tx_cb_ptr, ring->write_ptr);
-
-	/* Advancing local write pointer */
-	ring->write_ptr++;
-
+	struct enet_cb *tx_cb_ptr = &ring->tx_control_block[ring->write_ptr++];
+	KprintfH("[genet] %s: tx_cb_ptr 0x%lx, write_ptr %ld\n", __func__, tx_cb_ptr, ring->write_ptr - 1);
 	return tx_cb_ptr;
 }
 
@@ -56,7 +50,7 @@ static inline struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
 }
 
 /* Unlocked version of the reclaim routine */
-static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
+void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 {
 	struct ExecBase *SysBase = unit->execBase;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
@@ -68,7 +62,6 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 	UWORD txbds_processed = 0;
 	ULONG bytes_compl = 0;
 	UWORD pkts_compl = 0;
-	BOOL nudged = FALSE;
 	while (txbds_processed < txbds_ready)
 	{
 		struct IOSana2Req *io = bcmgenet_free_tx_cb(&ring->tx_control_block[ring->clean_ptr]);
@@ -78,44 +71,26 @@ static void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 			bytes_compl += io->ios2_DataLength;
 			KprintfH("[genet] %s: Reclaimed tx buffer 0x%lx, length %ld\n", __func__, io, io->ios2_DataLength);
 			ReplyMsg((struct Message *)io);
-			if(!nudged)
-			{
-				/* Nudge UnitTask (adaptive backoff collapse) */
-				Signal(unit->task, 1UL << unit->activitySigBit);
-				nudged = TRUE;
-			}
 		}
 
-		txbds_processed++;
-		ring->clean_ptr++;
+		++txbds_processed;
+		++ring->clean_ptr;
 	}
 
 	ring->free_bds += txbds_processed;
 	ring->tx_cons_index = tx_cons_index;
 
+#if TX_PENDING_FAST_TICKS > 0
+	/* small burst of fast polls */
+	unit->tx_watchdog_fast_ticks = (ring->free_bds < TX_DESCS) ? TX_PENDING_FAST_TICKS : 0;
+#endif
+
 	unit->stats.PacketsSent += pkts_compl;
 	unit->internalStats.tx_packets += pkts_compl;
 	unit->internalStats.tx_bytes += bytes_compl;
-
-#ifdef DEBUG_HIGH
-	// Print every time we cross a multiple of 5000 PacketsSent
-	static ULONG last_printed = 0;
-	ULONG packets = unit->stats.PacketsSent;
-	if (packets - last_printed >= 5000)
-	{
-		last_printed = packets;
-		// print all internalStats tx_
-		KprintfH("[genet] %s: tx_packets %ld, tx_dma %ld, tx_copy %ld, tx_bytes %ld, tx_dropped %ld\n",
-				 __func__, unit->internalStats.tx_packets,
-				 unit->internalStats.tx_dma,
-				 unit->internalStats.tx_copy,
-				 unit->internalStats.tx_bytes,
-				 unit->internalStats.tx_dropped);
-	}
-#endif
 }
 
-static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
+int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 {
 	KprintfH("[genet] %s: unit %ld, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
 	struct ExecBase *SysBase = unit->execBase;
@@ -195,7 +170,7 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	/* We'll use this to mark it is on the TX ring now and can't be aborted */
 	io->ios2_Req.io_Message.mn_Node.ln_Type = NT_UNKNOWN;
 
-	if (opener->DMACopyFromBuff && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
+	if (unlikely(opener->DMACopyFromBuff) && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
 	{
 		if (unlikely(tx_cb_ptr->data_buffer <= (APTR)0x1FFFFF))
 		{
@@ -247,26 +222,10 @@ static int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	writel(ring->tx_prod_index, (ULONG)unit->genetBase + TDMA_PROD_INDEX);
 	KprintfH("[genet] %s: Transmitting packet, tx_prod_index %ld, free_bds %ld\n",
 			 __func__, ring->tx_prod_index, ring->free_bds);
+
+#if TX_PENDING_FAST_TICKS > 0
+	unit->tx_watchdog_fast_ticks = TX_PENDING_FAST_TICKS; /* ensure a few fast polls */
+#endif
+
 	return COMMAND_SCHEDULED;
-}
-
-int bcmgenet_tx_poll(struct GenetUnit *unit, struct IOSana2Req *io)
-{
-	struct ExecBase *SysBase = unit->execBase;
-	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
-
-	bcmgenet_tx_reclaim(unit);
-	if (ring->free_bds > 2) // we usually send two fragments
-	{
-		return bcmgenet_xmit(io, unit);
-	}
-	// Can't process right now
-	PutMsg(&unit->unit.unit_MsgPort, (struct Message *)io);
-	return COMMAND_SCHEDULED;
-}
-
-void bcmgenet_timeout(struct GenetUnit *unit)
-{
-	bcmgenet_tx_reclaim(unit);
-	// TODO unit->internalStats.tx_errors++;
 }

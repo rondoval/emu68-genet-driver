@@ -9,37 +9,54 @@
 
 #include <dos/dos.h>
 
+#include <bcmgenet-regs.h>
 #include <device.h>
 #include <minlist.h>
 #include <debug.h>
-#include "settings.h"
+#include <settings.h>
 
-#define UNIT_STACK_SIZE (65536 / sizeof(ULONG))
-
-// Max 1000000
-#define PACKET_WAIT_DELAY_MIN 1000
-#define PACKET_WAIT_DELAY_STANDBY 2000
-#define PACKET_WAIT_DELAY_MAX 50000
-#define PACKET_WAIT_COOLDOWN 40
+static const ULONG kPollDelaysUs[] = POLL_DELAY_US;
+#define POLL_LADDER_LEN (sizeof(kPollDelaysUs) / sizeof(kPollDelaysUs[0]))
 
 static inline BOOL ProcessReceive(struct GenetUnit *unit)
 {
-    struct ExecBase *SysBase = unit->execBase;
-    int pkt_len = 0;
+    UBYTE *buffer = NULL;
+    int pkt_len;
     BOOL activity = FALSE;
-    do
+
+    while (TRUE)
     {
-        UBYTE *buffer = NULL;
         pkt_len = bcmgenet_gmac_eth_recv(unit, &buffer);
-        // Distribute received packets to openers
-        if (pkt_len > 0)
+        if (pkt_len <= 0)
+            break;
+        activity |= ReceiveFrame(unit, buffer, pkt_len);
+        bcmgenet_gmac_free_pkt(unit);
+    }
+
+#if RX_POLL_BURST > 0
+    /* Burst */
+    if (activity)
+    {
+        ULONG empty_streak = 0;
+        ULONG iter = 0;
+        while (iter < RX_POLL_BURST)
         {
-            ObtainSemaphore(&unit->semaphore);
-            activity |= ReceiveFrame(unit, buffer, pkt_len);
-            ReleaseSemaphore(&unit->semaphore);
-            bcmgenet_gmac_free_pkt(unit, buffer, pkt_len);
+            pkt_len = bcmgenet_gmac_eth_recv(unit, &buffer);
+            if (pkt_len <= 0)
+            {
+                if (++empty_streak >= RX_POLL_BURST_IDLE_BREAK)
+                    break;
+            }
+            else
+            {
+                empty_streak = 0;
+                ReceiveFrame(unit, buffer, pkt_len);
+                bcmgenet_gmac_free_pkt(unit);
+            }
+            iter++;
         }
-    } while (pkt_len > 0);
+    }
+#endif
     return activity;
 }
 
@@ -51,39 +68,54 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     _NewMinList((struct MinList *)&unit->unit.unit_MsgPort.mp_MsgList);
     unit->unit.unit_MsgPort.mp_SigTask = FindTask(NULL);
     unit->unit.unit_MsgPort.mp_SigBit = AllocSignal(-1);
-    unit->activitySigBit = AllocSignal(-1); /* separate wakeup for tx fast-path */
     unit->unit.unit_MsgPort.mp_Flags = PA_SIGNAL;
     unit->unit.unit_MsgPort.mp_Node.ln_Type = NT_MSGPORT;
 
     // Create a timer, we'll use it to poll the PHY
-    struct MsgPort *timerPort = CreateMsgPort();
-    struct timerequest *timerReq = CreateIORequest(timerPort, sizeof(struct timerequest));
-    if (timerPort == NULL || timerReq == NULL)
+    struct MsgPort *microHZTimerPort = CreateMsgPort();
+    struct MsgPort *vblankTimerPort = CreateMsgPort();
+    struct timerequest *packetTimerReq = CreateIORequest(microHZTimerPort, sizeof(struct timerequest));
+    struct timerequest *statsTimerReq = CreateIORequest(vblankTimerPort, sizeof(struct timerequest));
+    if (microHZTimerPort == NULL || vblankTimerPort == NULL || packetTimerReq == NULL || statsTimerReq == NULL)
     {
         Kprintf("[genet] %s: Failed to create timer msg port or request\n", __func__);
-        DeleteMsgPort(timerPort);
-        DeleteIORequest((struct IORequest *)timerReq);
+        DeleteMsgPort(microHZTimerPort);
+        DeleteMsgPort(vblankTimerPort);
+        DeleteIORequest((struct IORequest *)packetTimerReq);
+        DeleteIORequest((struct IORequest *)statsTimerReq);
         Signal(parent, SIGBREAKF_CTRL_C);
         return;
     }
 
-    if (OpenDevice((CONST_STRPTR) "timer.device", UNIT_MICROHZ, (struct IORequest *)timerReq, LIB_MIN_VERSION))
+    UBYTE ret = OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_MICROHZ, (struct IORequest *)packetTimerReq, LIB_MIN_VERSION);
+    UBYTE ret2 = OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_VBLANK, (struct IORequest *)statsTimerReq, LIB_MIN_VERSION);
+    if (ret || ret2)
     {
-        Kprintf("[genet] %s: Failed to open timer device\n", __func__);
-        DeleteMsgPort(timerPort);
-        DeleteIORequest((struct IORequest *)timerReq);
+        Kprintf("[genet] %s: Failed to open timer device ret=%d, %d\n", __func__, ret, ret2);
+        DeleteMsgPort(microHZTimerPort);
+        DeleteMsgPort(vblankTimerPort);
+        DeleteIORequest((struct IORequest *)packetTimerReq);
+        DeleteIORequest((struct IORequest *)statsTimerReq);
         Signal(parent, SIGBREAKF_CTRL_C);
         return;
     }
-    unit->timerBase = (struct TimerBase *)timerReq->tr_node.io_Device;
+
+    /* used to reset stats on S2_ONLINE */
+    unit->timerBase = (struct TimerBase *)packetTimerReq->tr_node.io_Device;
+
+    ULONG backoff_idx = POLL_LADDER_LEN - 1; /* Start conservative until first activity */
+    ULONG delay = kPollDelaysUs[backoff_idx];
 
     // Set a timer... we need to pull on RX
-    timerReq->tr_node.io_Command = TR_ADDREQUEST;
-    timerReq->tr_time.tv_secs = 0;
-    timerReq->tr_time.tv_micro = PACKET_WAIT_DELAY_MAX;
-    SendIO(&timerReq->tr_node);
-    UWORD cooldown = PACKET_WAIT_COOLDOWN;
-    ULONG delay = PACKET_WAIT_DELAY_MAX;
+    packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
+    packetTimerReq->tr_time.tv_secs = 0;
+    packetTimerReq->tr_time.tv_micro = delay;
+    SendIO(&packetTimerReq->tr_node);
+
+    statsTimerReq->tr_node.io_Command = TR_ADDREQUEST;
+    statsTimerReq->tr_time.tv_secs = 15;
+    statsTimerReq->tr_time.tv_micro = 0;
+    SendIO(&statsTimerReq->tr_node);
 
     unit->task = FindTask(NULL);
     /* Signal parent that Unit task is up and running now */
@@ -92,13 +124,18 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     ULONG sigset;
     BOOL activity = FALSE;
     ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
-                     (1UL << timerPort->mp_SigBit) |
-                     (1UL << unit->activitySigBit) |
+                     (1UL << microHZTimerPort->mp_SigBit) |
+                     (1UL << vblankTimerPort->mp_SigBit) |
                      SIGBREAKF_CTRL_C;
 
     do
     {
         sigset = Wait(waitMask);
+
+        if (unit->state == STATE_ONLINE)
+        {
+            activity |= ProcessReceive(unit);
+        }
 
         // IO queue got a new message
         if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
@@ -112,93 +149,84 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
         }
 
-        // Moved after ProcessCommand
-        // Reasoning is the commands may be new receive requests
-        if (unit->state == STATE_ONLINE)
-        {
-            activity |= ProcessReceive(unit);
-        }
-
-        /* Fast-path signalled activity. */
-        if (sigset & (1UL << unit->activitySigBit))
-        {
-            activity = TRUE;
-            cooldown = PACKET_WAIT_COOLDOWN;
-
-            if (delay != PACKET_WAIT_DELAY_MIN)
-            {
-                /* Collapse delay parameters immediately. */
-                delay = PACKET_WAIT_DELAY_MIN;
-
-                BOOL timerExpired = (sigset & (1UL << timerPort->mp_SigBit)) != 0; /* old request done? */
-                if (!timerExpired && CheckIO(&timerReq->tr_node) == 0)
-                {
-                    AbortIO(&timerReq->tr_node);
-                    WaitIO(&timerReq->tr_node);
-                    timerReq->tr_node.io_Command = TR_ADDREQUEST;
-                    timerReq->tr_time.tv_secs = 0;
-                    timerReq->tr_time.tv_micro = delay;
-                    SendIO(&timerReq->tr_node);
-                }
-            }
-        }
-
         // Timer expired, query PHY for link state
-        if (sigset & (1UL << timerPort->mp_SigBit))
+        if (sigset & (1UL << microHZTimerPort->mp_SigBit))
         {
-            if (activity == FALSE)
+            if (CheckIO(&packetTimerReq->tr_node))
             {
-                // If we didn't receive anything, increase delay
-                cooldown--;
-                if (cooldown == 0)
-                {
-                    cooldown = PACKET_WAIT_COOLDOWN;
-                    delay = (delay == PACKET_WAIT_DELAY_MIN) ? PACKET_WAIT_DELAY_STANDBY : PACKET_WAIT_DELAY_MAX;
-                }
+                WaitIO(&packetTimerReq->tr_node);
+            }
+
+            /* Periodic TX reclaim */
+            if (unit->state == STATE_ONLINE)
+                bcmgenet_tx_reclaim(unit);
+
+            // TODO pool PHY for state
+
+            if (activity || unit->tx_watchdog_fast_ticks)
+            {
+                backoff_idx = 0;
+                if (unit->tx_watchdog_fast_ticks)
+                    --unit->tx_watchdog_fast_ticks;
             }
             else
             {
-                // If we received something, reset cooldown and delay
-                cooldown = PACKET_WAIT_COOLDOWN;
-                delay = PACKET_WAIT_DELAY_MIN;
+                if (backoff_idx + 1 < POLL_LADDER_LEN)
+                    backoff_idx++;
             }
+            activity = FALSE; /* reset activity */
+            delay = kPollDelaysUs[backoff_idx];
 
-            if (unit->state == STATE_ONLINE)
+            /* TX watchdog soft cap: ensure we never sleep beyond this while descriptors outstanding */
+            if (unit->tx_ring.free_bds < TX_DESCS && delay > TX_RECLAIM_SOFT_US)
+                delay = TX_RECLAIM_SOFT_US;
+
+            /* Re-arm timer */
+            packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
+            packetTimerReq->tr_time.tv_secs = 0;
+            packetTimerReq->tr_time.tv_micro = delay;
+            SendIO(&packetTimerReq->tr_node);
+        }
+
+        if (sigset & (1UL << vblankTimerPort->mp_SigBit))
+        {
+            if(CheckIO(&statsTimerReq->tr_node))
             {
-                // TODO do we really need to block entire unit
-                ObtainSemaphore(&unit->semaphore);
-                bcmgenet_timeout(unit);
-                ReleaseSemaphore(&unit->semaphore);
+                WaitIO(&statsTimerReq->tr_node);
             }
+            Kprintf("[genet] %s: Internal stats:\n", __func__);
+            Kprintf("[genet] %s: RX packets: %ld\n", __func__, unit->internalStats.rx_packets);
+            Kprintf("[genet] %s: RX bytes: %ld\n", __func__, unit->internalStats.rx_bytes);
+            Kprintf("[genet] %s: RX dropped: %ld\n", __func__, unit->internalStats.rx_dropped);
+            Kprintf("[genet] %s: RX ARP/IP dropped: %ld\n", __func__, unit->internalStats.rx_arp_ip_dropped);
+            Kprintf("[genet] %s: RX overruns: %ld\n", __func__, unit->internalStats.rx_overruns);
+            Kprintf("[genet] %s: TX packets: %ld\n", __func__, unit->internalStats.tx_packets);
+            Kprintf("[genet] %s: TX bytes: %ld\n", __func__, unit->internalStats.tx_bytes);
+            Kprintf("[genet] %s: TX DMA: %ld\n", __func__, unit->internalStats.tx_dma);
+            Kprintf("[genet] %s: TX copy: %ld\n", __func__, unit->internalStats.tx_copy);
+            Kprintf("[genet] %s: TX dropped: %ld\n", __func__, unit->internalStats.tx_dropped);
 
-            // TODO check link state on PHY
-
-            if (CheckIO(&timerReq->tr_node))
-            {
-                WaitIO(&timerReq->tr_node);
-            }
-
-            activity = FALSE;
-
-            // Schedule next run
-            timerReq->tr_node.io_Command = TR_ADDREQUEST;
-            timerReq->tr_time.tv_secs = 0;
-            timerReq->tr_time.tv_micro = delay;
-            SendIO(&timerReq->tr_node);
+            statsTimerReq->tr_node.io_Command = TR_ADDREQUEST;
+            statsTimerReq->tr_time.tv_secs = 15;
+            statsTimerReq->tr_time.tv_micro = 0;
+            SendIO(&statsTimerReq->tr_node);
         }
         if (sigset & SIGBREAKF_CTRL_C)
         {
             Kprintf("[genet] %s: Received SIGBREAKF_CTRL_C, stopping genet task\n", __func__);
-            AbortIO(&timerReq->tr_node);
-            WaitIO(&timerReq->tr_node);
+            AbortIO(&packetTimerReq->tr_node);
+            WaitIO(&packetTimerReq->tr_node);
+            AbortIO(&statsTimerReq->tr_node);
+            WaitIO(&statsTimerReq->tr_node);
         }
     } while ((sigset & SIGBREAKF_CTRL_C) == 0);
 
     FreeSignal(unit->unit.unit_MsgPort.mp_SigBit);
-    FreeSignal(unit->activitySigBit);
-    CloseDevice(&timerReq->tr_node);
-    DeleteIORequest(&timerReq->tr_node);
-    DeleteMsgPort(timerPort);
+    CloseDevice(&packetTimerReq->tr_node);
+    DeleteIORequest(&packetTimerReq->tr_node);
+    DeleteIORequest(&statsTimerReq->tr_node);
+    DeleteMsgPort(microHZTimerPort);
+    DeleteMsgPort(vblankTimerPort);
     unit->task = NULL;
 }
 

@@ -12,10 +12,10 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit); /* Updates PROMISC flag and s
 
 /* RX functions */
 int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp);
-void bcmgenet_gmac_free_pkt(struct GenetUnit *unit, UBYTE *packet, ULONG length);
+void bcmgenet_gmac_free_pkt(struct GenetUnit *unit);
 
 /* TX functions */
-int bcmgenet_tx_poll(struct GenetUnit *unit, struct IOSana2Req *io);
-void bcmgenet_timeout(struct GenetUnit *unit);
+int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit);
+void bcmgenet_tx_reclaim(struct GenetUnit *unit);
 
 #endif

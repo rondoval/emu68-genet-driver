@@ -130,6 +130,11 @@ int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
 	if (rx_prod_index == unit->rx_ring.rx_cons_index)
 		return EAGAIN;
 
+	//TODO replace it with HW flags
+	if (rx_prod_index - unit->rx_ring.rx_cons_index > RX_DESCS - 1) {
+		unit->internalStats.rx_overruns++;
+	}
+
 	KprintfH("[genet] %s: rx_prod_index=%ld, rx_cons_index=%ld\n", __func__, rx_prod_index, unit->rx_ring.rx_cons_index);
 
 	struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[unit->rx_ring.rx_cons_index & 0xff];
@@ -137,7 +142,6 @@ int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
 	ULONG length = readl((ULONG)desc_base + DMA_DESC_LENGTH_STATUS);
 	length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
 	APTR addr = rx_cb->internal_buffer;
-	// APTR addr = (APTR)readl((ULONG)desc_base + DMA_DESC_ADDRESS_LO);
 
 	CachePostDMA(addr, &length, 0);
 
@@ -147,10 +151,8 @@ int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
 	return length;
 }
 
-void bcmgenet_gmac_free_pkt(struct GenetUnit *unit, UBYTE *packet, ULONG length)
+void bcmgenet_gmac_free_pkt(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, packet, length);
-
 	/* Tell the MAC we have consumed that last receive buffer. */
 	unit->rx_ring.rx_cons_index = (unit->rx_ring.rx_cons_index + 1) & DMA_C_INDEX_MASK;
 	writel(unit->rx_ring.rx_cons_index, (ULONG)unit->genetBase + RDMA_CONS_INDEX);
@@ -504,7 +506,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	{
 		Kprintf("[genet] %s: Failed to allocate TX buffer\n", __func__);
 		FreeMem(unit->rxbuffer_not_aligned, RX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
-		FreeMem(unit->txbuffer_not_aligned, RX_BUF_LENGTH + ARCH_DMA_MINALIGN);
+		FreeMem(unit->txbuffer_not_aligned, TX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
 		unit->rxbuffer_not_aligned = NULL;
 		unit->txbuffer_not_aligned = NULL;
 		return S2ERR_NO_RESOURCES;
@@ -652,7 +654,7 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 	clrbits_32((APTR)((ULONG)unit->genetBase + UMAC_CMD), CMD_TX_EN);
 	delay_us(1000);
 	/* tx reclaim */
-	bcmgenet_timeout(unit);
+	bcmgenet_tx_reclaim(unit);
 	// /* Really kill the PHY state machine and disconnect from it */
 	// phy_disconnect(dev->phydev);
 

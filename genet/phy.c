@@ -626,7 +626,7 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 	Kprintf("[genet] %s: base=0x%lx phyaddr=%ld\n", __func__, dev->genetBase, dev->phyaddr);
 	struct phy_device *phydev;
 
-	phydev = AllocMem(sizeof(*phydev), MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
+	phydev = AllocPooled(dev->memoryPool, sizeof(*phydev));
 	if (!phydev)
 	{
 		Kprintf("[genet] %s: Failed to allocate MDIO bus\n", __func__);
@@ -658,7 +658,7 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 		}
 	}
 
-	FreeMem(phydev, sizeof(*phydev));
+	FreePooled(dev->memoryPool, phydev, sizeof(*phydev));
 	Kprintf("[genet] %s: Could not get PHY\n", __func__);
 	return NULL;
 }
@@ -667,5 +667,5 @@ void phy_destroy(struct phy_device *phydev)
 {
 	struct ExecBase *SysBase = phydev->unit->execBase;
 	Kprintf("[genet] %s: phy=%ld\n", __func__, phydev->addr);
-	FreeMem(phydev, sizeof(*phydev));
+	FreePooled(phydev->unit->memoryPool, phydev, sizeof(*phydev));
 }

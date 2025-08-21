@@ -22,7 +22,7 @@
 #include <device.h>
 #include <minlist.h>
 #include <debug.h>
-#include "settings.h"
+#include <settings.h>
 
 /*
     Put the function at the very beginning of the file in order to avoid
@@ -96,7 +96,7 @@ static const APTR funcTable[] = {
     (APTR)abortIO,
     (APTR)-1};
 
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct GenetDevice *dev_base asm("a6"))
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct GenetDevice *dev_base asm("a6") __attribute__((unused)))
 {
     struct ExecBase *SysBase = *(struct ExecBase **)4UL;
     Kprintf("[genet] %s: Initializing device\n", __func__);
@@ -107,6 +107,20 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
 
     return base;
 }
+
+#define getBufferFunction(tags, tag32, tag16, tagDefault) \
+    ({ \
+        APTR func = (APTR)GetTagData(tag32, NULL, tags); \
+        if (func == NULL) \
+        { \
+            func = (APTR)GetTagData(tag16, NULL, tags); \
+            if (func == NULL) \
+            { \
+                func = (APTR)GetTagData(tagDefault, NULL, tags); \
+            } \
+        } \
+        func; \
+    })
 
 struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
 {
@@ -125,25 +139,27 @@ struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
         FreeMem(opener, sizeof(struct Opener));
         return NULL;
     }
-#ifdef DEBUG_HIGH
-    KprintfH("[genet] %s: S2_CopyToBuff %lx\n", __func__, GetTagData(S2_CopyToBuff, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyFromBuff %lx\n", __func__, GetTagData(S2_CopyFromBuff, NULL, tags));
-    KprintfH("[genet] %s: S2_PacketFilter %lx\n", __func__, GetTagData(S2_PacketFilter, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyToBuff16 %lx\n", __func__, GetTagData(S2_CopyToBuff16, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyFromBuff16 %lx\n", __func__, GetTagData(S2_CopyFromBuff16, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyToBuff32 %lx\n", __func__, GetTagData(S2_CopyToBuff32, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyFromBuff32 %lx\n", __func__, GetTagData(S2_CopyFromBuff32, NULL, tags));
-    KprintfH("[genet] %s: S2_DMACopyToBuff32 %lx\n", __func__, GetTagData(S2_DMACopyToBuff32, NULL, tags));
-    KprintfH("[genet] %s: S2_DMACopyFromBuff32 %lx\n", __func__, GetTagData(S2_DMACopyFromBuff32, NULL, tags));
-    KprintfH("[genet] %s: S2_DMACopyToBuff64 %lx\n", __func__, GetTagData(S2_DMACopyToBuff64, NULL, tags));
-    KprintfH("[genet] %s: S2_DMACopyFromBuff64 %lx\n", __func__, GetTagData(S2_DMACopyFromBuff64, NULL, tags));
-    KprintfH("[genet] %s: S2_Log %lx\n", __func__, GetTagData(S2_Log, NULL, tags));
-#endif
+
+    Kprintf("[genet] %s: S2_CopyToBuff %lx\n", __func__, GetTagData(S2_CopyToBuff, NULL, tags));
+    Kprintf("[genet] %s: S2_CopyFromBuff %lx\n", __func__, GetTagData(S2_CopyFromBuff, NULL, tags));
+    Kprintf("[genet] %s: S2_PacketFilter %lx\n", __func__, GetTagData(S2_PacketFilter, NULL, tags));
+    Kprintf("[genet] %s: S2_CopyToBuff16 %lx\n", __func__, GetTagData(S2_CopyToBuff16, NULL, tags));
+    Kprintf("[genet] %s: S2_CopyFromBuff16 %lx\n", __func__, GetTagData(S2_CopyFromBuff16, NULL, tags));
+    Kprintf("[genet] %s: S2_CopyToBuff32 %lx\n", __func__, GetTagData(S2_CopyToBuff32, NULL, tags));
+    Kprintf("[genet] %s: S2_CopyFromBuff32 %lx\n", __func__, GetTagData(S2_CopyFromBuff32, NULL, tags));
+    Kprintf("[genet] %s: S2_DMACopyToBuff32 %lx\n", __func__, GetTagData(S2_DMACopyToBuff32, NULL, tags));
+    Kprintf("[genet] %s: S2_DMACopyFromBuff32 %lx\n", __func__, GetTagData(S2_DMACopyFromBuff32, NULL, tags));
+    Kprintf("[genet] %s: S2_DMACopyToBuff64 %lx\n", __func__, GetTagData(S2_DMACopyToBuff64, NULL, tags));
+    Kprintf("[genet] %s: S2_DMACopyFromBuff64 %lx\n", __func__, GetTagData(S2_DMACopyFromBuff64, NULL, tags));
+    Kprintf("[genet] %s: S2_Log %lx\n", __func__, GetTagData(S2_Log, NULL, tags));
+
     opener->packetFilter = (struct Hook *)GetTagData(S2_PacketFilter, NULL, tags);
-    opener->CopyToBuff = (BOOL (*)(APTR, APTR, ULONG))GetTagData(S2_CopyToBuff, NULL, tags);
-    opener->CopyFromBuff = (BOOL (*)(APTR, APTR, ULONG))GetTagData(S2_CopyFromBuff, NULL, tags);
+    opener->CopyToBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyToBuff32, S2_CopyToBuff16, S2_CopyToBuff);
+    opener->CopyFromBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyFromBuff32, S2_CopyFromBuff16, S2_CopyFromBuff);
+#if USE_DMA == 1
     opener->DMACopyToBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyToBuff32, NULL, tags);
     opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);
+#endif
     Kprintf("[genet] %s: CopyToBuff=%lx, CopyFromBuff=%lx, PacketFilter=%lx\n",
             __func__, opener->CopyToBuff, opener->CopyFromBuff, opener->packetFilter);
     Kprintf("[genet] %s: DMACopyToBuff=%lx, DMACopyFromBuff=%lx\n",
@@ -155,8 +171,6 @@ struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
     _NewMinList(&opener->eventQueue);
     _NewMinList(&opener->ipv4Queue);
     _NewMinList(&opener->arpQueue);
-
-    InitSemaphore(&opener->semaphore);
 
     return opener;
 }
@@ -190,7 +204,6 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
             io->ios2_Req.io_Error = IOERR_OPENFAIL;
             return;
         }
-        InitSemaphore(&base->unit->semaphore);
     }
 
     if (flags & SANA2OPF_MINE && base->unit->unit.unit_OpenCnt > 0)

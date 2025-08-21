@@ -47,17 +47,17 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 {
 	struct ExecBase *SysBase = *((struct ExecBase **)4UL);
 	Kprintf("[genet] %s: Opening unit %ld with flags %lx\n", __func__, unitNumber, flags);
-	ObtainSemaphore(&unit->semaphore);
 	if (unit->unit.unit_OpenCnt > 0)
 	{
 		Kprintf("[genet] %s: Unit was already open\n", __func__);
+		Forbid();
 		unit->unit.unit_OpenCnt++;
 		if (opener != NULL)
 		{
 			Kprintf("[genet] %s: Adding opener %lx to openers list\n", __func__, (ULONG)opener);
 			AddTailMinList(&unit->openers, (struct MinNode *)opener);
 		}
-		ReleaseSemaphore(&unit->semaphore);
+		Permit();
 		Kprintf("[genet] %s: Unit opened successfully, current open count: %ld\n", __func__, unit->unit.unit_OpenCnt);
 		return S2ERR_NO_ERROR;
 	}
@@ -67,7 +67,6 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	if (unit->utilityBase == NULL)
 	{
 		Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
-		ReleaseSemaphore(&unit->semaphore);
 		return S2ERR_NO_RESOURCES;
 	}
 
@@ -81,7 +80,6 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	{
 		Kprintf("[genet] %s: Failed to create memory pool\n", __func__);
 		CloseLibrary(unit->utilityBase);
-		ReleaseSemaphore(&unit->semaphore);
 		return S2ERR_NO_RESOURCES;
 	}
 	_NewMinList(&unit->multicastRanges);
@@ -98,7 +96,6 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	{
 		Kprintf("[genet] %s: Failed to parse device tree: %ld\n", __func__, result);
 		CloseLibrary(unit->utilityBase);
-		ReleaseSemaphore(&unit->semaphore);
 		return result;
 	}
 
@@ -111,10 +108,8 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		CloseLibrary(unit->utilityBase);
 		DeletePool(unit->memoryPool);
 		unit->memoryPool = NULL;
-		ReleaseSemaphore(&unit->semaphore);
 		return result;
 	}
-	ReleaseSemaphore(&unit->semaphore);
 	return S2ERR_NO_ERROR;
 }
 
@@ -162,13 +157,6 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 {
 	Kprintf("[genet] %s: Closing unit %ld with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
 	struct ExecBase *SysBase = unit->execBase;
-	ObtainSemaphore(&unit->semaphore);
-	if (opener != NULL)
-	{
-		Kprintf("[genet] %s: Removing opener %lx\n", __func__, (ULONG)opener);
-		// We don't free opener memory here, this will be done by device
-		RemoveMinNode((struct MinNode *)opener);
-	}
 
 	unit->unit.unit_OpenCnt--;
 	if (unit->unit.unit_OpenCnt == 0)
@@ -184,6 +172,14 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 		unit->memoryPool = NULL;
 		unit->state = STATE_UNCONFIGURED;
 	}
-	ReleaseSemaphore(&unit->semaphore);
+	else if (opener != NULL)
+	{
+		Kprintf("[genet] %s: Removing opener %lx\n", __func__, (ULONG)opener);
+		// We don't free opener memory here, this will be done by device
+		Forbid();
+		RemoveMinNode((struct MinNode *)opener);
+		Permit();
+	}
+
 	return unit->unit.unit_OpenCnt;
 }

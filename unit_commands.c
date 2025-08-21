@@ -56,13 +56,11 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
     struct ExecBase *SysBase = unit->execBase;
 
     /* Report event to every listener of every opener accepting the mask */
-    ObtainSemaphore(&unit->semaphore);
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
         struct Opener *opener = (struct Opener *)node;
         struct MinNode *ioNode, *nextIoNode;
 
-        ObtainSemaphore(&opener->semaphore);
         for (ioNode = opener->eventQueue.mlh_Head; (nextIoNode = ioNode->mln_Succ) != NULL; ioNode = nextIoNode)
         {
             struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
@@ -77,9 +75,7 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
                 ReplyMsg((struct Message *)io);
             }
         }
-        ReleaseSemaphore(&opener->semaphore);
     }
-    ReleaseSemaphore(&unit->semaphore);
     KprintfH("[genet] %s: Reporting done\n", __func__);
 }
 
@@ -89,14 +85,6 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
     struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
 
-    ULONG preset;
-    ObtainSemaphoreShared(&unit->semaphore);
-    if (unit->state == STATE_ONLINE)
-        preset = S2EVENT_ONLINE;
-    else
-        preset = S2EVENT_OFFLINE;
-    ReleaseSemaphore(&unit->semaphore);
-
     /* If any unsupported events are requested, report an error */
     if (io->ios2_WireError & ~(EVENT_MASK))
     {
@@ -105,6 +93,8 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
         io->ios2_WireError = S2WERR_BAD_EVENT;
         return COMMAND_PROCESSED;
     }
+
+    ULONG preset = (unit->state == STATE_ONLINE) ? S2EVENT_ONLINE : S2EVENT_OFFLINE;
 
     /* If expected flags match preset, return back (almost) immediately */
     if (io->ios2_WireError & preset)
@@ -118,10 +108,8 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
         KprintfH("[genet] %s: Adding to event listener list, preset %08lx\n", __func__, preset);
         /* Remove QUICK flag and put message on event listener list */
         struct Opener *opener = io->ios2_BufferManagement;
-        io->ios2_Req.io_Flags &= ~IOF_QUICK;
-        ObtainSemaphore(&opener->semaphore);
+        // io->ios2_Req.io_Flags &= ~IOF_QUICK;
         AddTailMinList(&opener->eventQueue, (struct MinNode *)io);
-        ReleaseSemaphore(&opener->semaphore);
         return COMMAND_SCHEDULED;
     }
 }
@@ -133,7 +121,6 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
     KprintfH("[genet] %s: CMD_FLUSH\n", __func__);
 
     struct IOSana2Req *req;
-    ObtainSemaphore(&unit->semaphore);
     /* Flush and cancel all requests */
     while ((req = (struct IOSana2Req *)GetMsg(&unit->unit.unit_MsgPort)))
     {
@@ -146,7 +133,6 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
         struct Opener *opener = (struct Opener *)node;
-        ObtainSemaphore(&opener->semaphore);
         while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue)))
         {
             req->ios2_Req.io_Error = IOERR_ABORTED;
@@ -181,9 +167,7 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
             req->ios2_WireError = 0;
             ReplyMsg((struct Message *)req);
         }
-        ReleaseSemaphore(&opener->semaphore);
     }
-    ReleaseSemaphore(&unit->semaphore);
     KprintfH("[genet] %s: Flush completed\n", __func__);
 
     return COMMAND_PROCESSED;
@@ -216,16 +200,13 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
     struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: CMD_READ for packet type 0x%lx\n", __func__, io->ios2_PacketType);
 
-    ObtainSemaphoreShared(&unit->semaphore);
     if (unlikely(unit->state != STATE_ONLINE))
     {
-        ReleaseSemaphore(&unit->semaphore);
         Kprintf("[genet] %s: Unit is offline, cannot read\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
         io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
         return COMMAND_PROCESSED;
     }
-    ReleaseSemaphore(&unit->semaphore);
 
     struct Opener *opener = io->ios2_BufferManagement;
     UWORD packetType = io->ios2_PacketType;
@@ -234,10 +215,8 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
     struct MinList *queue = GetPacketTypeQueue(opener, packetType);
 
     /* Queue the request */
-    io->ios2_Req.io_Flags &= ~IOF_QUICK;
-    ObtainSemaphore(&opener->semaphore);
+    // io->ios2_Req.io_Flags &= ~IOF_QUICK;
     AddTailMinList(queue, (struct MinNode *)io);
-    ReleaseSemaphore(&opener->semaphore);
 
     KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%lx\n", __func__, packetType);
     return COMMAND_SCHEDULED;
@@ -249,44 +228,35 @@ static inline int Do_S2_READORPHAN(struct IOSana2Req *io)
     struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: S2_READORPHAN\n", __func__);
 
-    ObtainSemaphoreShared(&unit->semaphore);
     if (unlikely(unit->state != STATE_ONLINE))
     {
-        ReleaseSemaphore(&unit->semaphore);
         Kprintf("[genet] %s: Unit is offline, cannot read orphan\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
         io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
         return COMMAND_PROCESSED;
     }
-    ReleaseSemaphore(&unit->semaphore);
 
     struct Opener *opener = io->ios2_BufferManagement;
-    ObtainSemaphore(&opener->semaphore);
-    io->ios2_Req.io_Flags &= ~IOF_QUICK;
+    // io->ios2_Req.io_Flags &= ~IOF_QUICK;
     AddTailMinList(&opener->orphanQueue, (struct MinNode *)io);
-    ReleaseSemaphore(&opener->semaphore);
     return COMMAND_SCHEDULED;
 }
 
 static inline int Do_CMD_WRITE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: CMD_WRITE\n", __func__);
 
-    ObtainSemaphore(&unit->semaphore);
     if (unlikely(unit->state != STATE_ONLINE))
     {
-        ReleaseSemaphore(&unit->semaphore);
         Kprintf("[genet] %s: Unit is offline, cannot write\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
         io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
         return COMMAND_PROCESSED;
     }
 
-    io->ios2_Req.io_Flags &= ~IOF_QUICK;
-    int result = bcmgenet_tx_poll(unit, io);
-    ReleaseSemaphore(&unit->semaphore);
+    // io->ios2_Req.io_Flags &= ~IOF_QUICK;
+    int result = bcmgenet_xmit(io, unit);
     return result;
 }
 
@@ -314,12 +284,10 @@ int Do_S2_DEVICEQUERY(struct IOSana2Req *io)
 static int Do_S2_ONLINE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     struct TimerBase *TimerBase = unit->timerBase;
     Kprintf("[genet] %s: S2_ONLINE\n", __func__);
 
     /* If unit was not yet online, report event now */
-    ObtainSemaphore(&unit->semaphore);
     if (unit->state != STATE_ONLINE)
     {
         Kprintf("[genet] %s: Bringing unit online\n", __func__);
@@ -341,7 +309,6 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
             ReportEvents(unit, S2EVENT_ONLINE);
         }
     }
-    ReleaseSemaphore(&unit->semaphore);
 
     return COMMAND_PROCESSED;
 }
@@ -352,7 +319,6 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     Kprintf("[genet] %s: S2_CONFIGINTERFACE\n", __func__);
 
-    ObtainSemaphore(&unit->semaphore);
     if (unit->state == STATE_UNCONFIGURED)
     {
         CopyMem(io->ios2_SrcAddr, unit->currentMacAddress, sizeof(unit->currentMacAddress));
@@ -377,27 +343,23 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
     }
 
     CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, sizeof(unit->currentMacAddress));
-    ReleaseSemaphore(&unit->semaphore);
     return COMMAND_PROCESSED;
 }
 
 static int Do_S2_OFFLINE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     Kprintf("[genet] %s: S2_OFFLINE\n", __func__);
 
     /* Flush and cancel all requests */
     Do_CMD_FLUSH(io);
 
     /* If unit was ONLINE before, report offline event now */
-    ObtainSemaphoreShared(&unit->semaphore);
     if (unit->state == STATE_ONLINE)
     {
         UnitOffline(unit);
         ReportEvents(unit, S2EVENT_OFFLINE);
     }
-    ReleaseSemaphore(&unit->semaphore);
 
     return COMMAND_PROCESSED;
 }
@@ -454,19 +416,15 @@ void ProcessCommand(struct IOSana2Req *io)
 
         case S2_GETSTATIONADDRESS:
             Kprintf("[genet] %s: S2_GETSTATIONADDRESS\n", __func__);
-            ObtainSemaphoreShared(&unit->semaphore);
             CopyMem(unit->localMacAddress, io->ios2_DstAddr, 6);
             CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, 6);
-            ReleaseSemaphore(&unit->semaphore);
             io->ios2_Req.io_Error = S2ERR_NO_ERROR;
             complete = COMMAND_PROCESSED;
             break;
 
         case S2_GETGLOBALSTATS:
             KprintfH("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
-            ObtainSemaphoreShared(&unit->semaphore);
             CopyMem(&unit->stats, io->ios2_StatData, sizeof(struct Sana2DeviceStats));
-            ReleaseSemaphore(&unit->semaphore);
             io->ios2_Req.io_Error = S2ERR_NO_ERROR;
             complete = COMMAND_PROCESSED;
             break;
