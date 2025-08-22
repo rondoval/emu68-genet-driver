@@ -33,12 +33,13 @@
 #define EAGAIN -2
 
 /* Generic TODOs
-packet stats from HW
+runtime configurable knobs
+packet stats from HW, custom command to expose more stats and tool to read
 type statistics
-better RX ring buffers handling
 PHY link state updates at runtime
 
 Long shot:
+- SANA-II updates to enable zero-copy DMA on TX and RX
 - use checksum offload (changes in SANA-II and stack)
 
 Not tested:
