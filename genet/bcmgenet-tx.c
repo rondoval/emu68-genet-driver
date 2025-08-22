@@ -185,9 +185,14 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	{
 	use_software_copy:
 		KprintfH("[genet] %s: Using software copy from buffer\n", __func__);
+#if USE_MIAMI_WORKAROUND
+		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, (io->ios2_DataLength + 3) & ~3) == 0)
+#else
 		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, io->ios2_DataLength) == 0)
+#endif
 		{
 			KprintfH("[genet] %s: Failed to copy packet data from buffer\n", __func__);
+			unit->internalStats.tx_dropped++;
 			io->ios2_WireError = S2WERR_BUFF_ERROR;
 			io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
 			ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);

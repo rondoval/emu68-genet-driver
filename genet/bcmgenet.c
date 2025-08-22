@@ -58,10 +58,10 @@ static void bcmgenet_umac_reset(struct GenetUnit *unit)
 	writel(ENET_MAX_MTU_SIZE, (ULONG)unit->genetBase + UMAC_MAX_FRAME_LEN);
 
 	/* init rx registers, enable ip header optimization */
-	// reg = readl((ULONG)unit->genetBase + RBUF_CTRL);
-	// reg |= RBUF_ALIGN_2B;
+	ULONG reg = readl((ULONG)unit->genetBase + RBUF_CTRL);
+	reg |= RBUF_ALIGN_2B;
 	// // RBUF_64B_EN would be set here, but we don't use Receive Status Block
-	// writel(reg, ((ULONG)unit->genetBase + RBUF_CTRL));
+	writel(reg, ((ULONG)unit->genetBase + RBUF_CTRL));
 
 	writel(1, ((ULONG)unit->genetBase + RBUF_TBUF_SIZE_CTRL));
 }
@@ -145,10 +145,10 @@ int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
 
 	CachePostDMA(addr, &length, 0);
 
-	*packetp = (UBYTE *)addr;
-	KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, *packetp, length);
+	*packetp = (UBYTE *)addr + RX_BUF_OFFSET;
+	KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, *packetp, length - RX_BUF_OFFSET);
 
-	return length;
+	return length - RX_BUF_OFFSET;
 }
 
 void bcmgenet_gmac_free_pkt(struct GenetUnit *unit)

@@ -110,15 +110,9 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
 
 #define getBufferFunction(tags, tag32, tag16, tagDefault) \
     ({ \
-        APTR func = (APTR)GetTagData(tag32, NULL, tags); \
-        if (func == NULL) \
-        { \
-            func = (APTR)GetTagData(tag16, NULL, tags); \
-            if (func == NULL) \
-            { \
-                func = (APTR)GetTagData(tagDefault, NULL, tags); \
-            } \
-        } \
+        APTR func = (APTR)GetTagData(tagDefault, NULL, tags); \
+        func = (APTR)GetTagData(tag16, (ULONG)func, tags); \
+        func = (APTR)GetTagData(tag32, (ULONG)func, tags); \
         func; \
     })
 
@@ -156,6 +150,7 @@ struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
     opener->packetFilter = (struct Hook *)GetTagData(S2_PacketFilter, NULL, tags);
     opener->CopyToBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyToBuff32, S2_CopyToBuff16, S2_CopyToBuff);
     opener->CopyFromBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyFromBuff32, S2_CopyFromBuff16, S2_CopyFromBuff);
+
 #if USE_DMA == 1
     opener->DMACopyToBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyToBuff32, NULL, tags);
     opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);

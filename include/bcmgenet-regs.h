@@ -185,7 +185,7 @@
 #define RX_BUF_LENGTH 2048
 #define RX_TOTAL_BUFSIZE (RX_BUF_LENGTH * RX_DESCS)
 #define TX_TOTAL_BUFSIZE (RX_BUF_LENGTH * TX_DESCS)
-// #define RX_BUF_OFFSET 2
+#define RX_BUF_OFFSET 2
 
 /* Rx Specific Dma descriptor bits */
 #define DMA_RX_CHK_V3PLUS		0x8000

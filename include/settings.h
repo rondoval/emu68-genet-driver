@@ -29,6 +29,10 @@
  * Misaligned use causes instability. */
 #define USE_DMA 0
 
+/* Miami DX workaround for CopyFromBuff requiring 32-bit length rounding. 
+ * This is in turn not compatible with Roadshow, so you have to choose. */
+#define USE_MIAMI_WORKAROUND 1
+
 /* Number of consecutive fast (minimum-delay) polling ticks granted after we detect
  * outstanding TX descriptors. Set 0 to disable. */
 #define TX_PENDING_FAST_TICKS 0

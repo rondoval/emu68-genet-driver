@@ -79,9 +79,14 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     /* Packet not filtered. Send it now and reply request. */
     if (likely(!packetFiltered))
     {
-        if (packetLength == 0 || !opener->CopyToBuff || opener->CopyToBuff(io->ios2_Data, packet, packetLength) == 0)
+#if USE_MIAMI_WORKAROUND
+        if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, (packetLength + 3) & ~3u) == 0)
+#else
+        if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, packetLength) == 0)
+#endif
         {
             KprintfH("[genet] %s: Failed to copy packet data to buffer\n", __func__);
+            unit->internalStats.rx_dropped++;
             io->ios2_WireError = S2WERR_BUFF_ERROR;
             io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
             ReportEvents(unit, S2EVENT_BUFF | S2EVENT_RX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
