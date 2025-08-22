@@ -232,8 +232,6 @@ static int bcmgenet_init_rx_ring(struct GenetUnit *unit)
 		ring->rx_control_block[i].descriptor_address = descriptor_address;
 		ring->rx_control_block[i].internal_buffer = buffer;
 
-		//  TODO this is temporary until RX ring is refactored
-		// translate to VC address space?
 		writel((ULONG)buffer, descriptor_address + DMA_DESC_ADDRESS_LO);
 		writel(len_stat, descriptor_address + DMA_DESC_LENGTH_STATUS);
 	}
