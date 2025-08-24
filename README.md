@@ -29,6 +29,7 @@ Tested using:
 - OS 3.2.3 + Roadshow 1.15
 - OS 3.2.3 + Miami DX
 - OS 3.0 + AmiTCP 4.2 (16 Jun 2022)
+on an A1200 with RPi4B.
 
 ## Sample Roadshow config file
 
@@ -63,10 +64,10 @@ UNIT_STACK_SIZE=65536
 USE_DMA=0
 USE_MIAMI_WORKAROUND=0
 TX_PENDING_FAST_TICKS=0
-TX_RECLAIM_SOFT_US=500
-RX_POLL_BURST=0
+TX_RECLAIM_SOFT_US=2000
+RX_POLL_BURST=64
 RX_POLL_BURST_IDLE_BREAK=16
-POLL_DELAY_US=1000,2000,2000,4000,8000
+POLL_DELAY_US=1000,1000,1000,2000,2000,2000,4000,8000
 ```
 
 Setting descriptions (brief):
@@ -83,4 +84,4 @@ Setting descriptions (brief):
 
 You can omit any line to keep its default. `POLL_DELAY_US` is a comma-separated ladder (microseconds) used for adaptive polling backoff. Duplicate values are allowed. The driver enforces an internal maximum length (currently 32 entries); excess entries are ignored.
 
-Changes require reloading the device (or reboot) to take effect.
+Changes require reloading the device (i.e. reboot or flush driver from memory) to take effect.
