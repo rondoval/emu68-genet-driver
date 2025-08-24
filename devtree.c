@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #include <clib/devicetree_protos.h>
@@ -17,8 +15,7 @@
 #include <device.h>
 #include <compat.h>
 
-static APTR DeviceTreeBase;
-static struct ExecBase *SysBase;
+APTR DeviceTreeBase;
 
 // Devicetree extras
 static APTR DT_FindByPHandle(APTR key, ULONG phandle)
@@ -145,9 +142,6 @@ static CONST_STRPTR GetAlias(const char *alias)
 
 int DevTreeParse(struct GenetUnit *unit)
 {
-	SysBase = unit->execBase;
-	struct Library *UtilityBase = unit->utilityBase;
-
 	DeviceTreeBase = OpenResource((CONST_STRPTR) "devicetree.resource");
 	if (!DeviceTreeBase)
 	{
@@ -155,8 +149,8 @@ int DevTreeParse(struct GenetUnit *unit)
 		return S2ERR_NO_RESOURCES;
 	}
 
-	char alias[16];
-	SNPrintf((STRPTR)alias, sizeof(alias), (CONST_STRPTR) "ethernet%ld", unit->unitNumber);
+	char alias[12] = "ethernet0";
+	alias[8] = '0' + unit->unitNumber;
 	CONST_STRPTR ethernet_alias = GetAlias(alias);
 	CONST_STRPTR gpio_alias = GetAlias("gpio");
 	if (ethernet_alias == NULL || gpio_alias == NULL)

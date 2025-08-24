@@ -16,8 +16,6 @@
  * we only support v5, as used in the Raspberry Pi 4.
  */
 
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
@@ -58,10 +56,10 @@ static void bcmgenet_umac_reset(struct GenetUnit *unit)
 	writel(ENET_MAX_MTU_SIZE, (ULONG)unit->genetBase + UMAC_MAX_FRAME_LEN);
 
 	/* init rx registers, enable ip header optimization */
-	// reg = readl((ULONG)unit->genetBase + RBUF_CTRL);
-	// reg |= RBUF_ALIGN_2B;
+	ULONG reg = readl((ULONG)unit->genetBase + RBUF_CTRL);
+	reg |= RBUF_ALIGN_2B;
 	// // RBUF_64B_EN would be set here, but we don't use Receive Status Block
-	// writel(reg, ((ULONG)unit->genetBase + RBUF_CTRL));
+	writel(reg, ((ULONG)unit->genetBase + RBUF_CTRL));
 
 	writel(1, ((ULONG)unit->genetBase + RBUF_TBUF_SIZE_CTRL));
 }
@@ -124,11 +122,15 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 
 int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	UWORD rx_prod_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 
 	if (rx_prod_index == unit->rx_ring.rx_cons_index)
 		return EAGAIN;
+
+	//TODO replace it with HW flags
+	if (rx_prod_index - unit->rx_ring.rx_cons_index > RX_DESCS - 1) {
+		unit->internalStats.rx_overruns++;
+	}
 
 	KprintfH("[genet] %s: rx_prod_index=%ld, rx_cons_index=%ld\n", __func__, rx_prod_index, unit->rx_ring.rx_cons_index);
 
@@ -137,20 +139,17 @@ int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
 	ULONG length = readl((ULONG)desc_base + DMA_DESC_LENGTH_STATUS);
 	length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
 	APTR addr = rx_cb->internal_buffer;
-	// APTR addr = (APTR)readl((ULONG)desc_base + DMA_DESC_ADDRESS_LO);
 
 	CachePostDMA(addr, &length, 0);
 
-	*packetp = (UBYTE *)addr;
-	KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, *packetp, length);
+	*packetp = (UBYTE *)addr + RX_BUF_OFFSET;
+	KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, *packetp, length - RX_BUF_OFFSET);
 
-	return length;
+	return length - RX_BUF_OFFSET;
 }
 
-void bcmgenet_gmac_free_pkt(struct GenetUnit *unit, UBYTE *packet, ULONG length)
+void bcmgenet_gmac_free_pkt(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, packet, length);
-
 	/* Tell the MAC we have consumed that last receive buffer. */
 	unit->rx_ring.rx_cons_index = (unit->rx_ring.rx_cons_index + 1) & DMA_C_INDEX_MASK;
 	writel(unit->rx_ring.rx_cons_index, (ULONG)unit->genetBase + RDMA_CONS_INDEX);
@@ -206,7 +205,6 @@ int bcmgenet_set_coalesce(struct GenetUnit *unit, ULONG tx_max_coalesced_frames,
 
 static int bcmgenet_init_rx_ring(struct GenetUnit *unit)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	Kprintf("[genet] %s: Initializing RX ring\n", __func__);
 	struct bcmgenet_rx_ring *ring = &unit->rx_ring;
 
@@ -230,8 +228,6 @@ static int bcmgenet_init_rx_ring(struct GenetUnit *unit)
 		ring->rx_control_block[i].descriptor_address = descriptor_address;
 		ring->rx_control_block[i].internal_buffer = buffer;
 
-		//  TODO this is temporary until RX ring is refactored
-		// translate to VC address space?
 		writel((ULONG)buffer, descriptor_address + DMA_DESC_ADDRESS_LO);
 		writel(len_stat, descriptor_address + DMA_DESC_LENGTH_STATUS);
 	}
@@ -275,9 +271,10 @@ static int bcmgenet_init_rx_queues(struct GenetUnit *unit)
 
 static int bcmgenet_init_tx_ring(struct GenetUnit *unit)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	Kprintf("[genet] %s: Initializing TX ring\n", __func__);
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
+
+	InitSemaphore(&ring->tx_ring_sem);
 
 	/* Initialize common TX ring structures */
 	APTR desc_base = unit->genetBase + GENET_TX_OFF;
@@ -490,7 +487,6 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit)
 
 int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	Kprintf("[genet] %s: Starting GENET\n", __func__);
 	unit->rxbuffer_not_aligned = AllocMem(RX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
 	if (!unit->rxbuffer_not_aligned)
@@ -504,7 +500,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	{
 		Kprintf("[genet] %s: Failed to allocate TX buffer\n", __func__);
 		FreeMem(unit->rxbuffer_not_aligned, RX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
-		FreeMem(unit->txbuffer_not_aligned, RX_BUF_LENGTH + ARCH_DMA_MINALIGN);
+		FreeMem(unit->txbuffer_not_aligned, TX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
 		unit->rxbuffer_not_aligned = NULL;
 		unit->txbuffer_not_aligned = NULL;
 		return S2ERR_NO_RESOURCES;
@@ -640,7 +636,6 @@ int bcmgenet_eth_probe(struct GenetUnit *unit)
 
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	Kprintf("[genet] %s: Stopping GENET\n", __func__);
 
 	// bcmgenet_hfb_reg_writel(unit, 0, HFB_CTRL);
@@ -652,11 +647,9 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 	clrbits_32((APTR)((ULONG)unit->genetBase + UMAC_CMD), CMD_TX_EN);
 	delay_us(1000);
 	/* tx reclaim */
-	bcmgenet_timeout(unit);
+	bcmgenet_tx_reclaim(unit);
 	// /* Really kill the PHY state machine and disconnect from it */
 	// phy_disconnect(dev->phydev);
-
-	// TODO cancel pending requests in ring buffers
 
 	unit->rxbuffer = NULL;
 	if (unit->rxbuffer_not_aligned)

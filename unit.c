@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #include <clib/dos_protos.h>
+#include <clib/utility_protos.h>
 #else
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <proto/utility.h>
 #endif
 
 #include <exec/execbase.h>
@@ -17,6 +17,8 @@
 #include <device.h>
 #include <gpio/bcm_gpio.h>
 #include <compat.h>
+#include <minlist.h>
+#include <runtime_config.h>
 
 static void SetupMDIO(struct GenetUnit *unit)
 {
@@ -44,24 +46,26 @@ static void SetupRGMII(struct GenetUnit *unit)
 
 int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener *opener)
 {
-	struct ExecBase *SysBase = *((struct ExecBase **)4UL);
 	Kprintf("[genet] %s: Opening unit %ld with flags %lx\n", __func__, unitNumber, flags);
 	if (unit->unit.unit_OpenCnt > 0)
 	{
-		Kprintf("[genet] %s: Unit is already open, adding opener %lx\n", __func__, (ULONG)opener);
+		Kprintf("[genet] %s: Unit already running; using message to add opener\n", __func__);
 		unit->unit.unit_OpenCnt++;
-		ObtainSemaphore(&unit->semaphore);
-		AddTail((APTR)&unit->openers, (APTR)opener);
-		ReleaseSemaphore(&unit->semaphore);
+		if (opener)
+		{
+			struct OpenerControlMsg msg;
+			struct MsgPort *replyPort = CreateMsgPort();
+			msg.msg.mn_Node.ln_Type = NT_MESSAGE;
+			msg.msg.mn_ReplyPort = replyPort;
+			msg.command = OPENER_CMD_ADD;
+			msg.opener = opener;
+			PutMsg(unit->openerPort, &msg.msg);
+			WaitPort(replyPort);
+			GetMsg(replyPort);
+			DeleteMsgPort(replyPort);
+		}
+		Kprintf("[genet] %s: Unit opened successfully, current open count: %ld\n", __func__, unit->unit.unit_OpenCnt);
 		return S2ERR_NO_ERROR;
-	}
-
-	unit->execBase = SysBase;
-	unit->utilityBase = OpenLibrary((CONST_STRPTR) "utility.library", LIB_MIN_VERSION);
-	if (unit->utilityBase == NULL)
-	{
-		Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
-		return S2ERR_NO_RESOURCES;
 	}
 
 	unit->state = STATE_UNCONFIGURED;
@@ -73,15 +77,16 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	if (unit->memoryPool == NULL)
 	{
 		Kprintf("[genet] %s: Failed to create memory pool\n", __func__);
-		CloseLibrary(unit->utilityBase);
 		return S2ERR_NO_RESOURCES;
 	}
-	NewMinList(&unit->multicastRanges);
+	_NewMinList(&unit->multicastRanges);
 	unit->multicastCount = 0;
-	
-	NewMinList(&unit->openers);
-	AddTail((APTR)&unit->openers, (APTR)opener);
-	InitSemaphore(&unit->semaphore);
+
+	_NewMinList(&unit->openers);
+	if (opener != NULL)
+	{
+		AddTailMinList(&unit->openers, (struct MinNode *)opener);
+	}
 
 	int result = DevTreeParse(unit);
 	if (result != S2ERR_NO_ERROR)
@@ -90,12 +95,12 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		return result;
 	}
 
-	CopyMem(unit->localMacAddress, unit->currentMacAddress, 6);
+	/* On first open, we initialize current MAC to 0 to indicate it was not set yet */
+	_memset(unit->currentMacAddress, 0, sizeof(unit->currentMacAddress));
 	result = UnitTaskStart(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to start unit task: %ld\n", __func__, result);
-		CloseLibrary(unit->utilityBase);
 		DeletePool(unit->memoryPool);
 		unit->memoryPool = NULL;
 		return result;
@@ -145,16 +150,7 @@ void UnitOffline(struct GenetUnit *unit)
 
 int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	Kprintf("[genet] %s: Closing unit %ld with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
-	if (opener)
-	{
-		Kprintf("[genet] %s: Removing opener %lx\n", __func__, (ULONG)opener);
-		// We don't free opener memory here, this will be done by device
-		ObtainSemaphore(&unit->semaphore);
-		Remove((struct Node *)opener);
-		ReleaseSemaphore(&unit->semaphore);
-	}
 
 	unit->unit.unit_OpenCnt--;
 	if (unit->unit.unit_OpenCnt == 0)
@@ -165,10 +161,24 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 			UnitOffline(unit);
 		}
 		UnitTaskStop(unit);
-		CloseLibrary(unit->utilityBase);
 		DeletePool(unit->memoryPool);
 		unit->memoryPool = NULL;
 		unit->state = STATE_UNCONFIGURED;
 	}
+	else if (opener != NULL)
+	{
+		/* Use message to remove opener */
+		struct OpenerControlMsg msg;
+		struct MsgPort *replyPort = CreateMsgPort();
+		msg.msg.mn_Node.ln_Type = NT_MESSAGE;
+		msg.msg.mn_ReplyPort = replyPort;
+		msg.command = OPENER_CMD_REM;
+		msg.opener = opener;
+		PutMsg(unit->openerPort, &msg.msg);
+		WaitPort(replyPort);
+		GetMsg(replyPort);
+		DeleteMsgPort(replyPort);
+	}
+
 	return unit->unit.unit_OpenCnt;
 }

@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
@@ -37,7 +35,6 @@ static inline uint64_t GetAddress(const UBYTE *addr)
 int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
 #ifdef DEBUG_HIGH
     if (io->ios2_Req.io_Command == S2_ADDMULTICASTADDRESSES)
     {
@@ -84,21 +81,19 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
     range->useCount = 1;
     range->lowerBound = lower_bound;
     range->upperBound = upper_bound;
-    AddHead((APTR)&unit->multicastRanges, (APTR)range);
+    AddHeadMinList(&unit->multicastRanges, (struct MinNode *)range);
 
     ULONG count = upper_bound - lower_bound + 1;
     unit->multicastCount += count;
 
     /* Update PROMISC and MDF filter */
     bcmgenet_set_rx_mode(unit);
-
     return COMMAND_PROCESSED;
 }
 
 int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
 #ifdef DEBUG_HIGH
     if (io->ios2_Req.io_Command == S2_DELMULTICASTADDRESSES)
     {
@@ -132,7 +127,7 @@ int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
             /* No user of this multicast range. Remove it and unregister on WiFi module */
             if (range->useCount == 0)
             {
-                Remove((APTR)range);
+                RemoveMinNode((struct MinNode *)range);
                 FreePooled(unit->memoryPool, range, sizeof(struct MulticastRange));
 
                 ULONG count = upper_bound - lower_bound + 1;
@@ -144,6 +139,5 @@ int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
             return COMMAND_PROCESSED;
         }
     }
-
     return COMMAND_PROCESSED;
 }

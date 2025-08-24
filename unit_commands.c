@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/timer_protos.h>
 #include <clib/exec_protos.h>
@@ -53,16 +51,14 @@ static const UWORD GENET_SupportedCommands[] = {
 void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
 {
     KprintfH("[genet] %s: Reporting events %08lx\n", __func__, eventSet);
-    struct ExecBase *SysBase = unit->execBase;
 
     /* Report event to every listener of every opener accepting the mask */
-    ObtainSemaphore(&unit->semaphore);
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
         struct Opener *opener = (struct Opener *)node;
-        struct Node *ioNode, *nextIoNode;
-
-        for (ioNode = opener->eventPort.mp_MsgList.lh_Head; (nextIoNode = ioNode->ln_Succ) != NULL; ioNode = nextIoNode)
+        struct MinNode *ioNode, *nextIoNode;
+        ObtainSemaphore(&opener->openerSemaphore);
+        for (ioNode = opener->eventQueue.mlh_Head; (nextIoNode = ioNode->mln_Succ) != NULL; ioNode = nextIoNode)
         {
             struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
             /* Check if event mask in WireError fits the events occured */
@@ -74,24 +70,18 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
                 /* Reply it */
                 Remove((struct Node *)io);
                 ReplyMsg((struct Message *)io);
+                break; /* Only one event per opener */
             }
         }
+        ReleaseSemaphore(&opener->openerSemaphore);
     }
-    ReleaseSemaphore(&unit->semaphore);
     KprintfH("[genet] %s: Reporting done\n", __func__);
 }
 
 static int Do_S2_ONEVENT(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
-
-    ULONG preset;
-    if (unit->state == STATE_ONLINE)
-        preset = S2EVENT_ONLINE;
-    else
-        preset = S2EVENT_OFFLINE;
 
     /* If any unsupported events are requested, report an error */
     if (io->ios2_WireError & ~(EVENT_MASK))
@@ -101,6 +91,8 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
         io->ios2_WireError = S2WERR_BAD_EVENT;
         return COMMAND_PROCESSED;
     }
+
+    ULONG preset = (unit->state == STATE_ONLINE) ? S2EVENT_ONLINE : S2EVENT_OFFLINE;
 
     /* If expected flags match preset, return back (almost) immediately */
     if (io->ios2_WireError & preset)
@@ -114,8 +106,10 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
         KprintfH("[genet] %s: Adding to event listener list, preset %08lx\n", __func__, preset);
         /* Remove QUICK flag and put message on event listener list */
         struct Opener *opener = io->ios2_BufferManagement;
-        io->ios2_Req.io_Flags &= ~IOF_QUICK;
-        PutMsg(&opener->eventPort, (struct Message *)io);
+        // io->ios2_Req.io_Flags &= ~IOF_QUICK;
+        ObtainSemaphore(&opener->openerSemaphore);
+        AddTailMinList(&opener->eventQueue, (struct MinNode *)io);
+        ReleaseSemaphore(&opener->openerSemaphore);
         return COMMAND_SCHEDULED;
     }
 }
@@ -123,47 +117,57 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
 static int Do_CMD_FLUSH(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: CMD_FLUSH\n", __func__);
 
     struct IOSana2Req *req;
-    /* Flush and cancel all write requests */
-    /*
-     * likely nothing to do here,
-     * we're pushing packets straight to the ring buffer
-     * TODO double check once things settle down
-     */
-    // while ((req = (struct IOSana2Req *)GetMsg(sdio->s_SenderPort)))
-    // {
-    //     req->ios2_Req.io_Error = IOERR_ABORTED;
-    //     req->ios2_WireError = 0;
-    //     ReplyMsg((struct Message *)req);
-    // }
+    /* Flush and cancel all requests */
+    while ((req = (struct IOSana2Req *)GetMsg(&unit->unit.unit_MsgPort)))
+    {
+        req->ios2_Req.io_Error = IOERR_ABORTED;
+        req->ios2_WireError = 0;
+        ReplyMsg((struct Message *)req);
+    }
 
-    /* For every opener, flush orphan and even queues */
+    /* For every opener, flush all internal queues */
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
         struct Opener *opener = (struct Opener *)node;
-        while ((req = (struct IOSana2Req *)GetMsg(&opener->orphanPort)))
+        ObtainSemaphore(&opener->openerSemaphore);
+        while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue)))
         {
             req->ios2_Req.io_Error = IOERR_ABORTED;
             req->ios2_WireError = 0;
             ReplyMsg((struct Message *)req);
         }
 
-        while ((req = (struct IOSana2Req *)GetMsg(&opener->eventPort)))
+        while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->eventQueue)))
         {
             req->ios2_Req.io_Error = IOERR_ABORTED;
             req->ios2_WireError = 0;
             ReplyMsg((struct Message *)req);
         }
 
-        while ((req = (struct IOSana2Req *)GetMsg(&opener->readPort)))
+        while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->readQueue)))
         {
             req->ios2_Req.io_Error = IOERR_ABORTED;
             req->ios2_WireError = 0;
             ReplyMsg((struct Message *)req);
         }
+
+        while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->ipv4Queue)))
+        {
+            req->ios2_Req.io_Error = IOERR_ABORTED;
+            req->ios2_WireError = 0;
+            ReplyMsg((struct Message *)req);
+        }
+
+        while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->arpQueue)))
+        {
+            req->ios2_Req.io_Error = IOERR_ABORTED;
+            req->ios2_WireError = 0;
+            ReplyMsg((struct Message *)req);
+        }
+        ReleaseSemaphore(&opener->openerSemaphore);
     }
     KprintfH("[genet] %s: Flush completed\n", __func__);
 
@@ -176,11 +180,16 @@ static int Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
     struct NSDeviceQueryResult *dq = io->io_Data;
 
     /* Fill out structure */
+    dq->nsdqr_SizeAvailable = sizeof(struct NSDeviceQueryResult);
+    if (io->io_Length < dq->nsdqr_SizeAvailable)
+    {
+        io->io_Error = IOERR_BADLENGTH;
+        return COMMAND_PROCESSED;
+    }
     dq->nsdqr_DeviceType = NSDEVTYPE_SANA2;
     dq->nsdqr_DeviceSubType = 0;
     dq->nsdqr_SupportedCommands = (UWORD *)GENET_SupportedCommands;
-    io->io_Actual = sizeof(struct NSDeviceQueryResult) + sizeof(APTR);
-    dq->nsdqr_SizeAvailable = io->io_Actual;
+    io->io_Actual = dq->nsdqr_SizeAvailable;
     io->io_Error = 0;
 
     return COMMAND_PROCESSED;
@@ -189,10 +198,9 @@ static int Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
 static inline int Do_CMD_READ(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
-    KprintfH("[genet] %s: CMD_READ\n", __func__);
+    KprintfH("[genet] %s: CMD_READ for packet type 0x%lx\n", __func__, io->ios2_PacketType);
 
-    if (unit->state != STATE_ONLINE)
+    if (unlikely(unit->state != STATE_ONLINE))
     {
         Kprintf("[genet] %s: Unit is offline, cannot read\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
@@ -201,18 +209,27 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
     }
 
     struct Opener *opener = io->ios2_BufferManagement;
+    UWORD packetType = io->ios2_PacketType;
+
+    /* Get the appropriate queue for this packet type */
+    struct MinList *queue = GetPacketTypeQueue(opener, packetType);
+
+    /* Queue the request */
     io->ios2_Req.io_Flags &= ~IOF_QUICK;
-    PutMsg(&opener->readPort, (struct Message *)io);
+    ObtainSemaphore(&opener->openerSemaphore);
+    AddTailMinList(queue, (struct MinNode *)io);
+    ReleaseSemaphore(&opener->openerSemaphore);
+
+    KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%lx\n", __func__, packetType);
     return COMMAND_SCHEDULED;
 }
 
 static inline int Do_S2_READORPHAN(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: S2_READORPHAN\n", __func__);
 
-    if (unit->state != STATE_ONLINE)
+    if (unlikely(unit->state != STATE_ONLINE))
     {
         Kprintf("[genet] %s: Unit is offline, cannot read orphan\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
@@ -221,8 +238,8 @@ static inline int Do_S2_READORPHAN(struct IOSana2Req *io)
     }
 
     struct Opener *opener = io->ios2_BufferManagement;
-    io->ios2_Req.io_Flags &= ~IOF_QUICK;
-    PutMsg(&opener->orphanPort, (struct Message *)io);
+    // io->ios2_Req.io_Flags &= ~IOF_QUICK;
+    AddTailMinList(&opener->orphanQueue, (struct MinNode *)io);
     return COMMAND_SCHEDULED;
 }
 
@@ -231,7 +248,7 @@ static inline int Do_CMD_WRITE(struct IOSana2Req *io)
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfH("[genet] %s: CMD_WRITE\n", __func__);
 
-    if (unit->state != STATE_ONLINE)
+    if (unlikely(unit->state != STATE_ONLINE))
     {
         Kprintf("[genet] %s: Unit is offline, cannot write\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
@@ -240,7 +257,8 @@ static inline int Do_CMD_WRITE(struct IOSana2Req *io)
     }
 
     io->ios2_Req.io_Flags &= ~IOF_QUICK;
-    return bcmgenet_tx_poll(unit, io);
+    int result = bcmgenet_xmit(io, unit);
+    return result;
 }
 
 int Do_S2_DEVICEQUERY(struct IOSana2Req *io)
@@ -267,7 +285,6 @@ int Do_S2_DEVICEQUERY(struct IOSana2Req *io)
 static int Do_S2_ONLINE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct TimerBase *TimerBase = unit->timerBase;
     Kprintf("[genet] %s: S2_ONLINE\n", __func__);
 
     /* If unit was not yet online, report event now */
@@ -285,10 +302,12 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
             io->ios2_Req.io_Error = result;
             io->ios2_WireError = S2WERR_GENERIC_ERROR;
             ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
-            return COMMAND_PROCESSED;
         }
-        Kprintf("[genet] %s: Unit online, about to report events\n", __func__);
-        ReportEvents(unit, S2EVENT_ONLINE);
+        else
+        {
+            Kprintf("[genet] %s: Unit online, about to report events\n", __func__);
+            ReportEvents(unit, S2EVENT_ONLINE);
+        }
     }
 
     return COMMAND_PROCESSED;
@@ -299,44 +318,40 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     Kprintf("[genet] %s: S2_CONFIGINTERFACE\n", __func__);
 
-    if (unit->state != STATE_UNCONFIGURED)
+    if (unit->state == STATE_UNCONFIGURED)
     {
-        Kprintf("[genet] %s: Unit is already configured, cannot configure\n", __func__);
-        /* We are already configured */
-        io->ios2_Req.io_Error = S2ERR_BAD_STATE;
-        io->ios2_WireError = S2WERR_IS_CONFIGURED;
-        return COMMAND_PROCESSED;
+        CopyMem(io->ios2_SrcAddr, unit->currentMacAddress, sizeof(unit->currentMacAddress));
+        Kprintf("[genet] %s: Setting current MAC address to %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
+                __func__,
+                unit->currentMacAddress[0], unit->currentMacAddress[1],
+                unit->currentMacAddress[2], unit->currentMacAddress[3],
+                unit->currentMacAddress[4], unit->currentMacAddress[5]);
+
+        int result = UnitConfigure(unit);
+        if (result != S2ERR_NO_ERROR)
+        {
+            Kprintf("[genet] %s: Failed to configure unit: %ld\n", __func__, result);
+            io->ios2_Req.io_Error = result;
+            io->ios2_WireError = S2WERR_GENERIC_ERROR;
+            ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
+        }
+        else
+        {
+            Do_S2_ONLINE(io);
+        }
     }
 
-    int result = UnitConfigure(unit);
-    if (result != S2ERR_NO_ERROR)
-    {
-        Kprintf("[genet] %s: Failed to configure unit: %ld\n", __func__, result);
-        io->ios2_Req.io_Error = result;
-        io->ios2_WireError = S2WERR_GENERIC_ERROR;
-        ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
-    }
+    CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, sizeof(unit->currentMacAddress));
     return COMMAND_PROCESSED;
 }
 
 static int Do_S2_OFFLINE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    // struct IOSana2Req *req;
     Kprintf("[genet] %s: S2_OFFLINE\n", __func__);
 
-    /* Flush and cancel all write requests */
-    /*
-     * likely nothing to do here,
-     * we're pushing packets straight to the ring buffer
-     * TODO double check once things settle down
-     */
-    // while ((req = (struct IOSana2Req *)GetMsg(sdio->s_SenderPort)))
-    // {
-    //     req->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
-    //     req->ios2_WireError = S2WERR_UNIT_OFFLINE;
-    //     ReplyMsg((struct Message *)req);
-    // }
+    /* Flush and cancel all requests */
+    Do_CMD_FLUSH(io);
 
     /* If unit was ONLINE before, report offline event now */
     if (unit->state == STATE_ONLINE)
@@ -351,8 +366,6 @@ static int Do_S2_OFFLINE(struct IOSana2Req *io)
 void ProcessCommand(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
-    ObtainSemaphore(&unit->semaphore);
 
     ULONG complete = COMMAND_SCHEDULED;
 
@@ -373,12 +386,11 @@ void ProcessCommand(struct IOSana2Req *io)
         switch (io->ios2_Req.io_Command)
         {
         case S2_BROADCAST: /* Fallthrough */
-            io->ios2_DstAddr[0] = 0xff;
-            io->ios2_DstAddr[1] = 0xff;
-            io->ios2_DstAddr[2] = 0xff;
-            io->ios2_DstAddr[3] = 0xff;
-            io->ios2_DstAddr[4] = 0xff;
-            io->ios2_DstAddr[5] = 0xff;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+            *(ULONG *)&io->ios2_DstAddr[0] = 0xFFFFFFFF;
+            *(UWORD *)&io->ios2_DstAddr[4] = 0xFFFF;
+#pragma GCC diagnostic pop
         case S2_MULTICAST: /* Fallthrough */
         case CMD_WRITE:
             complete = Do_CMD_WRITE(io);
@@ -457,5 +469,4 @@ void ProcessCommand(struct IOSana2Req *io)
     {
         ReplyMsg((struct Message *)io);
     }
-    ReleaseSemaphore(&unit->semaphore);
 }

@@ -14,12 +14,9 @@
 
 #include <phy/phy.h>
 #include <bcmgenet.h>
+#include <runtime_config.h>
 
-/*
- * SNPrintf - v47
- * NewMinList - v45
- */
-#define LIB_MIN_VERSION 47
+#define LIB_MIN_VERSION 39 /* we use memory pools */
 
 #define ETH_HLEN 14		  /* Total octets in header.				*/
 #define VLAN_HLEN 4		  /* The additional bytes required by VLAN	*/
@@ -27,7 +24,8 @@
 #define ETH_FCS_LEN 4	  /* Octets in the FCS             			*/
 #define ETH_DATA_LEN 1500 /* Max. octets in payload					*/
 
-#define ARCH_DMA_MINALIGN 128 // TODO this is likely wrong
+#define ARCH_DMA_MINALIGN 64 /* Minimum DMA alignment. That is in bytes. */
+#define ARCH_DMA_MINALIGN_MASK (ARCH_DMA_MINALIGN - 1)
 
 #define COMMAND_PROCESSED 1
 #define COMMAND_SCHEDULED 0
@@ -36,14 +34,19 @@
 #define EAGAIN -2
 
 /* Generic TODOs
-packet stats from HW
+use HW bcast/mcast flags
+cleanup mcast handling
+packet stats from HW, custom command to expose more stats and tool to read
 type statistics
-multicasts using HFB
-hardware filter block support
-better ring buffers handling
+PHY link state updates at runtime
 
 Long shot:
+- SANA-II updates to enable zero-copy DMA on TX and RX
 - use checksum offload (changes in SANA-II and stack)
+
+Not tested:
+Promiscuous mode
+Multicast support
 */
 
 struct GenetDevice;
@@ -59,9 +62,16 @@ typedef enum
 struct Opener
 {
 	struct MinNode node;
-	struct MsgPort readPort;
-	struct MsgPort orphanPort;
-	struct MsgPort eventPort;
+	struct MinList readQueue;
+	struct MinList orphanQueue;
+	struct MinList eventQueue;
+	
+	/* Optimized queues for common packet types */
+	struct MinList ipv4Queue;  /* For 0x0800 */
+	struct MinList arpQueue;   /* For 0x0806 */
+
+	struct SignalSemaphore openerSemaphore;
+
 	/* for CMD_READ,
 	 * BOOL PacketFilter(struct Hook* packetFilter asm("a0"), struct IOSana2Req* asm("a2"), APTR asm("a1"));
 	 * fill in ios2_DataLength, ios2_SrcAddr, ios2_DstAddr
@@ -92,6 +102,8 @@ struct bcmgenet_tx_ring
 	UWORD free_bds;					  /* # of free bds for each ring */
 	UBYTE write_ptr;				  /* Tx ring write pointer SW copy */
 	UWORD tx_prod_index;			  /* Tx ring producer index SW copy */
+
+	struct SignalSemaphore tx_ring_sem;
 };
 
 struct bcmgenet_rx_ring
@@ -99,7 +111,6 @@ struct bcmgenet_rx_ring
 	struct enet_cb *rx_control_block; /* Rx ring buffer control block */
 	UWORD rx_cons_index;			  /* Rx last consumer index */
 	UBYTE read_ptr;					  /* Rx ring read pointer */
-	UWORD old_discards;
 	ULONG rx_max_coalesced_frames;
 	ULONG rx_coalesce_usecs;
 };
@@ -116,26 +127,24 @@ struct internal_stats
 {
 	ULONG rx_packets;
 	ULONG rx_bytes;
-	ULONG rx_multicast;
 	ULONG rx_dropped;
-	ULONG rx_crc_errors;
-	ULONG rx_over_errors;
-	ULONG rx_frame_errors;
-	ULONG rx_length_errors;
+	ULONG rx_arp_ip_dropped;
+	ULONG rx_overruns;
+	// ULONG rx_crc_errors;
+	// ULONG rx_over_errors;
+	// ULONG rx_frame_errors;
+	// ULONG rx_length_errors;
 
 	ULONG tx_packets;
+	ULONG tx_bytes;
 	ULONG tx_dma;
 	ULONG tx_copy;
-	ULONG tx_bytes;
 	ULONG tx_dropped;
 };
 
 struct GenetUnit
 {
 	struct Unit unit;
-	struct ExecBase *execBase;
-	struct TimerBase *timerBase;
-	struct Library *utilityBase;
 	APTR memoryPool;
 
 	/* config */
@@ -152,7 +161,9 @@ struct GenetUnit
 	struct MinList multicastRanges;
 	ULONG multicastCount;
 	BOOL mdfEnabled; /* Multicast filter enabled */
-	struct SignalSemaphore semaphore;
+
+	/* Opener management (message-based modifications) */
+	struct MsgPort *openerPort; /* created in unit task */
 
 	/* Device tree */
 	CONST_STRPTR compatible;
@@ -175,12 +186,23 @@ struct GenetUnit
 	struct bcmgenet_tx_ring tx_ring;
 	UBYTE *txbuffer_not_aligned;
 	UBYTE *txbuffer;
+
+	UWORD tx_watchdog_fast_ticks;/* remaining fast polls while data on TX ring */
+};
+
+/* Opener management commands */
+#define OPENER_CMD_ADD 1
+#define OPENER_CMD_REM 2
+
+struct OpenerControlMsg {
+	struct Message msg;
+	UWORD command; /* OPENER_CMD_* */
+	struct Opener *opener;
 };
 
 struct GenetDevice
 {
 	struct Device device;
-	struct ExecBase *execBase;
 	ULONG segList;
 
 	// For now, we'll just assume there can be only one unit
@@ -198,8 +220,22 @@ int UnitOnline(struct GenetUnit *unit);
 void UnitOffline(struct GenetUnit *unit);
 int UnitClose(struct GenetUnit *unit, struct Opener *opener);
 
-void ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
+BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
 void ProcessCommand(struct IOSana2Req *io);
+
+/* Inline function for fast packet type queue lookup */
+static inline struct MinList* GetPacketTypeQueue(struct Opener *opener, UWORD packetType)
+{
+    switch (packetType)
+    {
+        case 0x0800: /* IPv4 */
+            return &opener->ipv4Queue;
+        case 0x0806: /* ARP */
+            return &opener->arpQueue;
+        default:
+            return &opener->readQueue; /* Fallback to legacy port */
+    }
+}
 
 int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io);
 int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io);
