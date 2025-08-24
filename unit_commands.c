@@ -215,7 +215,7 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
     struct MinList *queue = GetPacketTypeQueue(opener, packetType);
 
     /* Queue the request */
-    // io->ios2_Req.io_Flags &= ~IOF_QUICK;
+    io->ios2_Req.io_Flags &= ~IOF_QUICK;
     ObtainSemaphore(&opener->openerSemaphore);
     AddTailMinList(queue, (struct MinNode *)io);
     ReleaseSemaphore(&opener->openerSemaphore);
@@ -256,7 +256,7 @@ static inline int Do_CMD_WRITE(struct IOSana2Req *io)
         return COMMAND_PROCESSED;
     }
 
-    // io->ios2_Req.io_Flags &= ~IOF_QUICK;
+    io->ios2_Req.io_Flags &= ~IOF_QUICK;
     int result = bcmgenet_xmit(io, unit);
     return result;
 }
