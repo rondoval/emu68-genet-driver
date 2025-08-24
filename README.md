@@ -19,10 +19,16 @@ The driver is based on [Das U-Boot](https://source.denx.de/u-boot/u-boot) bcmgen
 
 ## Requirements
 
-- Kickstart 3.1 (V39) or newer (tested with 47.115)
+- Kickstart 3.0 (V39) or newer
 - Pistorm32-lite with Raspberry Pi 4B
 - Emu68, version 1.0.5.1 or newer
-- A network stack (tested with Roadshow 1.15)
+- A network stack
+
+Tested using:
+
+- OS 3.2.3 + Roadshow 1.15
+- OS 3.2.3 + Miami DX
+- OS 3.0 + AmiTCP 4.2 (16 Jun 2022)
 
 ## Sample Roadshow config file
 
