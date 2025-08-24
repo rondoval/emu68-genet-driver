@@ -16,8 +16,6 @@
  * we only support v5, as used in the Raspberry Pi 4.
  */
 
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
@@ -124,7 +122,6 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 
 int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	UWORD rx_prod_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 
 	if (rx_prod_index == unit->rx_ring.rx_cons_index)
@@ -208,7 +205,6 @@ int bcmgenet_set_coalesce(struct GenetUnit *unit, ULONG tx_max_coalesced_frames,
 
 static int bcmgenet_init_rx_ring(struct GenetUnit *unit)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	Kprintf("[genet] %s: Initializing RX ring\n", __func__);
 	struct bcmgenet_rx_ring *ring = &unit->rx_ring;
 
@@ -275,7 +271,6 @@ static int bcmgenet_init_rx_queues(struct GenetUnit *unit)
 
 static int bcmgenet_init_tx_ring(struct GenetUnit *unit)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	Kprintf("[genet] %s: Initializing TX ring\n", __func__);
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
@@ -490,7 +485,6 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit)
 
 int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	Kprintf("[genet] %s: Starting GENET\n", __func__);
 	unit->rxbuffer_not_aligned = AllocMem(RX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
 	if (!unit->rxbuffer_not_aligned)
@@ -640,7 +634,6 @@ int bcmgenet_eth_probe(struct GenetUnit *unit)
 
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	Kprintf("[genet] %s: Stopping GENET\n", __func__);
 
 	// bcmgenet_hfb_reg_writel(unit, 0, HFB_CTRL);

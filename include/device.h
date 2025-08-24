@@ -14,6 +14,7 @@
 
 #include <phy/phy.h>
 #include <bcmgenet.h>
+#include <runtime_config.h>
 
 #define LIB_MIN_VERSION 39 /* we use memory pools */
 
@@ -141,9 +142,6 @@ struct internal_stats
 struct GenetUnit
 {
 	struct Unit unit;
-	struct ExecBase *execBase;
-	struct TimerBase *timerBase;
-	struct Library *utilityBase;
 	APTR memoryPool;
 
 	/* config */
@@ -189,7 +187,6 @@ struct GenetUnit
 struct GenetDevice
 {
 	struct Device device;
-	struct ExecBase *execBase;
 	ULONG segList;
 
 	// For now, we'll just assume there can be only one unit

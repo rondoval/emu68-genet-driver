@@ -3,7 +3,6 @@
 #define __DEBUG_H
 
 #ifdef DEBUG
-#define __NOLIBBASE__
 #include <stdarg.h>
 
 #ifdef __INTELLISENSE__
@@ -33,7 +32,6 @@ static void putch(UBYTE data asm("d0"), APTR dummy asm("a3"))
 
 static inline void PrintPistorm(char *fmt, ...)
 {
-	struct ExecBase *SysBase = *(struct ExecBase **)4UL;
 	va_list args;
 	va_start(args, fmt);
 	RawDoFmt((CONST_STRPTR)fmt, args, (APTR)putch, NULL);

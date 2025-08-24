@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/utility_protos.h>
 #include <clib/exec_protos.h>
@@ -12,14 +10,13 @@
 #include <device.h>
 #include <compat.h>
 #include <debug.h>
+#include <runtime_config.h>
 
 static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packetLength)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: Copying packet of length %ld\n", __func__, packetLength);
     struct Opener *opener = io->ios2_BufferManagement;
-    struct Library *UtilityBase = unit->utilityBase;
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
@@ -79,11 +76,8 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     /* Packet not filtered. Send it now and reply request. */
     if (likely(!packetFiltered))
     {
-#if USE_MIAMI_WORKAROUND
-        if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, (packetLength + 3) & ~3u) == 0)
-#else
-        if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, packetLength) == 0)
-#endif
+        ULONG copyLen = genetConfig.use_miami_workaround ? ((packetLength + 3) & ~3u) : packetLength;
+        if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, copyLen) == 0)
         {
             KprintfH("[genet] %s: Failed to copy packet data to buffer\n", __func__);
             unit->internalStats.rx_dropped++;
@@ -122,8 +116,6 @@ static inline BOOL MulticastFilter(struct GenetUnit *unit, uint64_t destAddr)
 
 BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 {
-    struct ExecBase *SysBase = unit->execBase;
-
     /* We only need to filter in software if MDF is not enabled */
     if (unlikely(!unit->mdfEnabled))
     {

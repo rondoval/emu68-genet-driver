@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #include <clib/dos_protos.h>
+#include <clib/utility_protos.h>
 #else
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <proto/utility.h>
 #endif
 
 #include <exec/execbase.h>
@@ -18,6 +18,7 @@
 #include <gpio/bcm_gpio.h>
 #include <compat.h>
 #include <minlist.h>
+#include <runtime_config.h>
 
 static void SetupMDIO(struct GenetUnit *unit)
 {
@@ -45,11 +46,11 @@ static void SetupRGMII(struct GenetUnit *unit)
 
 int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener *opener)
 {
-	struct ExecBase *SysBase = *((struct ExecBase **)4UL);
 	Kprintf("[genet] %s: Opening unit %ld with flags %lx\n", __func__, unitNumber, flags);
 	if (unit->unit.unit_OpenCnt > 0)
 	{
 		Kprintf("[genet] %s: Unit was already open\n", __func__);
+
 		Forbid();
 		unit->unit.unit_OpenCnt++;
 		if (opener != NULL)
@@ -62,14 +63,6 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		return S2ERR_NO_ERROR;
 	}
 
-	unit->execBase = SysBase;
-	unit->utilityBase = OpenLibrary((CONST_STRPTR) "utility.library", LIB_MIN_VERSION);
-	if (unit->utilityBase == NULL)
-	{
-		Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
-		return S2ERR_NO_RESOURCES;
-	}
-
 	unit->state = STATE_UNCONFIGURED;
 	unit->flags = flags;
 	unit->unit.unit_OpenCnt = 1;
@@ -79,7 +72,6 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	if (unit->memoryPool == NULL)
 	{
 		Kprintf("[genet] %s: Failed to create memory pool\n", __func__);
-		CloseLibrary(unit->utilityBase);
 		return S2ERR_NO_RESOURCES;
 	}
 	_NewMinList(&unit->multicastRanges);
@@ -95,7 +87,6 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to parse device tree: %ld\n", __func__, result);
-		CloseLibrary(unit->utilityBase);
 		return result;
 	}
 
@@ -105,7 +96,6 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to start unit task: %ld\n", __func__, result);
-		CloseLibrary(unit->utilityBase);
 		DeletePool(unit->memoryPool);
 		unit->memoryPool = NULL;
 		return result;
@@ -156,7 +146,6 @@ void UnitOffline(struct GenetUnit *unit)
 int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 {
 	Kprintf("[genet] %s: Closing unit %ld with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
-	struct ExecBase *SysBase = unit->execBase;
 
 	unit->unit.unit_OpenCnt--;
 	if (unit->unit.unit_OpenCnt == 0)
@@ -167,7 +156,6 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 			UnitOffline(unit);
 		}
 		UnitTaskStop(unit);
-		CloseLibrary(unit->utilityBase);
 		DeletePool(unit->memoryPool);
 		unit->memoryPool = NULL;
 		unit->state = STATE_UNCONFIGURED;

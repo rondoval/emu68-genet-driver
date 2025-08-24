@@ -7,8 +7,6 @@
  *
  * Based loosely off of Linux's PHY Lib
  */
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
@@ -622,7 +620,6 @@ static int get_phy_id(struct phy_device *phydev)
 
 struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 {
-	struct ExecBase *SysBase = dev->execBase;
 	Kprintf("[genet] %s: base=0x%lx phyaddr=%ld\n", __func__, dev->genetBase, dev->phyaddr);
 	struct phy_device *phydev;
 
@@ -665,7 +662,6 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 
 void phy_destroy(struct phy_device *phydev)
 {
-	struct ExecBase *SysBase = phydev->unit->execBase;
 	Kprintf("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	FreePooled(phydev->unit->memoryPool, phydev, sizeof(*phydev));
 }

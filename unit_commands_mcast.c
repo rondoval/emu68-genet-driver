@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
@@ -37,7 +35,6 @@ static inline uint64_t GetAddress(const UBYTE *addr)
 int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
 #ifdef DEBUG_HIGH
     if (io->ios2_Req.io_Command == S2_ADDMULTICASTADDRESSES)
     {
@@ -97,7 +94,6 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
 int Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
 #ifdef DEBUG_HIGH
     if (io->ios2_Req.io_Command == S2_DELMULTICASTADDRESSES)
     {

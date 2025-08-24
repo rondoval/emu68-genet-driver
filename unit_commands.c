@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/timer_protos.h>
 #include <clib/exec_protos.h>
@@ -53,7 +51,6 @@ static const UWORD GENET_SupportedCommands[] = {
 void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
 {
     KprintfH("[genet] %s: Reporting events %08lx\n", __func__, eventSet);
-    struct ExecBase *SysBase = unit->execBase;
 
     /* Report event to every listener of every opener accepting the mask */
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
@@ -82,7 +79,6 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
 static int Do_S2_ONEVENT(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
 
     /* If any unsupported events are requested, report an error */
@@ -117,7 +113,6 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
 static int Do_CMD_FLUSH(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: CMD_FLUSH\n", __func__);
 
     struct IOSana2Req *req;
@@ -197,7 +192,6 @@ static int Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
 static inline int Do_CMD_READ(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: CMD_READ for packet type 0x%lx\n", __func__, io->ios2_PacketType);
 
     if (unlikely(unit->state != STATE_ONLINE))
@@ -225,7 +219,6 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
 static inline int Do_S2_READORPHAN(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
     KprintfH("[genet] %s: S2_READORPHAN\n", __func__);
 
     if (unlikely(unit->state != STATE_ONLINE))
@@ -284,7 +277,6 @@ int Do_S2_DEVICEQUERY(struct IOSana2Req *io)
 static int Do_S2_ONLINE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct TimerBase *TimerBase = unit->timerBase;
     Kprintf("[genet] %s: S2_ONLINE\n", __func__);
 
     /* If unit was not yet online, report event now */
@@ -315,7 +307,6 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
 
 static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
 {
-    struct ExecBase *SysBase = *((struct ExecBase **)4UL);
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     Kprintf("[genet] %s: S2_CONFIGINTERFACE\n", __func__);
 
@@ -367,7 +358,6 @@ static int Do_S2_OFFLINE(struct IOSana2Req *io)
 void ProcessCommand(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = unit->execBase;
 
     ULONG complete = COMMAND_SCHEDULED;
 

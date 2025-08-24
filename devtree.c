@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #include <clib/devicetree_protos.h>
@@ -17,8 +15,7 @@
 #include <device.h>
 #include <compat.h>
 
-static APTR DeviceTreeBase;
-static struct ExecBase *SysBase;
+APTR DeviceTreeBase;
 
 // Devicetree extras
 static APTR DT_FindByPHandle(APTR key, ULONG phandle)
@@ -145,8 +142,6 @@ static CONST_STRPTR GetAlias(const char *alias)
 
 int DevTreeParse(struct GenetUnit *unit)
 {
-	SysBase = unit->execBase;
-
 	DeviceTreeBase = OpenResource((CONST_STRPTR) "devicetree.resource");
 	if (!DeviceTreeBase)
 	{

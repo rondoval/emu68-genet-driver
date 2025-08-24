@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
+#include <clib/timer_protos.h>
 #else
 #include <proto/exec.h>
+#include <proto/timer.h>
 #endif
 
 #include <dos/dos.h>
@@ -14,9 +14,9 @@
 #include <minlist.h>
 #include <debug.h>
 #include <settings.h>
+#include <runtime_config.h>
 
-static const ULONG kPollDelaysUs[] = POLL_DELAY_US;
-#define POLL_LADDER_LEN (sizeof(kPollDelaysUs) / sizeof(kPollDelaysUs[0]))
+struct Device *TimerBase = NULL;
 
 static inline BOOL ProcessReceive(struct GenetUnit *unit)
 {
@@ -33,18 +33,16 @@ static inline BOOL ProcessReceive(struct GenetUnit *unit)
         bcmgenet_gmac_free_pkt(unit);
     }
 
-#if RX_POLL_BURST > 0
-    /* Burst */
-    if (activity)
+    if (activity && genetConfig.rx_poll_burst > 0)
     {
         ULONG empty_streak = 0;
         ULONG iter = 0;
-        while (iter < RX_POLL_BURST)
+        while (iter < genetConfig.rx_poll_burst)
         {
             pkt_len = bcmgenet_gmac_eth_recv(unit, &buffer);
             if (pkt_len <= 0)
             {
-                if (++empty_streak >= RX_POLL_BURST_IDLE_BREAK)
+                if (++empty_streak >= genetConfig.rx_poll_burst_idle_break)
                     break;
             }
             else
@@ -56,14 +54,11 @@ static inline BOOL ProcessReceive(struct GenetUnit *unit)
             iter++;
         }
     }
-#endif
     return activity;
 }
 
 static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 {
-    struct ExecBase *SysBase = unit->execBase;
-
     // Initialize the built in msg port, we'll receive commands here
     _NewMinList((struct MinList *)&unit->unit.unit_MsgPort.mp_MsgList);
     unit->unit.unit_MsgPort.mp_SigTask = FindTask(NULL);
@@ -101,10 +96,10 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     }
 
     /* used to reset stats on S2_ONLINE */
-    unit->timerBase = (struct TimerBase *)packetTimerReq->tr_node.io_Device;
+    TimerBase = packetTimerReq->tr_node.io_Device;
 
-    ULONG backoff_idx = POLL_LADDER_LEN - 1; /* Start conservative until first activity */
-    ULONG delay = kPollDelaysUs[backoff_idx];
+    ULONG backoff_idx = genetConfig.poll_delay_len - 1; /* Start conservative until first activity */
+    ULONG delay = genetConfig.poll_delay_us[backoff_idx];
 
     // Set a timer... we need to pull on RX
     packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
@@ -171,15 +166,15 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
             else
             {
-                if (backoff_idx + 1 < POLL_LADDER_LEN)
+                if (backoff_idx + 1 < genetConfig.poll_delay_len)
                     backoff_idx++;
             }
             activity = FALSE; /* reset activity */
-            delay = kPollDelaysUs[backoff_idx];
+            delay = genetConfig.poll_delay_us[backoff_idx];
 
             /* TX watchdog soft cap: ensure we never sleep beyond this while descriptors outstanding */
-            if (unit->tx_ring.free_bds < TX_DESCS && delay > TX_RECLAIM_SOFT_US)
-                delay = TX_RECLAIM_SOFT_US;
+            if (unit->tx_ring.free_bds < TX_DESCS && delay > genetConfig.tx_reclaim_soft_us)
+                delay = genetConfig.tx_reclaim_soft_us;
 
             /* Re-arm timer */
             packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
@@ -232,13 +227,12 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
 int UnitTaskStart(struct GenetUnit *unit)
 {
-    struct ExecBase *SysBase = unit->execBase;
     Kprintf("[genet] %s: genet task starting\n", __func__);
 
     // Get all memory we need for the receiver task
     struct MemList *ml = AllocMem(sizeof(struct MemList) + sizeof(struct MemEntry), MEMF_PUBLIC | MEMF_CLEAR);
     struct Task *task = AllocMem(sizeof(struct Task), MEMF_PUBLIC | MEMF_CLEAR);
-    ULONG *stack = AllocMem(UNIT_STACK_SIZE * sizeof(ULONG), MEMF_PUBLIC | MEMF_CLEAR);
+    ULONG *stack = AllocMem(genetConfig.unit_stack_bytes, MEMF_PUBLIC | MEMF_CLEAR);
     if (!ml || !task || !stack)
     {
         Kprintf("[genet] %s: Failed to allocate memory for genet task\n", __func__);
@@ -247,7 +241,7 @@ int UnitTaskStart(struct GenetUnit *unit)
         if (task)
             FreeMem(task, sizeof(struct Task));
         if (stack)
-            FreeMem(stack, UNIT_STACK_SIZE * sizeof(ULONG));
+            FreeMem(stack, genetConfig.unit_stack_bytes);
         return S2ERR_NO_RESOURCES;
     }
 
@@ -257,11 +251,11 @@ int UnitTaskStart(struct GenetUnit *unit)
     ml->ml_ME[0].me_Length = sizeof(struct Task);
 
     ml->ml_ME[1].me_Un.meu_Addr = &stack[0];
-    ml->ml_ME[1].me_Length = UNIT_STACK_SIZE * sizeof(ULONG);
+    ml->ml_ME[1].me_Length = genetConfig.unit_stack_bytes;
 
     // Set up stack
     task->tc_SPLower = &stack[0];
-    task->tc_SPUpper = &stack[UNIT_STACK_SIZE];
+    task->tc_SPUpper = &stack[genetConfig.unit_stack_bytes / sizeof(ULONG)];
 
     // Push ThisTask and Unit on the stack
     stack = (ULONG *)task->tc_SPUpper;
@@ -271,7 +265,7 @@ int UnitTaskStart(struct GenetUnit *unit)
 
     task->tc_Node.ln_Name = "genet rx/tx";
     task->tc_Node.ln_Type = NT_TASK;
-    task->tc_Node.ln_Pri = UNIT_TASK_PRIORITY;
+    task->tc_Node.ln_Pri = genetConfig.unit_task_priority;
 
     _NewMinList((struct MinList *)&task->tc_MemEntry);
     AddHead(&task->tc_MemEntry, &ml->ml_Node);
@@ -282,7 +276,7 @@ int UnitTaskStart(struct GenetUnit *unit)
         Kprintf("[genet] %s: Failed to add genet task\n", __func__);
         FreeMem(ml, sizeof(struct MemList) + sizeof(struct MemEntry));
         FreeMem(task, sizeof(struct Task));
-        FreeMem(&stack[0], UNIT_STACK_SIZE * sizeof(ULONG));
+    FreeMem(&stack[0], genetConfig.unit_stack_bytes);
         return S2ERR_NO_RESOURCES;
     }
 
@@ -293,7 +287,6 @@ int UnitTaskStart(struct GenetUnit *unit)
 
 void UnitTaskStop(struct GenetUnit *unit)
 {
-    struct ExecBase *SysBase = unit->execBase;
     Kprintf("[genet] %s: genet task stopping\n", __func__);
 
     struct MsgPort *timerPort = CreateMsgPort();

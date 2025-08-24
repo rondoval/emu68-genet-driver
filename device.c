@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #include <clib/utility_protos.h>
@@ -23,6 +21,7 @@
 #include <minlist.h>
 #include <debug.h>
 #include <settings.h>
+#include <runtime_config.h>
 
 /*
     Put the function at the very beginning of the file in order to avoid
@@ -58,7 +57,7 @@ static struct Resident const genetDeviceResident __attribute__((used)) = {
     RTC_MATCHWORD,
     (struct Resident *)&genetDeviceResident,
     (APTR)&endOfCode,
-    RTF_AUTOINIT | RTF_COLDSTART,
+    RTF_AUTOINIT | RTF_AFTERDOS,
     DEVICE_VERSION,
     NT_DEVICE,
     DEVICE_PRIORITY,
@@ -96,41 +95,46 @@ static const APTR funcTable[] = {
     (APTR)abortIO,
     (APTR)-1};
 
+struct ExecBase *SysBase;
+struct Library *UtilityBase = NULL;
+
 APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct GenetDevice *dev_base asm("a6") __attribute__((unused)))
 {
-    struct ExecBase *SysBase = *(struct ExecBase **)4UL;
+    SysBase = *((struct ExecBase **)4UL);
     Kprintf("[genet] %s: Initializing device\n", __func__);
-    base->execBase = SysBase;
     base->segList = segList;
     base->device.dd_Library.lib_Revision = DEVICE_REVISION;
     base->unit = NULL;
 
+    UtilityBase = OpenLibrary((CONST_STRPTR)"utility.library", LIB_MIN_VERSION);
+    if (UtilityBase == NULL)
+    {
+        Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
+        expungeLib(base);
+        return NULL;
+    }
+
+    LoadGenetRuntimeConfig();
+    DumpGenetRuntimeConfig();
+
     return base;
 }
 
-#define getBufferFunction(tags, tag32, tag16, tagDefault) \
-    ({ \
+#define getBufferFunction(tags, tag32, tag16, tagDefault)     \
+    ({                                                        \
         APTR func = (APTR)GetTagData(tagDefault, NULL, tags); \
-        func = (APTR)GetTagData(tag16, (ULONG)func, tags); \
-        func = (APTR)GetTagData(tag32, (ULONG)func, tags); \
-        func; \
+        func = (APTR)GetTagData(tag16, (ULONG)func, tags);    \
+        func = (APTR)GetTagData(tag32, (ULONG)func, tags);    \
+        func;                                                 \
     })
 
-struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
+struct Opener *createOpener(struct TagItem *tags)
 {
     struct Opener *opener = NULL;
     opener = AllocMem(sizeof(struct Opener), MEMF_PUBLIC | MEMF_CLEAR);
     if (opener == NULL)
     {
         Kprintf("[genet] %s: Failed to allocate opener\n", __func__);
-        return NULL;
-    }
-
-    struct Library *UtilityBase = OpenLibrary((CONST_STRPTR) "utility.library", LIB_MIN_VERSION);
-    if (UtilityBase == NULL)
-    {
-        Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
-        FreeMem(opener, sizeof(struct Opener));
         return NULL;
     }
 
@@ -151,15 +155,16 @@ struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
     opener->CopyToBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyToBuff32, S2_CopyToBuff16, S2_CopyToBuff);
     opener->CopyFromBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyFromBuff32, S2_CopyFromBuff16, S2_CopyFromBuff);
 
-#if USE_DMA == 1
-    opener->DMACopyToBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyToBuff32, NULL, tags);
-    opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);
-#endif
+    if (genetConfig.use_dma)
+    {
+        opener->DMACopyToBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyToBuff32, NULL, tags);
+        opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);
+    }
+
     Kprintf("[genet] %s: CopyToBuff=%lx, CopyFromBuff=%lx, PacketFilter=%lx\n",
             __func__, opener->CopyToBuff, opener->CopyFromBuff, opener->packetFilter);
     Kprintf("[genet] %s: DMACopyToBuff=%lx, DMACopyFromBuff=%lx\n",
             __func__, opener->DMACopyToBuff, opener->DMACopyFromBuff);
-    CloseLibrary(UtilityBase);
 
     _NewMinList(&opener->readQueue);
     _NewMinList(&opener->orphanQueue);
@@ -173,7 +178,6 @@ struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags)
 void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
              ULONG flags asm("d1"), struct GenetDevice *base asm("a6"))
 {
-    struct ExecBase *SysBase = base->execBase;
     Kprintf("[genet] %s: Opening device with unit number %ld and flags %lx\n", __func__, unitNumber, flags);
     if (unitNumber != 0)
     {
@@ -211,7 +215,7 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     struct Opener *opener = NULL;
     if (io->ios2_Req.io_Message.mn_Length >= sizeof(struct IOSana2Req))
     {
-        opener = createOpener(SysBase, io->ios2_BufferManagement);
+        opener = createOpener(io->ios2_BufferManagement);
         if (opener == NULL)
         {
             io->ios2_Req.io_Error = IOERR_OPENFAIL;
@@ -248,7 +252,6 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
 ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    struct ExecBase *SysBase = base->execBase;
     Kprintf("[genet] %s: Closing device\n", __func__);
 
     struct Opener *opener = NULL;
@@ -294,7 +297,12 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
     }
     else
     {
-        struct ExecBase *SysBase = base->execBase;
+        if (UtilityBase != NULL)
+        {
+            CloseLibrary(UtilityBase);
+            UtilityBase = NULL;
+        }
+
         ULONG segList = base->segList;
 
         /* Remove yourself from list of devices */

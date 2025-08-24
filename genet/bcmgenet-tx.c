@@ -4,8 +4,6 @@
  *
  * Copyright (c) 2014-2025 Broadcom
  */
-#define __NOLIBBASE__
-
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
@@ -18,6 +16,7 @@
 #include <compat.h>
 #include <debug.h>
 #include <settings.h>
+#include <runtime_config.h>
 
 /* Combined address + length/status setter */
 static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
@@ -52,7 +51,6 @@ static inline struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
 /* Unlocked version of the reclaim routine */
 void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 {
-	struct ExecBase *SysBase = unit->execBase;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 	/* Compute how many buffers are transmitted since last xmit call */
 	UWORD tx_cons_index = readl((ULONG)unit->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
@@ -80,10 +78,8 @@ void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 	ring->free_bds += txbds_processed;
 	ring->tx_cons_index = tx_cons_index;
 
-#if TX_PENDING_FAST_TICKS > 0
 	/* small burst of fast polls */
-	unit->tx_watchdog_fast_ticks = (ring->free_bds < TX_DESCS) ? TX_PENDING_FAST_TICKS : 0;
-#endif
+	unit->tx_watchdog_fast_ticks = (ring->free_bds < TX_DESCS) ? genetConfig.tx_pending_fast_ticks : 0;
 
 	unit->stats.PacketsSent += pkts_compl;
 	unit->internalStats.tx_packets += pkts_compl;
@@ -93,7 +89,6 @@ void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 {
 	KprintfH("[genet] %s: unit %ld, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
-	struct ExecBase *SysBase = unit->execBase;
 	struct Opener *opener = io->ios2_BufferManagement;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
@@ -167,9 +162,9 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	// Then the body from upstream
 	struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(ring);
 	tx_cb_ptr->ioReq = io;
-	/* We'll use this to mark it is on the TX ring now and can't be aborted */
-	io->ios2_Req.io_Message.mn_Node.ln_Type = NT_UNKNOWN;
-
+	/* We'll use the ln_Pred pointer to mark it is on the TX ring now and can't be aborted */
+	io->ios2_Req.io_Message.mn_Node.ln_Pred = NULL;
+	
 	if (unlikely(opener->DMACopyFromBuff) && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
 	{
 		if (unlikely(tx_cb_ptr->data_buffer <= (APTR)0x1FFFFF))
@@ -185,11 +180,7 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	{
 	use_software_copy:
 		KprintfH("[genet] %s: Using software copy from buffer\n", __func__);
-#if USE_MIAMI_WORKAROUND
-		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, (io->ios2_DataLength + 3) & ~3) == 0)
-#else
-		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, io->ios2_DataLength) == 0)
-#endif
+		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, genetConfig.use_miami_workaround ? ((io->ios2_DataLength + 3) & ~3) : io->ios2_DataLength) == 0)
 		{
 			KprintfH("[genet] %s: Failed to copy packet data from buffer\n", __func__);
 			unit->internalStats.tx_dropped++;
@@ -228,9 +219,7 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	KprintfH("[genet] %s: Transmitting packet, tx_prod_index %ld, free_bds %ld\n",
 			 __func__, ring->tx_prod_index, ring->free_bds);
 
-#if TX_PENDING_FAST_TICKS > 0
-	unit->tx_watchdog_fast_ticks = TX_PENDING_FAST_TICKS; /* ensure a few fast polls */
-#endif
+	unit->tx_watchdog_fast_ticks = genetConfig.tx_pending_fast_ticks; /* ensure a few fast polls */
 
 	return COMMAND_SCHEDULED;
 }
