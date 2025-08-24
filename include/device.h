@@ -36,7 +36,6 @@
 /* Generic TODOs
 use HW bcast/mcast flags
 cleanup mcast handling
-runtime configurable knobs
 packet stats from HW, custom command to expose more stats and tool to read
 type statistics
 PHY link state updates at runtime
