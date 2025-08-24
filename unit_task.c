@@ -10,6 +10,7 @@
 #include <dos/dos.h>
 
 #include <bcmgenet-regs.h>
+#include <compat.h>
 #include <device.h>
 #include <minlist.h>
 #include <debug.h>
@@ -69,13 +70,15 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     // Create a timer, we'll use it to poll the PHY
     struct MsgPort *microHZTimerPort = CreateMsgPort();
     struct MsgPort *vblankTimerPort = CreateMsgPort();
+    unit->openerPort = CreateMsgPort();
     struct timerequest *packetTimerReq = CreateIORequest(microHZTimerPort, sizeof(struct timerequest));
     struct timerequest *statsTimerReq = CreateIORequest(vblankTimerPort, sizeof(struct timerequest));
-    if (microHZTimerPort == NULL || vblankTimerPort == NULL || packetTimerReq == NULL || statsTimerReq == NULL)
+    if (microHZTimerPort == NULL || vblankTimerPort == NULL || unit->openerPort == NULL || packetTimerReq == NULL || statsTimerReq == NULL)
     {
         Kprintf("[genet] %s: Failed to create timer msg port or request\n", __func__);
         DeleteMsgPort(microHZTimerPort);
         DeleteMsgPort(vblankTimerPort);
+        DeleteMsgPort(unit->openerPort);
         DeleteIORequest((struct IORequest *)packetTimerReq);
         DeleteIORequest((struct IORequest *)statsTimerReq);
         Signal(parent, SIGBREAKF_CTRL_C);
@@ -119,6 +122,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     ULONG sigset;
     BOOL activity = FALSE;
     ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
+                     (1UL << unit->openerPort->mp_SigBit) |
                      (1UL << microHZTimerPort->mp_SigBit) |
                      (1UL << vblankTimerPort->mp_SigBit) |
                      SIGBREAKF_CTRL_C;
@@ -136,6 +140,26 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             while ((io = (struct IOSana2Req *)GetMsg(&unit->unit.unit_MsgPort)))
             {
                 ProcessCommand(io);
+            }
+        }
+
+        // Opener management messages
+        if (unlikely(sigset & (1UL << unit->openerPort->mp_SigBit)))
+        {
+            struct OpenerControlMsg *omsg;
+            while ((omsg = (struct OpenerControlMsg *)GetMsg(unit->openerPort)))
+            {
+                switch (omsg->command)
+                {
+                case OPENER_CMD_ADD:
+                    AddTailMinList(&unit->openers, (struct MinNode *)omsg->opener);
+                    break;
+                case OPENER_CMD_REM:
+                    if (omsg->opener)
+                        RemoveMinNode((struct MinNode *)omsg->opener);
+                    break;
+                }
+                ReplyMsg(&omsg->msg);
             }
         }
 
@@ -222,6 +246,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     DeleteIORequest(&statsTimerReq->tr_node);
     DeleteMsgPort(microHZTimerPort);
     DeleteMsgPort(vblankTimerPort);
+    DeleteMsgPort(unit->openerPort);
     unit->task = NULL;
 }
 

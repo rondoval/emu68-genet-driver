@@ -49,16 +49,21 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	Kprintf("[genet] %s: Opening unit %ld with flags %lx\n", __func__, unitNumber, flags);
 	if (unit->unit.unit_OpenCnt > 0)
 	{
-		Kprintf("[genet] %s: Unit was already open\n", __func__);
-
-		ObtainSemaphore(&unit->unitSemaphore);
+		Kprintf("[genet] %s: Unit already running; using message to add opener\n", __func__);
 		unit->unit.unit_OpenCnt++;
-		if (opener != NULL)
+		if (opener)
 		{
-			Kprintf("[genet] %s: Adding opener %lx to openers list\n", __func__, (ULONG)opener);
-			AddTailMinList(&unit->openers, (struct MinNode *)opener);
+			struct OpenerControlMsg msg;
+			struct MsgPort *replyPort = CreateMsgPort();
+			msg.msg.mn_Node.ln_Type = NT_MESSAGE;
+			msg.msg.mn_ReplyPort = replyPort;
+			msg.command = OPENER_CMD_ADD;
+			msg.opener = opener;
+			PutMsg(unit->openerPort, &msg.msg);
+			WaitPort(replyPort);
+			GetMsg(replyPort);
+			DeleteMsgPort(replyPort);
 		}
-		ReleaseSemaphore(&unit->unitSemaphore);
 		Kprintf("[genet] %s: Unit opened successfully, current open count: %ld\n", __func__, unit->unit.unit_OpenCnt);
 		return S2ERR_NO_ERROR;
 	}
@@ -67,8 +72,6 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	unit->flags = flags;
 	unit->unit.unit_OpenCnt = 1;
 	unit->unitNumber = unitNumber;
-
-	InitSemaphore(&unit->unitSemaphore);
 
 	unit->memoryPool = CreatePool(MEMF_FAST | MEMF_PUBLIC, 16384, 8192);
 	if (unit->memoryPool == NULL)
@@ -164,11 +167,17 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 	}
 	else if (opener != NULL)
 	{
-		Kprintf("[genet] %s: Removing opener %lx\n", __func__, (ULONG)opener);
-		// We don't free opener memory here, this will be done by device
-		ObtainSemaphore(&unit->unitSemaphore);
-		RemoveMinNode((struct MinNode *)opener);
-		ReleaseSemaphore(&unit->unitSemaphore);
+		/* Use message to remove opener */
+		struct OpenerControlMsg msg;
+		struct MsgPort *replyPort = CreateMsgPort();
+		msg.msg.mn_Node.ln_Type = NT_MESSAGE;
+		msg.msg.mn_ReplyPort = replyPort;
+		msg.command = OPENER_CMD_REM;
+		msg.opener = opener;
+		PutMsg(unit->openerPort, &msg.msg);
+		WaitPort(replyPort);
+		GetMsg(replyPort);
+		DeleteMsgPort(replyPort);
 	}
 
 	return unit->unit.unit_OpenCnt;

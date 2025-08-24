@@ -162,7 +162,8 @@ struct GenetUnit
 	ULONG multicastCount;
 	BOOL mdfEnabled; /* Multicast filter enabled */
 
-	struct SignalSemaphore unitSemaphore;
+	/* Opener management (message-based modifications) */
+	struct MsgPort *openerPort; /* created in unit task */
 
 	/* Device tree */
 	CONST_STRPTR compatible;
@@ -187,6 +188,16 @@ struct GenetUnit
 	UBYTE *txbuffer;
 
 	UWORD tx_watchdog_fast_ticks;/* remaining fast polls while data on TX ring */
+};
+
+/* Opener management commands */
+#define OPENER_CMD_ADD 1
+#define OPENER_CMD_REM 2
+
+struct OpenerControlMsg {
+	struct Message msg;
+	UWORD command; /* OPENER_CMD_* */
+	struct Opener *opener;
 };
 
 struct GenetDevice

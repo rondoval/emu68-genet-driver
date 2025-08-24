@@ -137,7 +137,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
     /* Fast path for common packet types */
     if (likely(packetType == 0x0800 || packetType == 0x0806))
     {
-        ObtainSemaphore(&unit->unitSemaphore);
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
@@ -158,12 +157,10 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                 unit->internalStats.rx_arp_ip_dropped++;
             }
         }
-        ReleaseSemaphore(&unit->unitSemaphore);
     }
     else
     {
         /* Fallback path for other packet types */
-        ObtainSemaphore(&unit->unitSemaphore);
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
@@ -189,7 +186,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
             }
             ReleaseSemaphore(&opener->openerSemaphore);
         }
-        ReleaseSemaphore(&unit->unitSemaphore);
     }
 
     /* No receiver for this packet found? It's an orphan then */
@@ -199,7 +195,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
         unit->internalStats.rx_dropped++;
 
         /* Go through all openers and offer orphan packet to anyone asking */
-        ObtainSemaphore(&unit->unitSemaphore);
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
@@ -213,7 +208,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
             }
             /* Continue to offer to other openers with orphan requests */
         }
-        ReleaseSemaphore(&unit->unitSemaphore);
     }
     return activity;
 }
