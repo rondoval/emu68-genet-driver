@@ -141,7 +141,9 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
         {
             struct Opener *opener = (struct Opener *)node;
             struct MinList *queue = GetPacketTypeQueue(opener, packetType);
+            ObtainSemaphore(&opener->openerSemaphore);
             struct IOSana2Req *io = (struct IOSana2Req *)RemHeadMinList(queue);
+            ReleaseSemaphore(&opener->openerSemaphore);
 
             if (likely(io != NULL))
             {
@@ -162,6 +164,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
+            ObtainSemaphore(&opener->openerSemaphore);
             /* Go through all IO read requests pending*/
             for (struct MinNode *ioNode = opener->readQueue.mlh_Head; ioNode->mln_Succ; ioNode = ioNode->mln_Succ)
             {
@@ -181,6 +184,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                     break;
                 }
             }
+            ReleaseSemaphore(&opener->openerSemaphore);
         }
     }
 

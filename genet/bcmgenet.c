@@ -274,6 +274,8 @@ static int bcmgenet_init_tx_ring(struct GenetUnit *unit)
 	Kprintf("[genet] %s: Initializing TX ring\n", __func__);
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
+	InitSemaphore(&ring->tx_ring_sem);
+
 	/* Initialize common TX ring structures */
 	APTR desc_base = unit->genetBase + GENET_TX_OFF;
 	ring->tx_control_block = AllocPooled(unit->memoryPool, TX_DESCS * sizeof(struct enet_cb));

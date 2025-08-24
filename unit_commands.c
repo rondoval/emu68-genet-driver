@@ -57,7 +57,7 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
     {
         struct Opener *opener = (struct Opener *)node;
         struct MinNode *ioNode, *nextIoNode;
-
+        ObtainSemaphore(&opener->openerSemaphore);
         for (ioNode = opener->eventQueue.mlh_Head; (nextIoNode = ioNode->mln_Succ) != NULL; ioNode = nextIoNode)
         {
             struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
@@ -70,8 +70,10 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
                 /* Reply it */
                 Remove((struct Node *)io);
                 ReplyMsg((struct Message *)io);
+                break; /* Only one event per opener */
             }
         }
+        ReleaseSemaphore(&opener->openerSemaphore);
     }
     KprintfH("[genet] %s: Reporting done\n", __func__);
 }
@@ -105,7 +107,9 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
         /* Remove QUICK flag and put message on event listener list */
         struct Opener *opener = io->ios2_BufferManagement;
         // io->ios2_Req.io_Flags &= ~IOF_QUICK;
+        ObtainSemaphore(&opener->openerSemaphore);
         AddTailMinList(&opener->eventQueue, (struct MinNode *)io);
+        ReleaseSemaphore(&opener->openerSemaphore);
         return COMMAND_SCHEDULED;
     }
 }
@@ -128,6 +132,7 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
         struct Opener *opener = (struct Opener *)node;
+        ObtainSemaphore(&opener->openerSemaphore);
         while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue)))
         {
             req->ios2_Req.io_Error = IOERR_ABORTED;
@@ -162,6 +167,7 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
             req->ios2_WireError = 0;
             ReplyMsg((struct Message *)req);
         }
+        ReleaseSemaphore(&opener->openerSemaphore);
     }
     KprintfH("[genet] %s: Flush completed\n", __func__);
 
@@ -210,7 +216,9 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
 
     /* Queue the request */
     // io->ios2_Req.io_Flags &= ~IOF_QUICK;
+    ObtainSemaphore(&opener->openerSemaphore);
     AddTailMinList(queue, (struct MinNode *)io);
+    ReleaseSemaphore(&opener->openerSemaphore);
 
     KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%lx\n", __func__, packetType);
     return COMMAND_SCHEDULED;

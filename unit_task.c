@@ -127,11 +127,6 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     {
         sigset = Wait(waitMask);
 
-        if (unit->state == STATE_ONLINE)
-        {
-            activity |= ProcessReceive(unit);
-        }
-
         // IO queue got a new message
         if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
         {
@@ -142,6 +137,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             {
                 ProcessCommand(io);
             }
+        }
+
+        if (unit->state == STATE_ONLINE)
+        {
+            activity |= ProcessReceive(unit);
         }
 
         // Timer expired, query PHY for link state

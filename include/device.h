@@ -70,6 +70,8 @@ struct Opener
 	struct MinList ipv4Queue;  /* For 0x0800 */
 	struct MinList arpQueue;   /* For 0x0806 */
 
+	struct SignalSemaphore openerSemaphore;
+
 	/* for CMD_READ,
 	 * BOOL PacketFilter(struct Hook* packetFilter asm("a0"), struct IOSana2Req* asm("a2"), APTR asm("a1"));
 	 * fill in ios2_DataLength, ios2_SrcAddr, ios2_DstAddr
@@ -100,6 +102,8 @@ struct bcmgenet_tx_ring
 	UWORD free_bds;					  /* # of free bds for each ring */
 	UBYTE write_ptr;				  /* Tx ring write pointer SW copy */
 	UWORD tx_prod_index;			  /* Tx ring producer index SW copy */
+
+	struct SignalSemaphore tx_ring_sem;
 };
 
 struct bcmgenet_rx_ring

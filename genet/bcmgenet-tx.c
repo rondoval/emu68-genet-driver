@@ -52,6 +52,7 @@ static inline struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
 void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 {
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
+	ObtainSemaphore(&ring->tx_ring_sem);
 	/* Compute how many buffers are transmitted since last xmit call */
 	UWORD tx_cons_index = readl((ULONG)unit->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
 	UWORD txbds_ready = (tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK;
@@ -84,6 +85,7 @@ void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 	unit->stats.PacketsSent += pkts_compl;
 	unit->internalStats.tx_packets += pkts_compl;
 	unit->internalStats.tx_bytes += bytes_compl;
+	ReleaseSemaphore(&ring->tx_ring_sem);
 }
 
 int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
@@ -91,6 +93,7 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	KprintfH("[genet] %s: unit %ld, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
 	struct Opener *opener = io->ios2_BufferManagement;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
+	ObtainSemaphore(&ring->tx_ring_sem);
 
 	KprintfH("[genet] %s: pre: tx_cons_index %ld, tx_prod_index %ld, write_ptr %ld, clean_ptr %ld\n", __func__,
 			 ring->tx_cons_index, ring->tx_prod_index, ring->write_ptr, ring->clean_ptr);
@@ -99,21 +102,13 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	if (unlikely(ring->free_bds <= bds_required))
 	{
 		KprintfH("[genet] %s: Not enough free BDs\n", __func__);
-		unit->internalStats.tx_dropped++;
-		io->ios2_WireError = S2WERR_BUFF_ERROR;
-		io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
-		ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
-		return COMMAND_PROCESSED;
+		goto ret_error;
 	}
 
 	if (unlikely(io->ios2_DataLength == 0))
 	{
 		KprintfH("[genet] %s: No data to send\n", __func__);
-		unit->internalStats.tx_dropped++;
-		io->ios2_WireError = S2WERR_BUFF_ERROR;
-		io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
-		ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
-		return COMMAND_PROCESSED;
+		goto ret_error;
 	}
 
 	if (likely((io->ios2_Req.io_Flags & SANA2IOF_RAW) == 0))
@@ -164,7 +159,7 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	tx_cb_ptr->ioReq = io;
 	/* We'll use the ln_Pred pointer to mark it is on the TX ring now and can't be aborted */
 	io->ios2_Req.io_Message.mn_Node.ln_Pred = NULL;
-	
+
 	if (unlikely(opener->DMACopyFromBuff) && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
 	{
 		if (unlikely(tx_cb_ptr->data_buffer <= (APTR)0x1FFFFF))
@@ -183,11 +178,7 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, genetConfig.use_miami_workaround ? ((io->ios2_DataLength + 3) & ~3) : io->ios2_DataLength) == 0)
 		{
 			KprintfH("[genet] %s: Failed to copy packet data from buffer\n", __func__);
-			unit->internalStats.tx_dropped++;
-			io->ios2_WireError = S2WERR_BUFF_ERROR;
-			io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
-			ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
-			return COMMAND_PROCESSED;
+			goto ret_error;
 		}
 		tx_cb_ptr->data_buffer = tx_cb_ptr->internal_buffer;
 		unit->internalStats.tx_copy++;
@@ -221,5 +212,14 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 
 	unit->tx_watchdog_fast_ticks = genetConfig.tx_pending_fast_ticks; /* ensure a few fast polls */
 
+	ReleaseSemaphore(&ring->tx_ring_sem);
 	return COMMAND_SCHEDULED;
+
+ret_error:
+	unit->internalStats.tx_dropped++;
+	io->ios2_WireError = S2WERR_BUFF_ERROR;
+	io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
+	ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
+	ReleaseSemaphore(&ring->tx_ring_sem);
+	return COMMAND_PROCESSED;
 }

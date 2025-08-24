@@ -172,6 +172,8 @@ struct Opener *createOpener(struct TagItem *tags)
     _NewMinList(&opener->ipv4Queue);
     _NewMinList(&opener->arpQueue);
 
+    InitSemaphore(&opener->openerSemaphore);
+
     return opener;
 }
 
