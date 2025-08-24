@@ -162,6 +162,8 @@ struct GenetUnit
 	ULONG multicastCount;
 	BOOL mdfEnabled; /* Multicast filter enabled */
 
+	struct SignalSemaphore unitSemaphore;
+
 	/* Device tree */
 	CONST_STRPTR compatible;
 	const UBYTE *localMacAddress;

@@ -52,6 +52,7 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
 {
     KprintfH("[genet] %s: Reporting events %08lx\n", __func__, eventSet);
 
+    ObtainSemaphore(&unit->unitSemaphore);
     /* Report event to every listener of every opener accepting the mask */
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
@@ -75,6 +76,7 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
         }
         ReleaseSemaphore(&opener->openerSemaphore);
     }
+    ReleaseSemaphore(&unit->unitSemaphore);
     KprintfH("[genet] %s: Reporting done\n", __func__);
 }
 
@@ -129,6 +131,7 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
     }
 
     /* For every opener, flush all internal queues */
+    ObtainSemaphore(&unit->unitSemaphore);
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
         struct Opener *opener = (struct Opener *)node;
@@ -169,6 +172,7 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
         }
         ReleaseSemaphore(&opener->openerSemaphore);
     }
+    ReleaseSemaphore(&unit->unitSemaphore);
     KprintfH("[genet] %s: Flush completed\n", __func__);
 
     return COMMAND_PROCESSED;
