@@ -7,7 +7,7 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
 endif()
 
 add_subdirectory(common)
-add_subdirectory(genet-hw)
+add_subdirectory(runtime-config)
 add_subdirectory(genet.device)
 
 # install(FILES ${CMAKE_SOURCE_DIR}/Install DESTINATION .)

@@ -14,7 +14,6 @@
 
 #include <runtime_config.h>
 #include <debug.h>
-#include <device.h>
 
 struct DosLibrary *DOSBase = NULL;
 struct GenetRuntimeConfig genetConfig;
@@ -66,7 +65,7 @@ void LoadGenetRuntimeConfig()
     Kprintf("[genet] %s: Loading defaults\n", __func__);
     ApplyDefaults();
 
-    DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR) "dos.library", LIB_MIN_VERSION);
+    DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR) "dos.library", 0);
     if (!DOSBase)
         return;
 

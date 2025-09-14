@@ -10,13 +10,13 @@
 #include <proto/exec.h>
 #endif
 
-#include <device.h>
-#include <bcmgenet.h>
-#include <bcmgenet-regs.h>
 #include <compat.h>
 #include <debug.h>
-#include <settings.h>
+#include <device.h>
 #include <runtime_config.h>
+
+#include <genet/bcmgenet.h>
+#include <genet/bcmgenet-regs.h>
 
 /* Combined address + length/status setter */
 static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)

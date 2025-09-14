@@ -9,7 +9,7 @@
 
 #include <dos/dos.h>
 
-#include <bcmgenet-regs.h>
+#include <genet/bcmgenet-regs.h>
 #include <compat.h>
 #include <device.h>
 #include <minlist.h>

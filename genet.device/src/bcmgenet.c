@@ -26,11 +26,12 @@
 #include <limits.h>
 
 #include <debug.h>
-#include <phy.h>
-#include <device.h>
 #include <compat.h>
-#include <unimac.h>
-#include <bcmgenet-regs.h>
+#include <device.h>
+
+#include <genet/phy.h>
+#include <genet/unimac.h>
+#include <genet/bcmgenet-regs.h>
 
 static void bcmgenet_umac_reset(struct GenetUnit *unit)
 {
@@ -507,8 +508,8 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	}
 
 	/* These buffers are used for DMA transfers where buffers from IP stack cannot be used */
-	unit->rxbuffer = (UBYTE *)roundup(unit->rxbuffer_not_aligned, ARCH_DMA_MINALIGN);
-	unit->txbuffer = (UBYTE *)roundup(unit->txbuffer_not_aligned, ARCH_DMA_MINALIGN);
+	unit->rxbuffer = (UBYTE *)roundup((ULONG)unit->rxbuffer_not_aligned, ARCH_DMA_MINALIGN);
+	unit->txbuffer = (UBYTE *)roundup((ULONG)unit->txbuffer_not_aligned, ARCH_DMA_MINALIGN);
 
 	bcmgenet_umac_reset(unit);
 

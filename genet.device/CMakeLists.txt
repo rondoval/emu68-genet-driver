@@ -14,11 +14,14 @@ add_executable(genet.device
     src/unit_commands.c
     src/unit_commands_mcast.c
     src/unit_io.c
-    src/runtime_config.c
+    src/bcmgenet.c
+    src/bcmgenet-tx.c
+    src/phy.c
+    src/phy_interface.c
     src/device_end.c
 )
 
 target_include_directories(genet.device PRIVATE include)
-target_link_libraries(genet.device common genet-hw)
+target_link_libraries(genet.device common runtime-config)
 
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/genet.device DESTINATION .)

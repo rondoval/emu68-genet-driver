@@ -11,6 +11,8 @@
 
 #include <exec/types.h>
 
+#include <devtree.h>
+
 #include <debug.h>
 #include <device.h>
 #include <compat.h>
@@ -19,17 +21,12 @@ APTR DeviceTreeBase;
 
 int DevTreeParse(struct GenetUnit *unit)
 {
-	DeviceTreeBase = OpenResource((CONST_STRPTR) "devicetree.resource");
-	if (!DeviceTreeBase)
-	{
-		Kprintf("[genet] %s: Failed to open devicetree.resource\n", __func__);
-		return S2ERR_NO_RESOURCES;
-	}
+	DT_Init();
 
 	char alias[12] = "ethernet0";
 	alias[8] = '0' + unit->unitNumber;
-	CONST_STRPTR ethernet_alias = GetAlias(alias);
-	CONST_STRPTR gpio_alias = GetAlias("gpio");
+	CONST_STRPTR ethernet_alias = DT_GetAlias((CONST_STRPTR) alias);
+	CONST_STRPTR gpio_alias = DT_GetAlias((CONST_STRPTR) "gpio");
 	if (ethernet_alias == NULL || gpio_alias == NULL)
 	{
 		Kprintf("[genet] %s: Failed to get aliases from device tree\n", __func__);
@@ -50,7 +47,7 @@ int DevTreeParse(struct GenetUnit *unit)
 	CONST_STRPTR phyMode = DT_GetPropValue(DT_FindProperty(key, (CONST_STRPTR) "phy-mode"));
 	unit->phy_interface = phyMode ? interface_for_phy_string((char *)phyMode) : PHY_INTERFACE_MODE_NA;
 
-	unit->genetBase = GetBaseAddress(ethernet_alias);
+	unit->genetBase = DT_GetBaseAddressVirtual(ethernet_alias);
 	if (unit->genetBase == NULL)
 	{
 		Kprintf("[genet] %s: Failed to get base address for GENET\n", __func__);
@@ -82,20 +79,13 @@ int DevTreeParse(struct GenetUnit *unit)
 	}
 
 	// We also need GPIO to setup MDIO bus
-	unit->gpioBase = GetBaseAddress(gpio_alias);
+	unit->gpioBase = DT_GetBaseAddressVirtual(gpio_alias);
 	if (unit->gpioBase == NULL)
 	{
 		Kprintf("[genet] %s: Failed to get base address for GPIO\n", __func__);
 		DT_CloseKey(key);
 		return S2ERR_NO_RESOURCES;
 	}
-
-	ULONG genetOffset = GetAddressTranslationOffset(unit->genetBase);
-	ULONG gpioOffset = GetAddressTranslationOffset(unit->gpioBase);
-	unit->genetBase = (APTR)((ULONG)unit->genetBase + genetOffset);
-	unit->gpioBase = (APTR)((ULONG)unit->gpioBase + gpioOffset);
-	Kprintf("[genet] %s: Found GENET in CPU space, base address in CPU space: %08lx\n", __func__, unit->genetBase);
-	Kprintf("[genet] %s: Found GPIO in CPU space, base address in CPU space: %08lx\n", __func__, unit->gpioBase);
 
 	// We're done with the device tree
 	DT_CloseKey(key);

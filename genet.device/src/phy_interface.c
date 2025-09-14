@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0+ */
-#include <phy_interface.h>
+#include <genet/phy_interface.h>
 
 inline static int strcmp(const char *s1, const char *s2)
 {

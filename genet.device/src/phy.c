@@ -14,10 +14,11 @@
 #endif
 
 #include <debug.h>
-#include <phy.h>
-#include <mii.h>
-#include <device.h>
 #include <compat.h>
+#include <device.h>
+
+#include <genet/phy.h>
+#include <genet/mii.h>
 
 /**
  * wait_for_bit_x()	waits for bit set/cleared in register

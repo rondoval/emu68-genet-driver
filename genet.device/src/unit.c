@@ -15,7 +15,7 @@
 
 #include <debug.h>
 #include <device.h>
-#include <gpio/bcm_gpio.h>
+#include <bcm_gpio.h>
 #include <compat.h>
 #include <minlist.h>
 #include <runtime_config.h>
