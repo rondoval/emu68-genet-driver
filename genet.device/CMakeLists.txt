@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14.0)
 project(genet.device VERSION 1.3.1)
 
-add_link_options(-ffreestanding -nostdlib -nostartfiles)
+add_link_options(-ffreestanding -nostdlib -nostartfiles -s)
 add_compile_options(-O3 -Wall -Wextra -DDEBUG)
 
 add_executable(genet.device
