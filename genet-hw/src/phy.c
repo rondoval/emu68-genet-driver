@@ -14,8 +14,8 @@
 #endif
 
 #include <debug.h>
-#include <phy/phy.h>
-#include <phy/mii.h>
+#include <phy.h>
+#include <mii.h>
 #include <device.h>
 #include <compat.h>
 

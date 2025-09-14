@@ -12,7 +12,7 @@
 #include <exec/semaphores.h>
 #include <devices/sana2.h>
 
-#include <phy/phy.h>
+#include <phy.h>
 #include <bcmgenet.h>
 #include <runtime_config.h>
 
@@ -39,6 +39,7 @@ cleanup mcast handling
 packet stats from HW, custom command to expose more stats and tool to read
 type statistics
 PHY link state updates at runtime
+interrupts
 
 Long shot:
 - SANA-II updates to enable zero-copy DMA on TX and RX

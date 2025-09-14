@@ -10,8 +10,8 @@
 #define _PHY_H
 
 #include <exec/types.h>
-#include <phy/phy_interface.h>
-#include <phy/ethtool.h>
+#include <phy_interface.h>
+#include <ethtool.h>
 
 struct GenetUnit;
 

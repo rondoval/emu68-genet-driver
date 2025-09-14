@@ -26,7 +26,7 @@
 #include <limits.h>
 
 #include <debug.h>
-#include <phy/phy.h>
+#include <phy.h>
 #include <device.h>
 #include <compat.h>
 #include <unimac.h>
