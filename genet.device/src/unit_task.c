@@ -14,7 +14,6 @@
 #include <device.h>
 #include <minlist.h>
 #include <debug.h>
-#include <settings.h>
 #include <runtime_config.h>
 
 struct Device *TimerBase = NULL;

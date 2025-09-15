@@ -5,7 +5,6 @@
 #include <proto/exec.h>
 #endif
 
-#include <settings.h>
 #include <device.h>
 #include <devices/sana2.h>
 #include <debug.h>

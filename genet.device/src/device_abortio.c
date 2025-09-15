@@ -7,7 +7,6 @@
 
 #include <devices/sana2.h>
 
-#include <settings.h>
 #include <device.h>
 #include <debug.h>
 
