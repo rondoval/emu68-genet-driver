@@ -4,6 +4,8 @@
 
 #include <exec/types.h>
 
+#define DEVICE_PRIORITY -90
+
 /* Defaults (compile-time fallbacks) */
 #define DEFAULT_UNIT_TASK_PRIORITY 0
 #define DEFAULT_UNIT_STACK_BYTES 65536UL /* 64 KB */

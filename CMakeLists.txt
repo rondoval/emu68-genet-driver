@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.14.0)
-project(emu68-genet-driver VERSION 1.3.1)
+project(emu68-genet-driver VERSION 1.4)
+
+include(cmake/verstring.cmake)
+get_verstring(VERSTRING)
 
 # Set default install prefix to ./install subdirectory
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)

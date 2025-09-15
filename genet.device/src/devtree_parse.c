@@ -55,10 +55,8 @@ int DevTreeParse(struct GenetUnit *unit)
 		return S2ERR_NO_RESOURCES;
 	}
 
-	Kprintf("[genet] %s: Device tree info\n", __func__);
 	Kprintf("[genet] %s: compatible: %s\n", __func__, unit->compatible);
 	Kprintf("[genet] %s: local-mac-address: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__, unit->localMacAddress[0], unit->localMacAddress[1], unit->localMacAddress[2], unit->localMacAddress[3], unit->localMacAddress[4], unit->localMacAddress[5]);
-	// Kprintf("[genet] %s: status: %s\n", __func__, status);
 	Kprintf("[genet] %s: phy-handle: %08lx\n", __func__, phy_handle);
 	Kprintf("[genet] %s: phy-mode: %s\n", __func__, phy_string_for_interface(unit->phy_interface));
 	Kprintf("[genet] %s: register base: %08lx\n", __func__, unit->genetBase);

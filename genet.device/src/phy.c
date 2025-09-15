@@ -63,7 +63,7 @@ static inline int wait_for_bit_32(APTR reg,
 	}
 
 	// Kprintf("[genet] %s: Timeout (reg=%ld mask=0x%lx wait_set=%ld)\n", __func__, reg, mask, set);
-	return ETIMEDOUT;
+	return -ETIMEDOUT;
 }
 
 static inline void mdio_start(struct GenetUnit *unit)
@@ -346,7 +346,7 @@ static int genphy_update_link(struct phy_device *phydev)
 			{
 				Kprintf(" TIMEOUT !\n");
 				phydev->link = 0;
-				return ETIMEDOUT;
+				return -ETIMEDOUT;
 			}
 
 			if ((i++ % 10) == 0)
@@ -581,7 +581,7 @@ int phy_reset(struct phy_device *phydev)
 	if (reg & BMCR_RESET)
 	{
 		Kprintf("[genet] %s: PHY reset timed out\n", __func__);
-		return ETIMEDOUT;
+		return -ETIMEDOUT;
 	}
 
 	return 0;

@@ -105,7 +105,6 @@ struct bcmgenet_rx_ring
 {
 	struct enet_cb *rx_control_block; /* Rx ring buffer control block */
 	UWORD rx_cons_index;			  /* Rx last consumer index */
-	UBYTE read_ptr;					  /* Rx ring read pointer */
 	ULONG rx_max_coalesced_frames;
 	ULONG rx_coalesce_usecs;
 };

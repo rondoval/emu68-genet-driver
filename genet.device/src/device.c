@@ -27,7 +27,7 @@
     Put the function at the very beginning of the file in order to avoid
     unexpected results when user executes the device by mistake
 */
-static int __attribute__((used)) doNotExecute()
+int __attribute__((used, no_reorder)) doNotExecute()
 {
     return -1;
 }

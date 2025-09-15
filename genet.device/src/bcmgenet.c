@@ -126,7 +126,7 @@ int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
 	UWORD rx_prod_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 
 	if (rx_prod_index == unit->rx_ring.rx_cons_index)
-		return EAGAIN;
+		return -EAGAIN;
 
 	//TODO replace it with HW flags
 	if (rx_prod_index - unit->rx_ring.rx_cons_index > RX_DESCS - 1) {
@@ -239,7 +239,6 @@ static int bcmgenet_init_rx_ring(struct GenetUnit *unit)
 	ring->rx_cons_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 	writel(ring->rx_cons_index, (ULONG)unit->genetBase + RDMA_CONS_INDEX);
 	Kprintf("[genet] %s: rx_cons_index=%ld\n", __func__, unit->rx_ring.rx_cons_index);
-	ring->read_ptr = ring->rx_cons_index;
 
 	writel((RX_DESCS << DMA_RING_SIZE_SHIFT) | RX_BUF_LENGTH, unit->genetBase + RDMA_RING_REG_BASE + DMA_RING_BUF_SIZE);
 	writel((DMA_FC_THRESH_LO << DMA_XOFF_THRESHOLD_SHIFT) | DMA_FC_THRESH_HI, unit->genetBase + RDMA_XON_XOFF_THRESH);
