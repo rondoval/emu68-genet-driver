@@ -73,6 +73,7 @@
 #define DMA_SOP 0x2000
 #define DMA_WRAP 0x1000
 #define DMA_MAX_BURST_LENGTH 0x8
+
 /* Tx specific DMA descriptor bits */
 #define DMA_TX_UNDERRUN 0x0200
 #define DMA_TX_APPEND_CRC 0x0040
@@ -200,6 +201,55 @@
 #define DMA_RX_FI_MASK			0x001F
 #define DMA_RX_FI_SHIFT			0x0007
 #define DMA_DESC_ALLOC_MASK		0x00FF
+
+/* INTRL2 register block offsets */
+#define GENET_INTRL2_0_OFF		0x0200
+#define GENET_INTRL2_1_OFF		0x0240
+
+/* uniMac intrl2 registers */
+#define INTRL2_CPU_STAT			0x00
+#define INTRL2_CPU_SET			0x04
+#define INTRL2_CPU_CLEAR		0x08
+#define INTRL2_CPU_MASK_STATUS		0x0C
+#define INTRL2_CPU_MASK_SET		0x10
+#define INTRL2_CPU_MASK_CLEAR		0x14
+
+/* INTRL2 instance 0 definitions */
+#define UMAC_IRQ_SCB			(1 << 0)
+#define UMAC_IRQ_EPHY			(1 << 1)
+#define UMAC_IRQ_PHY_DET_R		(1 << 2)
+#define UMAC_IRQ_PHY_DET_F		(1 << 3)
+#define UMAC_IRQ_LINK_UP		(1 << 4)
+#define UMAC_IRQ_LINK_DOWN		(1 << 5)
+#define UMAC_IRQ_LINK_EVENT		(UMAC_IRQ_LINK_UP | UMAC_IRQ_LINK_DOWN)
+#define UMAC_IRQ_UMAC			(1 << 6)
+#define UMAC_IRQ_UMAC_TSV		(1 << 7)
+#define UMAC_IRQ_TBUF_UNDERRUN		(1 << 8)
+#define UMAC_IRQ_RBUF_OVERFLOW		(1 << 9)
+#define UMAC_IRQ_HFB_SM			(1 << 10)
+#define UMAC_IRQ_HFB_MM			(1 << 11)
+#define UMAC_IRQ_MPD_R			(1 << 12)
+#define UMAC_IRQ_WAKE_EVENT		(UMAC_IRQ_HFB_SM | UMAC_IRQ_HFB_MM | \
+					 UMAC_IRQ_MPD_R)
+#define UMAC_IRQ_RXDMA_MBDONE		(1 << 13)
+#define UMAC_IRQ_RXDMA_PDONE		(1 << 14)
+#define UMAC_IRQ_RXDMA_BDONE		(1 << 15)
+#define UMAC_IRQ_RXDMA_DONE		UMAC_IRQ_RXDMA_MBDONE
+#define UMAC_IRQ_TXDMA_MBDONE		(1 << 16)
+#define UMAC_IRQ_TXDMA_PDONE		(1 << 17)
+#define UMAC_IRQ_TXDMA_BDONE		(1 << 18)
+#define UMAC_IRQ_TXDMA_DONE		UMAC_IRQ_TXDMA_MBDONE
+
+/* Only valid for GENETv3+ */
+#define UMAC_IRQ_MDIO_DONE		(1 << 23)
+#define UMAC_IRQ_MDIO_ERROR		(1 << 24)
+#define UMAC_IRQ_MDIO_EVENT		(UMAC_IRQ_MDIO_DONE | \
+					 UMAC_IRQ_MDIO_ERROR)
+
+/* INTRL2 instance 1 definitions */
+#define UMAC_IRQ1_TX_INTR_MASK		0xFFFF
+#define UMAC_IRQ1_RX_INTR_MASK		0xFFFF
+#define UMAC_IRQ1_RX_INTR_SHIFT		16
 
 #define GENMASK(h, l) \
 	(((~0UL) << (l)) & (~0UL >> (sizeof(ULONG) * CHAR_BIT - 1 - (h))))

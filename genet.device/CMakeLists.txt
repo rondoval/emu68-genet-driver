@@ -21,6 +21,7 @@ add_executable(genet.device
     src/bcmgenet-tx.c
     src/phy.c
     src/phy_interface.c
+    src/gic400.c
     src/device_end.c
 )
 
