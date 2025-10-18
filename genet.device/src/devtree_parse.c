@@ -25,7 +25,7 @@ int DevTreeParse(struct GenetUnit *unit)
 
 	char alias[12] = "ethernet0";
 	alias[8] = '0' + unit->unitNumber;
-	CONST_STRPTR ethernet_alias = DT_GetAlias((CONST_STRPTR) alias);
+	CONST_STRPTR ethernet_alias = DT_GetAlias((CONST_STRPTR)alias);
 	CONST_STRPTR gpio_alias = DT_GetAlias((CONST_STRPTR) "gpio");
 	if (ethernet_alias == NULL || gpio_alias == NULL)
 	{
@@ -60,6 +60,34 @@ int DevTreeParse(struct GenetUnit *unit)
 	Kprintf("[genet] %s: phy-handle: %08lx\n", __func__, phy_handle);
 	Kprintf("[genet] %s: phy-mode: %s\n", __func__, phy_string_for_interface(unit->phy_interface));
 	Kprintf("[genet] %s: register base: %08lx\n", __func__, unit->genetBase);
+
+	/* Get interrupt information
+	 * We need to find the interrupt-parent's #interrupt-cells to parse the interrupts property correctly.
+	 * We're looking for two interrupts: one for TX/RX events, one for link changes.
+	 */
+	APTR root = DT_OpenKey((CONST_STRPTR) "/");
+	APTR intr_parent = DT_FindByPHandle(root, DT_GetPropertyValueULONG(root, "interrupt-parent", 0, TRUE));
+	ULONG intr_cells = DT_GetPropertyValueULONG(intr_parent, "#interrupt-cells", 1, FALSE);
+	APTR intr_prop = DT_FindProperty(key, (CONST_STRPTR) "interrupts");
+	ULONG intr_len = DT_GetPropLen(intr_prop);
+	ULONG *intr_values = (ULONG *)DT_GetPropValue(intr_prop);
+
+	for (const ULONG *i = intr_values; i < intr_values + (intr_len / 4); i += intr_cells)
+	{
+		ULONG irq = DT_GetNumber(i, 2);
+		ULONG type = DT_GetNumber(i + 2, 1);
+		Kprintf("[genet] %s: Found interrupt: irq=%lu type=%lu\n", __func__, irq, type);
+		if (unit->irq0 == 0)
+		{
+			unit->irq0 = irq + 32;
+		}
+		else
+		{
+			unit->irq1 = irq + 32;
+		}
+	}
+
+	DT_CloseKey(root);
 
 	// Now find phy address
 	APTR phy_key = DT_FindByPHandle(key, phy_handle);

@@ -105,6 +105,7 @@ struct bcmgenet_rx_ring
 {
 	struct enet_cb *rx_control_block; /* Rx ring buffer control block */
 	UWORD rx_cons_index;			  /* Rx last consumer index */
+	UWORD old_discards;
 	ULONG rx_max_coalesced_frames;
 	ULONG rx_coalesce_usecs;
 };
@@ -124,10 +125,12 @@ struct internal_stats
 	ULONG rx_dropped;
 	ULONG rx_arp_ip_dropped;
 	ULONG rx_overruns;
-	// ULONG rx_crc_errors;
-	// ULONG rx_over_errors;
-	// ULONG rx_frame_errors;
-	// ULONG rx_length_errors;
+	ULONG rx_other_errors;
+	ULONG rx_crc_errors;
+	ULONG rx_over_errors;
+	ULONG rx_frame_errors;
+	ULONG rx_length_errors;
+	ULONG rx_fragmented_errors;
 
 	ULONG tx_packets;
 	ULONG tx_bytes;
@@ -164,6 +167,7 @@ struct GenetUnit
 	const UBYTE *localMacAddress;
 	APTR genetBase;
 	APTR gpioBase;
+	ULONG irq0, irq1;
 
 	/* PHY */
 	phy_interface_t phy_interface;
