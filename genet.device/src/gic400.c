@@ -32,7 +32,7 @@
 
 extern struct ExecBase *SysBase;
 
-static const char gic_dispatcher_name[] = "gic400.dispatcher";
+static char gic_dispatcher_name[] = "gic400.dispatcher";
 
 struct gic_irq_handler
 {
@@ -49,6 +49,12 @@ struct GICD_IIDR_bits
     ULONG implementer : 12; // [11:0] Implementer code, 0x43B for ARM
 };
 
+union GICD_IIDR_register
+{
+    ULONG all;
+    struct GICD_IIDR_bits bits;
+};
+
 struct GICD_TYPER_bits
 {
     ULONG it_lines_number : 5; // [4:0] ITLinesNumber, number of interrupt lines / 32 - 1
@@ -59,12 +65,24 @@ struct GICD_TYPER_bits
     ULONG reserved2 : 16;      // [31:16] Reserved, RAZ
 };
 
+union GICD_TYPER_register
+{
+    ULONG all;
+    struct GICD_TYPER_bits bits;
+};
+
 struct GICC_IIDR_bits
 {
     ULONG product_id : 12;  // [31:20] GIC product identifier (0x02)
     ULONG architecture : 4; // [19:16] Architecture version (0x2 for GICv2)
     ULONG revision : 4;     // [15:12] GIC revision number
     ULONG implementer : 12; // [11:0] Implementer code, 0x43B for ARM
+};
+
+union GICC_IIDR_register
+{
+    ULONG all;
+    struct GICC_IIDR_bits bits;
 };
 
 struct GICC_CTLR_bits
@@ -83,11 +101,17 @@ struct GICC_CTLR_bits
     ULONG reserved : 21;           // [31:11] Reserved, RAZ
 };
 
+union GICC_CTLR_register
+{
+    ULONG all;
+    struct GICC_CTLR_bits bits;
+};
+
 static struct
 {
-    struct GICD_IIDR_bits gicd_iidr;
-    struct GICD_TYPER_bits gicd_typer;
-    struct GICC_IIDR_bits gicc_iidr;
+    union GICD_IIDR_register gicd_iidr;
+    union GICD_TYPER_register gicd_typer;
+    union GICC_IIDR_register gicc_iidr;
 
     APTR gic_base;
     ULONG max_irqs;
@@ -130,15 +154,13 @@ static inline BOOL gicd_irq_valid(ULONG irq)
  */
 static void gicd_print_info(void)
 {
-    struct GICD_TYPER_bits typer;
-    *(ULONG *)&typer = readl(GICD_TYPER);
-    struct GICD_IIDR_bits iidr;
-    *(ULONG *)&iidr = readl(GICD_IIDR);
+    struct GICD_IIDR_bits iidr = gic_data.gicd_iidr.bits;
+    Kprintf("[gic] Implementer=0x%03lx, Revision=%ld, Variant=%ld, ProductID=0x%02lx\n",
+            iidr.implementer, iidr.revision, iidr.variant, iidr.product_id);
 
-    Kprintf("[gic] GICD_IIDR=0x%08lx, Implementer=0x%03lx, Revision=%ld, Variant=%ld, ProductID=0x%02lx\n",
-            *(ULONG *)&iidr, iidr.implementer, iidr.revision, iidr.variant, iidr.product_id);
-    Kprintf("[gic] GICD_TYPER=0x%08lx, ITLinesNumber=%ld, CPUNumber=%ld, SecurityExtensions=%ld, LSPIs=%ld\n",
-            *(ULONG *)&typer, (typer.it_lines_number + 1) * 32, typer.cpus_number + 1, typer.security_extn, typer.lspi);
+    struct GICD_TYPER_bits typer = gic_data.gicd_typer.bits;
+    Kprintf("[gic] ITLinesNumber=%ld, CPUNumber=%ld, SecurityExtensions=%ld, LSPIs=%ld\n",
+            (typer.it_lines_number + 1) * 32, typer.cpus_number + 1, typer.security_extn, typer.lspi);
 }
 
 /* gicd_is_gic_v2: Verify component and peripheral IDs match GICv2.
@@ -458,32 +480,30 @@ static inline void gicd_set_trigger(ULONG irq, BOOL edge)
  */
 static void gicc_print_info(void)
 {
-    struct GICC_IIDR_bits iidr;
-    *(ULONG *)&iidr = readl(GICC_IIDR);
-
-    Kprintf("[gic] GICC_IIDR=0x%08lx, Implementer=0x%03lx, Revision=%ld, Architecture=%ld, ProductID=0x%03lx\n",
-            *(ULONG *)&iidr, iidr.implementer, iidr.revision, iidr.architecture, iidr.product_id);
+    struct GICC_IIDR_bits iidr = gic_data.gicc_iidr.bits;
+    Kprintf("[gic] Implementer=0x%03lx, Revision=%ld, Architecture=%ld, ProductID=0x%03lx\n",
+            iidr.implementer, iidr.revision, iidr.architecture, iidr.product_id);
 }
 
 /* gicc_set_ctlr: Write CPU interface control register.
  * Args: ctlr - bitfield structure with desired settings.
  * Returns: void.
  */
-static inline void gicc_set_ctlr(struct GICC_CTLR_bits ctlr)
+static inline void gicc_set_ctlr(union GICC_CTLR_register ctlr)
 {
-    writel(*(ULONG *)&ctlr, GICC_CTLR);
+    writel(ctlr.all, GICC_CTLR);
 }
 
 /* gicc_get_ctlr: Read CPU interface control register.
  * Args: ctlr - destination pointer for control bits.
  * Returns: void.
  */
-static inline void gicc_get_ctlr(struct GICC_CTLR_bits *ctlr)
+static inline void gicc_get_ctlr(union GICC_CTLR_register *ctlr)
 {
     if (!ctlr)
         return;
 
-    *(ULONG *)ctlr = readl(GICC_CTLR);
+    ctlr->all = readl(GICC_CTLR);
 }
 
 /* gicc_set_priority_mask: Write priority mask threshold.
@@ -640,21 +660,18 @@ static int gic400_parse_devicetree()
  * Args: base - physical base address shared with Emu68.
  * Returns: 0 on success, -GIC_ERROR on failure.
  */
-int gic400_init(ULONG base)
+int gic400_init()
 {
     int ret = gic400_parse_devicetree();
     if (ret < 0)
         return ret;
 
     // Initialize GICD
-    ULONG temp_iidr = readl(GICD_IIDR);
-    gic_data.gicd_iidr = *(struct GICD_IIDR_bits *)&temp_iidr;
-    ULONG temp_typer = readl(GICD_TYPER);
-    gic_data.gicd_typer = *(struct GICD_TYPER_bits *)&temp_typer;
-    ULONG temp_gicc_iidr = readl(GICC_IIDR);
-    gic_data.gicc_iidr = *(struct GICC_IIDR_bits *)&temp_gicc_iidr;
+    gic_data.gicd_iidr.all = readl(GICD_IIDR);
+    gic_data.gicd_typer.all = readl(GICD_TYPER);
+    gic_data.gicc_iidr.all = readl(GICC_IIDR);
 
-    gic_data.max_irqs = (gic_data.gicd_typer.it_lines_number + 1) * 32;
+    gic_data.max_irqs = (gic_data.gicd_typer.bits.it_lines_number + 1) * 32;
 
     gic_data.handler_count = 0;
     for (ULONG i = 0; i < GIC_MAX_REGISTERED_IRQS; ++i)
@@ -675,26 +692,26 @@ int gic400_init(ULONG base)
     gicd_enable_group(0);         // enable group 0
     gicc_set_priority_mask(0xFF); // allow all priorities
 
-    struct GICC_CTLR_bits ctlr;
+    union GICC_CTLR_register ctlr;
     gicc_get_ctlr(&ctlr);
-    ctlr.ack_ctl = 0;             // FIQ or IRQ interrupt acknowledge (recommended 0)
-    ctlr.cbpr = 1;                // only GICC_BPR for both groups
-    ctlr.eoi_mode_s = 0;          // GICC_EOIR does both priority drop and deactivate
-    ctlr.eoi_mode_ns = 0;         // GICC_EOIR does both priority drop and deactivate
-    ctlr.enable_grp0 = 1;         // enable group 0
-    ctlr.enable_grp1 = 0;         // disable group 1
-    ctlr.fiq_en = 0;              // disable FIQ for group 0
-    ctlr.fiq_bypass_dis_grp0 = 1; // disable bypassing of FIQ for Group 0
-    ctlr.irq_bypass_dis_grp0 = 1; // disable bypassing of IRQ for Group 0
-    ctlr.fiq_bypass_dis_grp1 = 1; // disable bypassing of FIQ for Group 1
-    ctlr.irq_bypass_dis_grp1 = 1; // disable bypassing of IRQ for Group 1
+    ctlr.bits.ack_ctl = 0;             // FIQ or IRQ interrupt acknowledge (recommended 0)
+    ctlr.bits.cbpr = 1;                // only GICC_BPR for both groups
+    ctlr.bits.eoi_mode_s = 0;          // GICC_EOIR does both priority drop and deactivate
+    ctlr.bits.eoi_mode_ns = 0;         // GICC_EOIR does both priority drop and deactivate
+    ctlr.bits.enable_grp0 = 1;         // enable group 0
+    ctlr.bits.enable_grp1 = 0;         // disable group 1
+    ctlr.bits.fiq_en = 0;              // disable FIQ for group 0
+    ctlr.bits.fiq_bypass_dis_grp0 = 1; // disable bypassing of FIQ for Group 0
+    ctlr.bits.irq_bypass_dis_grp0 = 1; // disable bypassing of IRQ for Group 0
+    ctlr.bits.fiq_bypass_dis_grp1 = 1; // disable bypassing of FIQ for Group 1
+    ctlr.bits.irq_bypass_dis_grp1 = 1; // disable bypassing of IRQ for Group 1
     gicc_set_ctlr(ctlr);
 
     gic_data.dispatcher_interrupt.is_Node.ln_Type = NT_INTERRUPT;
     gic_data.dispatcher_interrupt.is_Node.ln_Pri = 100;
-    gic_data.dispatcher_interrupt.is_Node.ln_Name = (STRPTR)gic_dispatcher_name;
+    gic_data.dispatcher_interrupt.is_Node.ln_Name = gic_dispatcher_name;
     gic_data.dispatcher_interrupt.is_Data = NULL;
-    gic_data.dispatcher_interrupt.is_Code = gic400_exec_dispatcher;
+    gic_data.dispatcher_interrupt.is_Code = (APTR)gic400_exec_dispatcher;
     AddIntServer(INTB_EXTER, &gic_data.dispatcher_interrupt);
     Kprintf("[gic] dispatcher installed on INTB_EXTER\n");
 
@@ -853,7 +870,7 @@ int gic400_add_int_server(ULONG irq, struct Interrupt *interrupt)
 {
     if (!interrupt || !interrupt->is_Code)
         return -GIC_ERROR;
-    if (!irq_in_range(irq))
+    if (!gicd_irq_valid(irq))
         return -GIC_ERROR;
 
     Disable();
@@ -882,6 +899,7 @@ int gic400_add_int_server(ULONG irq, struct Interrupt *interrupt)
     gic_data.handlers[gic_data.handler_count].irq = irq;
     gic_data.handlers[gic_data.handler_count].interrupt = interrupt;
     gic_data.handler_count++;
+    gic400_enable_irq(irq, 0x80); //TODO  enable IRQ with medium priority
 
     Enable();
     return 0;
@@ -895,7 +913,7 @@ int gic400_rem_int_server(ULONG irq, struct Interrupt *interrupt)
 {
     if (!interrupt)
         return -GIC_ERROR;
-    if (!irq_in_range(irq))
+    if (!gicd_irq_valid(irq))
         return -GIC_ERROR;
 
     Disable();
@@ -906,6 +924,8 @@ int gic400_rem_int_server(ULONG irq, struct Interrupt *interrupt)
         Enable();
         return -GIC_ERROR;
     }
+
+    gic400_disable_irq(irq);
 
     for (ULONG i = (ULONG)index; i + 1 < gic_data.handler_count; ++i)
     {
