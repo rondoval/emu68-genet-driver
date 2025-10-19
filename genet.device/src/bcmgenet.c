@@ -29,9 +29,12 @@
 #include <compat.h>
 #include <device.h>
 
+#include <gic400.h>
+
 #include <genet/phy.h>
 #include <genet/unimac.h>
 #include <genet/bcmgenet-regs.h>
+#include <genet/bcmgenet-irq.h>
 
 static void bcmgenet_umac_reset(struct GenetUnit *unit)
 {
@@ -63,6 +66,11 @@ static void bcmgenet_umac_reset(struct GenetUnit *unit)
 	writel(reg, ((ULONG)unit->genetBase + RBUF_CTRL));
 
 	writel(1, ((ULONG)unit->genetBase + RBUF_TBUF_SIZE_CTRL));
+
+	bcmgenet_intr_disable(unit);
+
+	// u32 int0_enable |= UMAC_IRQ_MDIO_EVENT;
+	// bcmgenet_intrl2_0_writel(priv, int0_enable, INTRL2_CPU_MASK_CLEAR);
 }
 
 static void bcmgenet_gmac_write_hwaddr(struct GenetUnit *unit, const UBYTE *addr)
@@ -121,39 +129,96 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 	setbits_32((APTR)((ULONG)unit->genetBase + TDMA_REG_BASE + DMA_CTRL), DMA_EN);
 }
 
-int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp)
+int bcmgenet_gmac_eth_rx(struct GenetUnit *unit, unsigned int budget)
 {
+	/* Clear status before servicing to reduce spurious interrupts */
+	bcmgenet_rx_ring_int_clear(unit, 0); // ring=0??
+
 	UWORD rx_prod_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 
 	if (rx_prod_index == unit->rx_ring.rx_cons_index)
 		return -EAGAIN;
 
-	//TODO replace it with HW flags
-	if (rx_prod_index - unit->rx_ring.rx_cons_index > RX_DESCS - 1) {
-		unit->internalStats.rx_overruns++;
+	UWORD discards = (rx_prod_index >> DMA_P_INDEX_DISCARD_CNT_SHIFT) & DMA_P_INDEX_DISCARD_CNT_MASK;
+	if (discards > unit->rx_ring.old_discards)
+	{
+		discards = discards - unit->rx_ring.old_discards;
+		unit->internalStats.rx_overruns += discards; // dropped packets?
+		unit->rx_ring.old_discards += discards;
+
+		/* Clear HW register when we reach 75% of maximum 0xFFFF */
+		if (unit->rx_ring.old_discards >= 0xC000)
+		{
+			unit->rx_ring.old_discards = 0;
+			writel(0, (ULONG)unit->genetBase + RDMA_PROD_INDEX);
+		}
 	}
 
 	KprintfH("[genet] %s: rx_prod_index=%ld, rx_cons_index=%ld\n", __func__, rx_prod_index, unit->rx_ring.rx_cons_index);
 
-	struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[unit->rx_ring.rx_cons_index & 0xff];
-	APTR desc_base = rx_cb->descriptor_address;
-	ULONG length = readl((ULONG)desc_base + DMA_DESC_LENGTH_STATUS);
-	length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
-	APTR addr = rx_cb->internal_buffer;
+	UWORD to_process = (rx_prod_index - unit->rx_ring.rx_cons_index) & DMA_C_INDEX_MASK;
+	UWORD processed = 0;
+	while (processed < to_process && processed < budget)
+	{
+		struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[unit->rx_ring.rx_cons_index & 0xff];
+		APTR desc_base = rx_cb->descriptor_address;
+		ULONG length = readl((ULONG)desc_base + DMA_DESC_LENGTH_STATUS);
+		UWORD dma_flags = length & 0xffff;
+		length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
+		APTR addr = rx_cb->internal_buffer;
 
-	CachePostDMA(addr, &length, 0);
+		CachePostDMA(addr, &length, 0);
+		KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, (UBYTE *)addr + RX_BUF_OFFSET, length - RX_BUF_OFFSET);
 
-	*packetp = (UBYTE *)addr + RX_BUF_OFFSET;
-	KprintfH("[genet] %s: packet=%08lx length=%ld\n", __func__, *packetp, length - RX_BUF_OFFSET);
+		if (unlikely(length > RX_BUF_LENGTH))
+		{
+			KprintfH("[genet] %s: len %ld exceeds RX_BUF_LENGTH %ld\n", __func__, length, RX_BUF_LENGTH);
+			unit->internalStats.rx_length_errors++;
+			goto next;
+		}
 
-	return length - RX_BUF_OFFSET;
-}
+		if (unlikely(!(dma_flags & DMA_EOP) || !(dma_flags & DMA_SOP)))
+		{
+			KprintfH("[genet] %s: dropping fragmented packet, dma_flags=0x%x\n", __func__, (unsigned int)dma_flags);
+			unit->internalStats.rx_fragmented_errors++;
+			goto next;
+		}
 
-void bcmgenet_gmac_free_pkt(struct GenetUnit *unit)
-{
-	/* Tell the MAC we have consumed that last receive buffer. */
-	unit->rx_ring.rx_cons_index = (unit->rx_ring.rx_cons_index + 1) & DMA_C_INDEX_MASK;
-	writel(unit->rx_ring.rx_cons_index, (ULONG)unit->genetBase + RDMA_CONS_INDEX);
+		/* report errors */
+		if (unlikely(dma_flags & (DMA_RX_CRC_ERROR |
+								 DMA_RX_OV |
+								 DMA_RX_NO |
+								 DMA_RX_LG |
+								 DMA_RX_RXER)))
+		{
+			KprintfH("[genet] %s: Packet error, length=%ld, dma_flag=0x%x\n",
+					__func__, length, (unsigned int)dma_flags);
+			if (dma_flags & DMA_RX_CRC_ERROR)
+				unit->internalStats.rx_crc_errors++;
+			if (dma_flags & DMA_RX_OV)
+				unit->internalStats.rx_over_errors++;
+			if (dma_flags & DMA_RX_NO)
+				unit->internalStats.rx_frame_errors++;
+			if (dma_flags & DMA_RX_LG)
+				unit->internalStats.rx_length_errors++;
+			if ((dma_flags & (DMA_RX_CRC_ERROR |
+							 DMA_RX_OV |
+							 DMA_RX_NO |
+							 DMA_RX_LG |
+							 DMA_RX_RXER)) == DMA_RX_RXER)
+				unit->internalStats.rx_other_errors++;
+			goto next;
+		} /* error packet */
+
+		ReceiveFrame(unit, (UBYTE *)addr + RX_BUF_OFFSET, length - RX_BUF_OFFSET, dma_flags);
+next:
+		unit->rx_ring.rx_cons_index = (unit->rx_ring.rx_cons_index + 1) & DMA_C_INDEX_MASK;
+		writel(unit->rx_ring.rx_cons_index, (ULONG)unit->genetBase + RDMA_CONS_INDEX);
+
+		processed++;
+	}
+	
+	return processed;
 }
 
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))
@@ -301,6 +366,7 @@ static int bcmgenet_init_tx_ring(struct GenetUnit *unit)
 	ring->clean_ptr = ring->tx_cons_index;
 
 	/* Default, can be overridden using coalesce settings */
+	// TODO from genetConfig?
 	writel(10, (ULONG)unit->genetBase + TDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH);
 
 	/* Disable rate control for now */
@@ -487,23 +553,23 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit)
 
 int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 {
+	int ret = S2ERR_NO_ERROR;
 	Kprintf("[genet] %s: Starting GENET\n", __func__);
+
 	unit->rxbuffer_not_aligned = AllocMem(RX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
 	if (!unit->rxbuffer_not_aligned)
 	{
 		Kprintf("[genet] %s: Failed to allocate RX buffer\n", __func__);
-		return S2ERR_NO_RESOURCES;
+		ret = S2ERR_NO_RESOURCES;
+		goto rx_buf_allocated;
 	}
 
 	unit->txbuffer_not_aligned = AllocMem(TX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
 	if (!unit->txbuffer_not_aligned)
 	{
 		Kprintf("[genet] %s: Failed to allocate TX buffer\n", __func__);
-		FreeMem(unit->rxbuffer_not_aligned, RX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
-		FreeMem(unit->txbuffer_not_aligned, TX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
-		unit->rxbuffer_not_aligned = NULL;
-		unit->txbuffer_not_aligned = NULL;
-		return S2ERR_NO_RESOURCES;
+		ret = S2ERR_NO_RESOURCES;
+		goto tx_buf_allocated;
 	}
 
 	/* These buffers are used for DMA transfers where buffers from IP stack cannot be used */
@@ -516,17 +582,36 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 
 	// bcmgenet_hfb_init()
 
-	int ret = bcmgenet_init_dma(unit);
+	ret = bcmgenet_init_dma(unit);
 	if (ret != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to initialize DMA: %ld\n", __func__, ret);
-		FreeMem(unit->rxbuffer_not_aligned, RX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
-		FreeMem(unit->txbuffer_not_aligned, TX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
-		unit->rxbuffer_not_aligned = NULL;
-		unit->txbuffer_not_aligned = NULL;
-		unit->rxbuffer = NULL;
-		unit->txbuffer = NULL;
-		return ret;
+		goto init_dma;
+	}
+
+	unit->irq0_isr.is_Node.ln_Type = NT_INTERRUPT;
+	unit->irq0_isr.is_Node.ln_Name = "bcmgenet_isr0";
+	unit->irq0_isr.is_Data = (APTR)unit;
+	unit->irq0_isr.is_Code = (APTR)bcmgenet_isr0;
+
+	unit->irq1_isr.is_Node.ln_Type = NT_INTERRUPT;
+	unit->irq1_isr.is_Node.ln_Name = "bcmgenet_isr1";
+	unit->irq1_isr.is_Data = (APTR)unit;
+	unit->irq1_isr.is_Code = (APTR)bcmgenet_isr1;
+
+	ret = gic400_add_int_server(unit->irq0_number, &unit->irq0_isr);
+	if (ret < 0)
+	{
+		Kprintf("[genet] %s: can't register IRQ %ld\n", __func__, unit->irq0_number);
+		ret = S2ERR_SOFTWARE;
+		goto init_dma;
+	}
+
+	ret = gic400_add_int_server(unit->irq1_number, &unit->irq1_isr);
+	if (ret < 0)
+	{
+		Kprintf("[genet] %s: can't register IRQ %ld\n", __func__, unit->irq1_number);
+		goto err_irq0;
 	}
 
 	// bcmgenet_mii_probe(unit);
@@ -539,7 +624,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	if (ret)
 	{
 		Kprintf("[genet] %s: PHY startup failed: %d\n", __func__, ret);
-		return S2ERR_SOFTWARE;
+		goto err_irq1;
 	}
 
 	/* Update MAC registers based on PHY property */
@@ -547,14 +632,44 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	if (ret != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: adjust PHY link failed: %d\n", __func__, ret);
-		return ret;
+		goto err_irq1;
 	}
+
+	/* Monitor link interrupts now */
+	bcmgenet_link_intr_enable(unit);
+	bcmgenet_phy_det_intr_enable(unit);
+	bcmgenet_tx_ring_int_enable(unit, 0); // ring=0??
+	bcmgenet_rx_ring_int_enable(unit, 0); // ring=0??
 
 	/* Enable Rx/Tx */
 	setbits_32((APTR)((ULONG)unit->genetBase + UMAC_CMD), CMD_TX_EN | CMD_RX_EN);
 	Kprintf("[genet] %s: UMAC started, RX/TX enabled\n", __func__);
 
 	return S2ERR_NO_ERROR;
+
+err_irq1:
+	gic400_rem_int_server(unit->irq1_number, &unit->irq1_isr);
+
+err_irq0:
+	gic400_rem_int_server(unit->irq0_number, &unit->irq0_isr);
+
+// err_fini_dma:
+// 	bcmgenet_dma_teardown(priv);
+// 	bcmgenet_fini_dma(priv);
+
+init_dma:
+	unit->rxbuffer = NULL;
+	unit->txbuffer = NULL;
+
+tx_buf_allocated:
+	FreeMem(unit->txbuffer_not_aligned, TX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
+	unit->txbuffer_not_aligned = NULL;
+
+rx_buf_allocated:
+	FreeMem(unit->rxbuffer_not_aligned, RX_TOTAL_BUFSIZE + ARCH_DMA_MINALIGN);
+	unit->rxbuffer_not_aligned = NULL;
+
+	return ret;
 }
 
 static int bcmgenet_phy_init(struct GenetUnit *unit)
@@ -638,7 +753,6 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
 	Kprintf("[genet] %s: Stopping GENET\n", __func__);
 
-	// bcmgenet_hfb_reg_writel(unit, 0, HFB_CTRL);
 	/* Disable MAC receive */
 	clrbits_32((APTR)((ULONG)unit->genetBase + UMAC_CMD), CMD_RX_EN);
 	delay_us(1000);
@@ -646,6 +760,9 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 	/* Disable MAC transmit. TX DMA disabled must be done before this */
 	clrbits_32((APTR)((ULONG)unit->genetBase + UMAC_CMD), CMD_TX_EN);
 	delay_us(1000);
+
+	bcmgenet_intr_disable(unit);
+	
 	/* tx reclaim */
 	bcmgenet_tx_reclaim(unit);
 	// /* Really kill the PHY state machine and disconnect from it */

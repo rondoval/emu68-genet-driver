@@ -107,5 +107,6 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface);
 int phy_config(struct phy_device *phydev);
 int phy_startup(struct phy_device *phydev);
 void phy_destroy(struct phy_device *phydev);
+int genphy_config_aneg(struct phy_device *phydev);
 
 #endif

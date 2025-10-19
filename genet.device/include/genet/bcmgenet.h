@@ -11,8 +11,7 @@ int bcmgenet_set_coalesce(struct GenetUnit *unit, ULONG tx_max_coalesced_frames,
 void bcmgenet_set_rx_mode(struct GenetUnit *unit); /* Updates PROMISC flag and sets up MDF if possible */
 
 /* RX functions */
-int bcmgenet_gmac_eth_recv(struct GenetUnit *unit, UBYTE **packetp);
-void bcmgenet_gmac_free_pkt(struct GenetUnit *unit);
+int bcmgenet_gmac_eth_rx(struct GenetUnit *unit, unsigned int budget);
 
 /* TX functions */
 int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit);

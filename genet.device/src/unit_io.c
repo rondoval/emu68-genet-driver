@@ -7,12 +7,13 @@
 #include <proto/exec.h>
 #endif
 
+#include <genet/bcmgenet-regs.h>
 #include <device.h>
 #include <compat.h>
 #include <debug.h>
 #include <runtime_config.h>
 
-static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packetLength)
+static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packetLength, ULONG dma_flags)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfH("[genet] %s: Copying packet of length %ld\n", __func__, packetLength);
@@ -39,18 +40,17 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     io->ios2_Req.io_Flags &= ~(SANA2IOF_BCAST | SANA2IOF_MCAST);
 
     /* If dest address is FF:FF:FF:FF:FF:FF then it is a broadcast */
-    if (*(ULONG *)packet == 0xffffffff && *(UWORD *)(packet + 4) == 0xffff)
+    if (dma_flags & DMA_RX_MULT)
     {
-        KprintfH("[genet] %s: Packet is a broadcast\n", __func__);
-        io->ios2_Req.io_Flags |= SANA2IOF_BCAST;
-    }
-    /* If dest address has lowest bit of first addr byte set, then it is a multicast */
-    else if (*packet & 0x01)
-    {
-        KprintfH("[genet] %s: Packet is a multicast\n", __func__);
+        KprintfH("[genet] %s: Packet is a multicast (DMA flag)\n", __func__);
         io->ios2_Req.io_Flags |= SANA2IOF_MCAST;
     }
-
+    else if (dma_flags & DMA_RX_BRDCAST)
+    {
+        KprintfH("[genet] %s: Packet is a broadcast (DMA flag)\n", __func__);
+        io->ios2_Req.io_Flags |= SANA2IOF_BCAST;
+    }
+   
     /*
         If RAW packet is requested, copy everything, otherwise copy only contents of
         the frame without ethernet header
@@ -97,27 +97,22 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
 static inline BOOL MulticastFilter(struct GenetUnit *unit, uint64_t destAddr)
 {
     // TODO this looks slow
-    // TODO use genet attributes to recognize multicast addresses
-    if (destAddr != 0xffffffffffffULL && (destAddr & 0x010000000000ULL))
+    for (struct MinNode *node = unit->multicastRanges.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
-        for (struct MinNode *node = unit->multicastRanges.mlh_Head; node->mln_Succ; node = node->mln_Succ)
+        // Check if this is a multicast address we accept
+        struct MulticastRange *range = (struct MulticastRange *)node;
+        if (destAddr >= range->lowerBound && destAddr <= range->upperBound)
         {
-            // Check if this is a multicast address we accept
-            struct MulticastRange *range = (struct MulticastRange *)node;
-            if (destAddr >= range->lowerBound && destAddr <= range->upperBound)
-            {
-                return TRUE; /* Multicast on our list */
-            }
+            return TRUE; /* Multicast on our list */
         }
-        return FALSE; /* Multicast not on our list */
     }
-    return TRUE; /* Broadcast or unicast */
+    return FALSE; /* Multicast not on our list */
 }
 
-BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
+BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength, ULONG dma_flags)
 {
     /* We only need to filter in software if MDF is not enabled */
-    if (unlikely(!unit->mdfEnabled))
+    if (unlikely(!unit->mdfEnabled && (dma_flags & DMA_RX_MULT)))
     {
         uint64_t destAddr = ((uint64_t)*(UWORD *)&packet[0] << 32) | *(ULONG *)&packet[2];
         if (!MulticastFilter(unit, destAddr))
@@ -147,7 +142,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
 
             if (likely(io != NULL))
             {
-                CopyPacket(io, packet, packetLength);
+                CopyPacket(io, packet, packetLength, dma_flags);
                 orphan = FALSE;
                 activity = TRUE;
                 /* Continue to deliver to other openers */
@@ -176,7 +171,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
                     KprintfH("[genet] %s: Found opener for packet type 0x%lx\n", __func__, packetType);
                     Remove((struct Node *)io);
                     /* Match, copy packet, break loop for this opener */
-                    CopyPacket(io, packet, packetLength);
+                    CopyPacket(io, packet, packetLength, dma_flags);
 
                     /* The packet is sent at least to one opener, not an orphan anymore */
                     orphan = FALSE;
@@ -203,7 +198,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength)
             if (unlikely(io != NULL))
             {
                 KprintfH("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, packetType);
-                CopyPacket(io, packet, packetLength);
+                CopyPacket(io, packet, packetLength, dma_flags);
                 activity = TRUE;
             }
             /* Continue to offer to other openers with orphan requests */

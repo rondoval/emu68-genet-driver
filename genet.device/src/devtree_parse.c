@@ -77,13 +77,13 @@ int DevTreeParse(struct GenetUnit *unit)
 		ULONG irq = DT_GetNumber(i, 2);
 		ULONG type = DT_GetNumber(i + 2, 1);
 		Kprintf("[genet] %s: Found interrupt: irq=%lu type=%lu\n", __func__, irq, type);
-		if (unit->irq0 == 0)
+		if (unit->irq0_number == 0)
 		{
-			unit->irq0 = irq + 32;
+			unit->irq0_number = irq + 32;
 		}
 		else
 		{
-			unit->irq1 = irq + 32;
+			unit->irq1_number = irq + 32;
 		}
 	}
 

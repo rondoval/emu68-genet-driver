@@ -19,6 +19,7 @@ add_executable(genet.device
     src/unit_io.c
     src/bcmgenet.c
     src/bcmgenet-tx.c
+    src/bcmgenet-irq.c
     src/phy.c
     src/phy_interface.c
     src/gic400.c

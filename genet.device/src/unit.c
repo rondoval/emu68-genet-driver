@@ -19,6 +19,7 @@
 #include <compat.h>
 #include <minlist.h>
 #include <runtime_config.h>
+#include <gic400.h>
 
 static void SetupMDIO(struct GenetUnit *unit)
 {
@@ -83,15 +84,23 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	unit->multicastCount = 0;
 
 	_NewMinList(&unit->openers);
-	if (opener != NULL)
-	{
-		AddTailMinList(&unit->openers, (struct MinNode *)opener);
-	}
 
 	int result = DevTreeParse(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to parse device tree: %ld\n", __func__, result);
+		DeletePool(unit->memoryPool);
+		unit->memoryPool = NULL;
+		return result;
+	}
+
+	result = gic400_init();
+	if (result < 0)
+	{
+		Kprintf("[genet] %s: Failed to initialize GIC400: %ld\n", __func__, result);
+		DeletePool(unit->memoryPool);
+		unit->memoryPool = NULL;
+		result = S2ERR_NO_RESOURCES;
 		return result;
 	}
 
@@ -105,6 +114,12 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		unit->memoryPool = NULL;
 		return result;
 	}
+
+	if (opener != NULL)
+	{
+		AddTailMinList(&unit->openers, (struct MinNode *)opener);
+	}
+
 	return S2ERR_NO_ERROR;
 }
 

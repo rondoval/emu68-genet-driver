@@ -20,44 +20,12 @@ struct GenetRuntimeConfig genetConfig;
 
 static void ApplyDefaults()
 {
-    static const ULONG def_ladder[] = DEFAULT_POLL_LADDER;
     genetConfig.unit_task_priority = DEFAULT_UNIT_TASK_PRIORITY;
     genetConfig.unit_stack_bytes = DEFAULT_UNIT_STACK_BYTES;
     genetConfig.use_dma = DEFAULT_USE_DMA;
     genetConfig.use_miami_workaround = DEFAULT_USE_MIAMI_WORKAROUND;
-    genetConfig.tx_pending_fast_ticks = DEFAULT_TX_PENDING_FAST_TICKS;
-    genetConfig.tx_reclaim_soft_us = DEFAULT_TX_RECLAIM_SOFT_US;
-    genetConfig.rx_poll_burst = DEFAULT_RX_POLL_BURST;
-    genetConfig.rx_poll_burst_idle_break = DEFAULT_RX_POLL_BURST_IDLE_BREAK;
-    genetConfig.poll_delay_len = sizeof(def_ladder) / sizeof(def_ladder[0]);
-    for (UWORD i = 0; i < genetConfig.poll_delay_len && i < DEFAULT_POLL_LADDER_MAX; i++)
-        genetConfig.poll_delay_us[i] = def_ladder[i];
-}
-
-static void ParsePollDelayList(char *val)
-{
-    UWORD count = 0;
-    char *p = val;
-    while (*p && count < DEFAULT_POLL_LADDER_MAX)
-    {
-        char *start = p;
-        while (*p && *p != ',')
-            p++;
-        char saved = *p;
-        if (*p)
-            *p = '\0';
-        LONG v;
-        if (StrToLong((STRPTR)start, &v) && v >= 0)
-            genetConfig.poll_delay_us[count++] = (ULONG)v;
-        if (saved)
-        {
-            *p = saved; /* restore delimiter */
-            if (saved == ',')
-                p++; /* skip comma */
-        }
-    }
-    if (count)
-        genetConfig.poll_delay_len = count;
+    genetConfig.poll_delay_us = DEFAULT_POLL_DELAY_US;
+    genetConfig.budget = DEFAULT_BUDGET;
 }
 
 void LoadGenetRuntimeConfig()
@@ -139,28 +107,16 @@ void LoadGenetRuntimeConfig()
                     if (StrToLong((STRPTR)val, &v) && v >= 0)
                         genetConfig.use_miami_workaround = (UBYTE)v;
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "TX_PENDING_FAST_TICKS"))
-                {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.tx_pending_fast_ticks = (UWORD)v;
-                }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "TX_RECLAIM_SOFT_US"))
-                {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.tx_reclaim_soft_us = (ULONG)v;
-                }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "RX_POLL_BURST"))
-                {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.rx_poll_burst = (UWORD)v;
-                }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "RX_POLL_BURST_IDLE_BREAK"))
-                {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.rx_poll_burst_idle_break = (UWORD)v;
-                }
                 else if (!Stricmp((STRPTR)key, (STRPTR) "POLL_DELAY_US"))
-                    ParsePollDelayList(val);
+                {
+                    if (StrToLong((STRPTR)val, &v) && v >= 0)
+                        genetConfig.poll_delay_us = (ULONG)v;
+                }
+                else if (!Stricmp((STRPTR)key, (STRPTR) "BUDGET"))
+                {
+                    if (StrToLong((STRPTR)val, &v) && v >= 0)
+                        genetConfig.budget = (UWORD)v;
+                }
             }
         }
     }
@@ -177,16 +133,13 @@ void LoadGenetRuntimeConfig()
 void DumpGenetRuntimeConfig()
 {
 #ifdef DEBUG
-    Kprintf("[genet] config: pri=%ld stack_bytes=%lu use_dma=%ld miami=%ld txFastTicks=%ld txSoftUs=%ld rxBurst=%ld/%ld ladder=",
+    Kprintf("[genet] config: pri=%ld stack_bytes=%lu use_dma=%ld miami=%ld poll_delay_us=%lu budget=%u\n",
             genetConfig.unit_task_priority,
             genetConfig.unit_stack_bytes,
             (ULONG)genetConfig.use_dma,
             (ULONG)genetConfig.use_miami_workaround,
-            genetConfig.tx_pending_fast_ticks,
-            genetConfig.tx_reclaim_soft_us,
-            genetConfig.rx_poll_burst,
-            genetConfig.rx_poll_burst_idle_break);
-    for (UWORD i = 0; i < genetConfig.poll_delay_len; i++)
-        Kprintf("%lu%s", genetConfig.poll_delay_us[i], (i + 1 < genetConfig.poll_delay_len) ? "," : "\n");
+            genetConfig.poll_delay_us,
+            genetConfig.budget);
+            
 #endif
 }

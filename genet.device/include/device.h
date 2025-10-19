@@ -158,6 +158,7 @@ struct GenetUnit
 	struct MinList multicastRanges;
 	ULONG multicastCount;
 	BOOL mdfEnabled; /* Multicast filter enabled */
+	BYTE rx_signal, tx_signal, phy_signal;
 
 	/* Opener management (message-based modifications) */
 	struct MsgPort *openerPort; /* created in unit task */
@@ -167,7 +168,11 @@ struct GenetUnit
 	const UBYTE *localMacAddress;
 	APTR genetBase;
 	APTR gpioBase;
-	ULONG irq0, irq1;
+
+	/* Interrupt config and status */
+	ULONG irq0_number, irq1_number; /* IRQ numbers from Device Tree */
+	ULONG irq0_status;				/* status bits of irq0*/
+	struct Interrupt irq0_isr, irq1_isr;
 
 	/* PHY */
 	phy_interface_t phy_interface;
@@ -218,7 +223,7 @@ int UnitOnline(struct GenetUnit *unit);
 void UnitOffline(struct GenetUnit *unit);
 int UnitClose(struct GenetUnit *unit, struct Opener *opener);
 
-BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength);
+BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength, ULONG dma_flags);
 void ProcessCommand(struct IOSana2Req *io);
 
 /* Inline function for fast packet type queue lookup */

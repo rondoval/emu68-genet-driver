@@ -267,7 +267,7 @@ static int genphy_restart_aneg(struct phy_device *phydev)
  *   advertising, and then restart auto-negotiation.  If it is not
  *   enabled, then we write the BMCR.
  */
-static int genphy_config_aneg(struct phy_device *phydev)
+int genphy_config_aneg(struct phy_device *phydev)
 {
 	Kprintf("[genet] %s: phy=%ld autoneg=%ld\n", __func__, phydev->addr, phydev->autoneg);
 	int result;

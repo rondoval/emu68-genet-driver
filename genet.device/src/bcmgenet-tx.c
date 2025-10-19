@@ -83,9 +83,6 @@ void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 	ring->free_bds += txbds_processed;
 	ring->tx_cons_index = tx_cons_index;
 
-	/* small burst of fast polls */
-	unit->tx_watchdog_fast_ticks = (ring->free_bds < TX_DESCS) ? genetConfig.tx_pending_fast_ticks : 0;
-
 	unit->stats.PacketsSent += pkts_compl;
 	unit->internalStats.tx_packets += pkts_compl;
 	unit->internalStats.tx_bytes += bytes_compl;
@@ -215,8 +212,6 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	writel(ring->tx_prod_index, (ULONG)unit->genetBase + TDMA_PROD_INDEX);
 	KprintfH("[genet] %s: Transmitting packet, tx_prod_index %ld, free_bds %ld\n",
 			 __func__, ring->tx_prod_index, ring->free_bds);
-
-	unit->tx_watchdog_fast_ticks = genetConfig.tx_pending_fast_ticks; /* ensure a few fast polls */
 
 	ReleaseSemaphore(&ring->tx_ring_sem);
 	return COMMAND_SCHEDULED;
