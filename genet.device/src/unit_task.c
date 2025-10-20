@@ -16,6 +16,7 @@
 #include <minlist.h>
 #include <debug.h>
 #include <runtime_config.h>
+#include <gic400.h>
 
 struct Device *TimerBase = NULL;
 
@@ -86,6 +87,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         /* Receive processing */
         if ((sigset & (1UL << unit->rx_signal)) && unit->state == STATE_ONLINE)
         {
+            KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
             budget -= bcmgenet_gmac_eth_rx(unit, budget);
             if (budget == 0)
             {
@@ -97,6 +99,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         /* Transmit processing */
         if ((sigset & (1UL << unit->tx_signal)) && unit->state == STATE_ONLINE)
         {
+            KprintfH("[genet] %s: TX signal received, reclaiming\n", __func__);
             // reschedule periodic reclaim
             AbortIO(&packetTimerReq->tr_node);
             WaitIO(&packetTimerReq->tr_node);
@@ -182,6 +185,13 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             /* Periodic TX reclaim */
             if (unit->state == STATE_ONLINE)
                 bcmgenet_tx_reclaim(unit);
+
+            BOOL pending, active, enabled;
+            gic400_get_irq_status(unit->irq1_number, &pending, &active, &enabled);
+            Kprintf("[genet] %s: IRQ1 status - pending: %ld, active: %ld, enabled: %ld\n", __func__, pending, active, enabled);
+
+            gic400_get_irq_status(unit->irq0_number, &pending, &active, &enabled);
+            Kprintf("[genet] %s: IRQ0 status - pending: %ld, active: %ld, enabled: %ld\n", __func__, pending, active, enabled);
 
             // TODO pool PHY for state
 

@@ -634,6 +634,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 		Kprintf("[genet] %s: adjust PHY link failed: %d\n", __func__, ret);
 		goto err_irq1;
 	}
+	Kprintf("[genet] %s: Interrupt servers installed\n", __func__);
 
 	/* Monitor link interrupts now */
 	bcmgenet_link_intr_enable(unit);

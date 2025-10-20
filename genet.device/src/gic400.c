@@ -32,7 +32,7 @@
 
 extern struct ExecBase *SysBase;
 
-static char gic_dispatcher_name[] = "gic400.dispatcher";
+static char gic_dispatcher_name[] = "ARM GIC-400 dispatcher";
 
 struct gic_irq_handler
 {
@@ -42,7 +42,7 @@ struct gic_irq_handler
 
 struct GICD_IIDR_bits
 {
-    ULONG product_id : 4;   // [31:24] GIC product identifier (0x02)
+    ULONG product_id : 8;   // [31:24] GIC product identifier (0x02)
     ULONG reserved : 4;     // [23:20] Reserved, RAZ
     ULONG variant : 4;      // [19:16] GIC variant number
     ULONG revision : 4;     // [15:12] GIC revision number
@@ -57,12 +57,12 @@ union GICD_IIDR_register
 
 struct GICD_TYPER_bits
 {
-    ULONG it_lines_number : 5; // [4:0] ITLinesNumber, number of interrupt lines / 32 - 1
-    ULONG cpus_number : 3;     // [7:5] CPUNumber, number of CPU interfaces / 2 - 1
-    ULONG reserved1 : 2;       // [9:8] Reserved, RAZ
-    ULONG security_extn : 1;   // [10] Security Extensions, 1 if supported
-    ULONG lspi : 5;            // [15:11] number of LSPIs
     ULONG reserved2 : 16;      // [31:16] Reserved, RAZ
+    ULONG lspi : 5;            // [15:11] number of LSPIs
+    ULONG security_extn : 1;   // [10] Security Extensions, 1 if supported
+    ULONG reserved1 : 2;       // [9:8] Reserved, RAZ
+    ULONG cpus_number : 3;     // [7:5] CPUNumber, number of CPU interfaces / 2 - 1
+    ULONG it_lines_number : 5; // [4:0] ITLinesNumber, number of interrupt lines / 32 - 1
 };
 
 union GICD_TYPER_register
@@ -113,7 +113,8 @@ static struct
     union GICD_TYPER_register gicd_typer;
     union GICC_IIDR_register gicc_iidr;
 
-    APTR gic_base;
+    APTR gic_base_distributor;
+    APTR gic_base_cpuif;
     ULONG max_irqs;
 
     struct gic_irq_handler handlers[GIC_MAX_REGISTERED_IRQS];
@@ -130,23 +131,22 @@ static inline BOOL gicd_irq_valid(ULONG irq)
 }
 
 /* Distributor */
-#define GICD_BASE 0x1000
-#define GICD_CTLR (gic_data.gic_base + GICD_BASE + 0x000)                    // Distributor Control Register
-#define GICD_TYPER (gic_data.gic_base + GICD_BASE + 0x004)                   // Interrupt Controller Type Register
-#define GICD_IIDR (gic_data.gic_base + GICD_BASE + 0x008)                    // Distributor Implementer ID Register
-#define GICD_IGROUPR(n) (gic_data.gic_base + GICD_BASE + 0x080 + (n) * 4)    // Interrupt Group Registers
-#define GICD_ISENABLER(n) (gic_data.gic_base + GICD_BASE + 0x100 + (n) * 4)  // Interrupt Set-Enable Registers
-#define GICD_ICENABLER(n) (gic_data.gic_base + GICD_BASE + 0x180 + (n) * 4)  // Interrupt Clear-Enable Registers
-#define GICD_ISPENDR(n) (gic_data.gic_base + GICD_BASE + 0x200 + (n) * 4)    // Interrupt Set-Pending Registers
-#define GICD_ICPENDR(n) (gic_data.gic_base + GICD_BASE + 0x280 + (n) * 4)    // Interrupt Clear-Pending Registers
-#define GICD_ISACTIVER(n) (gic_data.gic_base + GICD_BASE + 0x300 + (n) * 4)  // Interrupt Set-Active Registers
-#define GICD_ICACTIVER(n) (gic_data.gic_base + GICD_BASE + 0x380 + (n) * 4)  // Interrupt Clear-Active Registers
-#define GICD_IPRIORITYR(n) (gic_data.gic_base + GICD_BASE + 0x400 + (n) * 4) // Interrupt Priority Registers
-#define GICD_ITARGETSR(n) (gic_data.gic_base + GICD_BASE + 0x800 + (n) * 4)  // Interrupt Processor Targets Registers
-#define GICD_ICFGR(n) (gic_data.gic_base + GICD_BASE + 0xC00 + (n) * 4)      // Interrupt Configuration Registers
-#define GICD_SPISR(n) (gic_data.gic_base + GICD_BASE + 0xD04 + (n) * 4)      // Shared Peripheral Interrupt Status Registers
-#define GICD_COMPONENT_ID (gic_data.gic_base + GICD_BASE + 0xFF0)            // Component ID Register
-#define GICD_PERIPHERAL_ID (gic_data.gic_base + GICD_BASE + 0xFE0)           // Peripheral ID Register
+#define GICD_CTLR (gic_data.gic_base_distributor + 0x000)                    // Distributor Control Register
+#define GICD_TYPER (gic_data.gic_base_distributor + 0x004)                   // Interrupt Controller Type Register
+#define GICD_IIDR (gic_data.gic_base_distributor + 0x008)                    // Distributor Implementer ID Register
+#define GICD_IGROUPR(n) (gic_data.gic_base_distributor + 0x080 + (n) * 4)    // Interrupt Group Registers
+#define GICD_ISENABLER(n) (gic_data.gic_base_distributor + 0x100 + (n) * 4)  // Interrupt Set-Enable Registers
+#define GICD_ICENABLER(n) (gic_data.gic_base_distributor + 0x180 + (n) * 4)  // Interrupt Clear-Enable Registers
+#define GICD_ISPENDR(n) (gic_data.gic_base_distributor + 0x200 + (n) * 4)    // Interrupt Set-Pending Registers
+#define GICD_ICPENDR(n) (gic_data.gic_base_distributor + 0x280 + (n) * 4)    // Interrupt Clear-Pending Registers
+#define GICD_ISACTIVER(n) (gic_data.gic_base_distributor + 0x300 + (n) * 4)  // Interrupt Set-Active Registers
+#define GICD_ICACTIVER(n) (gic_data.gic_base_distributor + 0x380 + (n) * 4)  // Interrupt Clear-Active Registers
+#define GICD_IPRIORITYR(n) (gic_data.gic_base_distributor + 0x400 + (n) * 4) // Interrupt Priority Registers
+#define GICD_ITARGETSR(n) (gic_data.gic_base_distributor + 0x800 + (n) * 4)  // Interrupt Processor Targets Registers
+#define GICD_ICFGR(n) (gic_data.gic_base_distributor + 0xC00 + (n) * 4)      // Interrupt Configuration Registers
+#define GICD_SPISR(n) (gic_data.gic_base_distributor + 0xD04 + (n) * 4)      // Shared Peripheral Interrupt Status Registers
+#define GICD_COMPONENT_ID (gic_data.gic_base_distributor + 0xFF0)            // Component ID Register
+#define GICD_PERIPHERAL_ID (gic_data.gic_base_distributor + 0xFE0)           // Peripheral ID Register
 
 /* gicd_print_info: Log distributor ID and capability registers.
  * Args: none.
@@ -155,11 +155,11 @@ static inline BOOL gicd_irq_valid(ULONG irq)
 static void gicd_print_info(void)
 {
     struct GICD_IIDR_bits iidr = gic_data.gicd_iidr.bits;
-    Kprintf("[gic] Implementer=0x%03lx, Revision=%ld, Variant=%ld, ProductID=0x%02lx\n",
+    Kprintf("[gic] Distributor: Implementer=0x%03lx, Revision=%ld, Variant=%ld, ProductID=0x%02lx\n",
             iidr.implementer, iidr.revision, iidr.variant, iidr.product_id);
 
     struct GICD_TYPER_bits typer = gic_data.gicd_typer.bits;
-    Kprintf("[gic] ITLinesNumber=%ld, CPUNumber=%ld, SecurityExtensions=%ld, LSPIs=%ld\n",
+    Kprintf("[gic] Distributor: ITLinesNumber=%ld, CPUNumber=%ld, SecurityExtensions=%ld, LSPIs=%ld\n",
             (typer.it_lines_number + 1) * 32, typer.cpus_number + 1, typer.security_extn, typer.lspi);
 }
 
@@ -174,13 +174,13 @@ static BOOL gicd_is_gic_v2(void)
 
     if (component_id != 0x0df005b1)
     {
-        Kprintf("[gic] Unknown GIC component ID: 0x%04lx\n", component_id);
+        Kprintf("[gic] Unknown GIC component ID: 0x%08lx\n", component_id);
         return FALSE;
     }
 
     if (peripheral_id != 0x90b42b00)
     {
-        Kprintf("[gic] Unknown GIC peripheral ID: 0x%04lx\n", peripheral_id);
+        Kprintf("[gic] Unknown GIC peripheral ID: 0x%08lx\n", peripheral_id);
         return FALSE;
     }
     return TRUE;
@@ -454,25 +454,24 @@ static inline void gicd_set_trigger(ULONG irq, BOOL edge)
 }
 
 /* CPU Interface */
-#define GICC_BASE 0x2000
-#define GICC_CTLR (gic_data.gic_base + GICC_BASE + 0x000) // CPU Interface Control Register
-#define GICC_PMR (gic_data.gic_base + GICC_BASE + 0x004)  // Interrupt Priority Mask Register
+#define GICC_CTLR (gic_data.gic_base_cpuif + 0x000) // CPU Interface Control Register
+#define GICC_PMR (gic_data.gic_base_cpuif + 0x004)  // Interrupt Priority Mask Register
 
-#define GICC_BPR (gic_data.gic_base + GICC_BASE + 0x008)   // Binary Point Register
-#define GICC_IAR (gic_data.gic_base + GICC_BASE + 0x00C)   // Interrupt Acknowledge Register
-#define GICC_EOIR (gic_data.gic_base + GICC_BASE + 0x010)  // End of Interrupt Register
-#define GICC_RPR (gic_data.gic_base + GICC_BASE + 0x014)   // Running Priority Register
-#define GICC_HPPIR (gic_data.gic_base + GICC_BASE + 0x018) // Highest Priority Pending Interrupt Register
+#define GICC_BPR (gic_data.gic_base_cpuif + 0x008)   // Binary Point Register
+#define GICC_IAR (gic_data.gic_base_cpuif + 0x00C)   // Interrupt Acknowledge Register
+#define GICC_EOIR (gic_data.gic_base_cpuif + 0x010)  // End of Interrupt Register
+#define GICC_RPR (gic_data.gic_base_cpuif + 0x014)   // Running Priority Register
+#define GICC_HPPIR (gic_data.gic_base_cpuif + 0x018) // Highest Priority Pending Interrupt Register
 
-#define GICC_ABPR (gic_data.gic_base + GICC_BASE + 0x01C)   // Aliased Binary Point Register
-#define GICC_AIAR (gic_data.gic_base + GICC_BASE + 0x020)   // Aliased Interrupt Acknowledge Register
-#define GICC_AEOIR (gic_data.gic_base + GICC_BASE + 0x024)  // Aliased End of Interrupt Register
-#define GICC_AHPPIR (gic_data.gic_base + GICC_BASE + 0x028) // Aliased Highest Priority Pending Interrupt Register
+#define GICC_ABPR (gic_data.gic_base_cpuif + 0x01C)   // Aliased Binary Point Register
+#define GICC_AIAR (gic_data.gic_base_cpuif + 0x020)   // Aliased Interrupt Acknowledge Register
+#define GICC_AEOIR (gic_data.gic_base_cpuif + 0x024)  // Aliased End of Interrupt Register
+#define GICC_AHPPIR (gic_data.gic_base_cpuif + 0x028) // Aliased Highest Priority Pending Interrupt Register
 
-#define GICC_APR(n) (gic_data.gic_base + GICC_BASE + 0x0D0 + (n) * 4)   // Active Priority Register
-#define GICC_NSAPR(n) (gic_data.gic_base + GICC_BASE + 0x0E0 + (n) * 4) // Non-secure Active Priority Register
-#define GICC_IIDR (gic_data.gic_base + GICC_BASE + 0x0FC)               // CPU Interface Implementer Identification Register
-#define GICC_DIR (gic_data.gic_base + GICC_BASE + 0x1000)               // Deactivate Interrupt Register
+#define GICC_APR(n) (gic_data.gic_base_cpuif + 0x0D0 + (n) * 4)   // Active Priority Register
+#define GICC_NSAPR(n) (gic_data.gic_base_cpuif + 0x0E0 + (n) * 4) // Non-secure Active Priority Register
+#define GICC_IIDR (gic_data.gic_base_cpuif + 0x0FC)               // CPU Interface Implementer Identification Register
+#define GICC_DIR (gic_data.gic_base_cpuif + 0x1000)               // Deactivate Interrupt Register
 
 /* gicc_print_info: Log CPU interface identification details.
  * Args: none.
@@ -481,7 +480,7 @@ static inline void gicd_set_trigger(ULONG irq, BOOL edge)
 static void gicc_print_info(void)
 {
     struct GICC_IIDR_bits iidr = gic_data.gicc_iidr.bits;
-    Kprintf("[gic] Implementer=0x%03lx, Revision=%ld, Architecture=%ld, ProductID=0x%03lx\n",
+    Kprintf("[gic] Controller: Implementer=0x%03lx, Revision=%ld, Architecture=%ld, ProductID=0x%03lx\n",
             iidr.implementer, iidr.revision, iidr.architecture, iidr.product_id);
 }
 
@@ -614,7 +613,7 @@ APTR DeviceTreeBase;
 
 static int gic400_parse_devicetree()
 {
-	DT_Init();
+    DT_Init();
 
     APTR root_key = DT_OpenKey((CONST_STRPTR) "/");
     if (root_key == NULL)
@@ -634,26 +633,45 @@ static int gic400_parse_devicetree()
     }
 
     CONST_STRPTR gic_compatible = DT_GetPropValue(DT_FindProperty(gic_key, (CONST_STRPTR) "compatible"));
-    
+    // TODO this is awful. rework DT_TranslateAddress
+
     const APTR parent_key = DT_GetParent(gic_key);
-	const ULONG address_cells_parent = DT_GetPropertyValueULONG(parent_key, "#address-cells", 1, FALSE);
-	gic_data.gic_base = (APTR)(ULONG)DT_GetNumber(DT_GetPropValue(DT_FindProperty(gic_key, (CONST_STRPTR) "reg")), address_cells_parent);
-	DT_TranslateAddress(&gic_data.gic_base, parent_key);
-    if (gic_data.gic_base == NULL)
+    const ULONG address_cells_parent = DT_GetPropertyValueULONG(parent_key, "#address-cells", 1, FALSE);
+    const ULONG size_cells_parent = DT_GetPropertyValueULONG(parent_key, "#size-cells", 1, FALSE);
+    const ULONG cells_per_record = address_cells_parent + size_cells_parent;
+    Kprintf("[gic] %s: address_cells_parent=%lu, size_cells_parent=%lu, cells_per_record=%lu\n",
+            __func__, address_cells_parent, size_cells_parent, cells_per_record);
+
+    const ULONG *value = DT_GetPropValue(DT_FindProperty(gic_key, (CONST_STRPTR) "reg"));
+
+    gic_data.gic_base_distributor = (APTR)(ULONG)DT_GetNumber(value, address_cells_parent);
+    DT_TranslateAddress(&gic_data.gic_base_distributor, parent_key);
+    if (gic_data.gic_base_distributor == NULL)
     {
-        Kprintf("[gic] %s: Failed to get base address for GIC\n", __func__);
+        Kprintf("[gic] %s: Failed to get Distributor base address for GIC\n", __func__);
         DT_CloseKey(gic_key);
         DT_CloseKey(root_key);
         return -GIC_ERROR;
     }
 
-	Kprintf("[genet] %s: compatible: %s\n", __func__, gic_compatible);
-	Kprintf("[genet] %s: register base: %08lx\n", __func__, gic_data.gic_base);
+    gic_data.gic_base_cpuif = (APTR)(ULONG)DT_GetNumber(value + cells_per_record, address_cells_parent);
+    DT_TranslateAddress(&gic_data.gic_base_cpuif, parent_key);
+    if (gic_data.gic_base_cpuif == NULL)
+    {
+        Kprintf("[gic] %s: Failed to get CPU Interface base address for GIC\n", __func__);
+        DT_CloseKey(gic_key);
+        DT_CloseKey(root_key);
+        return -GIC_ERROR;
+    }
 
-	// We're done with the device tree
-	DT_CloseKey(gic_key);
-	DT_CloseKey(root_key);
-	return 0;
+    Kprintf("[genet] %s: compatible: %s\n", __func__, gic_compatible);
+    Kprintf("[genet] %s: Distributor register base: %08lx\n", __func__, gic_data.gic_base_distributor);
+    Kprintf("[genet] %s: CPU Interface register base: %08lx\n", __func__, gic_data.gic_base_cpuif);
+
+    // We're done with the device tree
+    DT_CloseKey(gic_key);
+    DT_CloseKey(root_key);
+    return 0;
 }
 
 /* gic400_init: Initialize GIC state and install dispatcher.
@@ -680,11 +698,12 @@ int gic400_init()
         gic_data.handlers[i].interrupt = NULL;
     }
 
-    if (!gicd_is_gic_v2())
-    {
-        Kprintf("[gic] GIC is not GICv2, aborting initialization\n");
-        return -GIC_ERROR;
-    }
+    //TODO fixme
+    // if (!gicd_is_gic_v2())
+    // {
+    //     Kprintf("[gic] GIC is not GICv2, aborting initialization\n");
+    //     return -GIC_ERROR;
+    // }
 
     gicc_print_info();
     gicd_print_info();
@@ -757,6 +776,7 @@ static int gic400_enable_irq(ULONG irq, UBYTE priority)
         Kprintf("[gic] IRQ %ld is out of range, max is %ld\n", irq, gic_data.max_irqs - 1);
         return -GIC_ERROR;
     }
+    Kprintf("[gic] Enabling IRQ %ld with priority %lu\n", irq, priority);
 
     gicd_disable_irq(irq); // disable IRQ before configuration
 
@@ -781,6 +801,7 @@ static int gic400_disable_irq(ULONG irq)
         Kprintf("[gic] IRQ %ld is out of range, max is %ld\n", irq, gic_data.max_irqs - 1);
         return -GIC_ERROR;
     }
+    Kprintf("[gic] Disabling IRQ %ld\n", irq);
 
     gicd_disable_irq(irq); // disable IRQ
 
@@ -837,6 +858,7 @@ static inline void gic400_call_interrupt(struct Interrupt *interrupt, ULONG irq)
  */
 static ULONG gic400_exec_dispatcher(void)
 {
+    Kprintf("[gic] gic400_exec_dispatcher called\n");
     ULONG iar = gicc_acknowledge_interrupt_group(0);
     ULONG irq = iar & 0x3FF;
 
@@ -850,11 +872,13 @@ static ULONG gic400_exec_dispatcher(void)
         gicc_end_interrupt_group(iar, 0);
         return 0;
     }
+    Kprintf("[gic] Handling IRQ %ld\n", irq);
 
     struct gic_irq_handler *handler = find_handler(irq);
 
     if (handler && handler->interrupt)
     {
+        Kprintf("[gic] Invoking handler for IRQ %ld\n", irq);
         gic400_call_interrupt(handler->interrupt, irq);
     }
 
@@ -869,9 +893,15 @@ static ULONG gic400_exec_dispatcher(void)
 int gic400_add_int_server(ULONG irq, struct Interrupt *interrupt)
 {
     if (!interrupt || !interrupt->is_Code)
+    {
+        Kprintf("[gic] Invalid interrupt server for IRQ %ld\n", irq);
         return -GIC_ERROR;
+    }
     if (!gicd_irq_valid(irq))
+    {
+        Kprintf("[gic] IRQ %ld is not a valid SPI\n", irq);
         return -GIC_ERROR;
+    }
 
     Disable();
 
@@ -880,6 +910,7 @@ int gic400_add_int_server(ULONG irq, struct Interrupt *interrupt)
     {
         if (existing->interrupt == interrupt)
         {
+            Kprintf("[gic] IRQ %ld is already registered\n", irq);
             Enable();
             return 0;
         }
@@ -899,7 +930,7 @@ int gic400_add_int_server(ULONG irq, struct Interrupt *interrupt)
     gic_data.handlers[gic_data.handler_count].irq = irq;
     gic_data.handlers[gic_data.handler_count].interrupt = interrupt;
     gic_data.handler_count++;
-    gic400_enable_irq(irq, 0x80); //TODO  enable IRQ with medium priority
+    gic400_enable_irq(irq, 0x80); // TODO  enable IRQ with medium priority
 
     Enable();
     return 0;
@@ -912,15 +943,22 @@ int gic400_add_int_server(ULONG irq, struct Interrupt *interrupt)
 int gic400_rem_int_server(ULONG irq, struct Interrupt *interrupt)
 {
     if (!interrupt)
+    {
+        Kprintf("[gic] Invalid interrupt server for IRQ %ld\n", irq);
         return -GIC_ERROR;
+    }
     if (!gicd_irq_valid(irq))
+    {
+        Kprintf("[gic] IRQ %ld is not a valid SPI\n", irq);
         return -GIC_ERROR;
+    }
 
     Disable();
 
     LONG index = find_handler_index(irq);
     if (index < 0)
     {
+        Kprintf("[gic] No handler registered for IRQ %ld\n", irq);
         Enable();
         return -GIC_ERROR;
     }
