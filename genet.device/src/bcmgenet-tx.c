@@ -58,9 +58,6 @@ void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 	UWORD tx_cons_index = readl((ULONG)unit->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
 	UWORD txbds_ready = (tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK;
 
-	/* Clear status before servicing to reduce spurious interrupts */
-	bcmgenet_tx_ring_int_clear(unit, 0); // ring=0??
-	
 	/* Reclaim transmitted buffers */
 	UWORD txbds_processed = 0;
 	ULONG bytes_compl = 0;

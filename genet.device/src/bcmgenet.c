@@ -586,11 +586,6 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	unit->irq0_isr.is_Data = (APTR)unit;
 	unit->irq0_isr.is_Code = (APTR)bcmgenet_isr0;
 
-	unit->irq1_isr.is_Node.ln_Type = NT_INTERRUPT;
-	unit->irq1_isr.is_Node.ln_Name = "bcmgenet_isr1";
-	unit->irq1_isr.is_Data = (APTR)unit;
-	unit->irq1_isr.is_Code = (APTR)bcmgenet_isr1;
-
 	ret = gic400_add_int_server(unit->irq0_number, &unit->irq0_isr);
 	if (ret < 0)
 	{
@@ -599,12 +594,19 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 		goto init_dma;
 	}
 
+#ifdef USE_PRIORITY_QUEUES
+	unit->irq1_isr.is_Node.ln_Type = NT_INTERRUPT;
+	unit->irq1_isr.is_Node.ln_Name = "bcmgenet_isr1";
+	unit->irq1_isr.is_Data = (APTR)unit;
+	unit->irq1_isr.is_Code = (APTR)bcmgenet_isr1;
+
 	ret = gic400_add_int_server(unit->irq1_number, &unit->irq1_isr);
 	if (ret < 0)
 	{
 		Kprintf("[genet] %s: can't register IRQ %ld\n", __func__, unit->irq1_number);
-		goto err_irq0;
+		goto err_irq;
 	}
+#endif
 
 	// bcmgenet_mii_probe(unit);
 	//  rx_pause=1, tx_pause=1
@@ -616,7 +618,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	if (ret)
 	{
 		Kprintf("[genet] %s: PHY startup failed: %d\n", __func__, ret);
-		goto err_irq1;
+		goto err_irq;
 	}
 
 	/* Update MAC registers based on PHY property */
@@ -624,7 +626,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	if (ret != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: adjust PHY link failed: %d\n", __func__, ret);
-		goto err_irq1;
+		goto err_irq;
 	}
 	Kprintf("[genet] %s: Interrupt servers installed\n", __func__);
 
@@ -638,10 +640,10 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 
 	return S2ERR_NO_ERROR;
 
-err_irq1:
+err_irq:
+#ifdef USE_PRIORITY_QUEUES
 	gic400_rem_int_server(unit->irq1_number, &unit->irq1_isr);
-
-err_irq0:
+#endif
 	gic400_rem_int_server(unit->irq0_number, &unit->irq0_isr);
 
 init_dma:
