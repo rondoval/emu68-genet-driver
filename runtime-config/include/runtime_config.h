@@ -13,9 +13,12 @@
 #define DEFAULT_USE_DMA 0
 #define DEFAULT_USE_MIAMI_WORKAROUND 0
 
-#define DEFAULT_POLL_DELAY_US 200000
-
+#define DEFAULT_PERIODIC_TASK_MS 100
 #define DEFAULT_BUDGET 32
+
+#define DEFAULT_RX_COALESCE_USECS 200
+#define DEFAULT_RX_COALESCE_FRAMES 50
+#define DEFAULT_TX_COALESCE_FRAMES 50
 
 struct GenetRuntimeConfig
 {
@@ -23,8 +26,11 @@ struct GenetRuntimeConfig
     ULONG unit_stack_bytes;
     UBYTE use_dma;
     UBYTE use_miami_workaround;
-    ULONG poll_delay_us;
     UWORD budget;
+    ULONG periodic_task_ms;
+    ULONG rx_coalesce_usecs;
+    ULONG rx_coalesce_frames;
+    ULONG tx_coalesce_frames;
 };
 
 extern struct GenetRuntimeConfig genetConfig;

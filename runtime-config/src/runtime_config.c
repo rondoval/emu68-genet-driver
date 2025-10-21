@@ -24,8 +24,11 @@ static void ApplyDefaults()
     genetConfig.unit_stack_bytes = DEFAULT_UNIT_STACK_BYTES;
     genetConfig.use_dma = DEFAULT_USE_DMA;
     genetConfig.use_miami_workaround = DEFAULT_USE_MIAMI_WORKAROUND;
-    genetConfig.poll_delay_us = DEFAULT_POLL_DELAY_US;
     genetConfig.budget = DEFAULT_BUDGET;
+    genetConfig.periodic_task_ms = DEFAULT_PERIODIC_TASK_MS;
+    genetConfig.rx_coalesce_usecs = DEFAULT_RX_COALESCE_USECS;
+    genetConfig.rx_coalesce_frames = DEFAULT_RX_COALESCE_FRAMES;
+    genetConfig.tx_coalesce_frames = DEFAULT_TX_COALESCE_FRAMES;
 }
 
 void LoadGenetRuntimeConfig()
@@ -107,15 +110,30 @@ void LoadGenetRuntimeConfig()
                     if (StrToLong((STRPTR)val, &v) && v >= 0)
                         genetConfig.use_miami_workaround = (UBYTE)v;
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "POLL_DELAY_US"))
-                {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.poll_delay_us = (ULONG)v;
-                }
                 else if (!Stricmp((STRPTR)key, (STRPTR) "BUDGET"))
                 {
                     if (StrToLong((STRPTR)val, &v) && v >= 0)
                         genetConfig.budget = (UWORD)v;
+                }
+                else if (!Stricmp((STRPTR)key, (STRPTR) "PERIODIC_TASK_MS"))
+                {
+                    if (StrToLong((STRPTR)val, &v) && v >= 0)
+                        genetConfig.periodic_task_ms = (ULONG)v;
+                }
+                else if (!Stricmp((STRPTR)key, (STRPTR) "RX_COALESCE_USECS"))
+                {
+                    if (StrToLong((STRPTR)val, &v) && v >= 0)
+                        genetConfig.rx_coalesce_usecs = (ULONG)v;
+                }
+                else if (!Stricmp((STRPTR)key, (STRPTR) "RX_COALESCE_FRAMES"))
+                {
+                    if (StrToLong((STRPTR)val, &v) && v >= 0)
+                        genetConfig.rx_coalesce_frames = (ULONG)v;
+                }
+                else if (!Stricmp((STRPTR)key, (STRPTR) "TX_COALESCE_FRAMES"))
+                {
+                    if (StrToLong((STRPTR)val, &v) && v >= 0)
+                        genetConfig.tx_coalesce_frames = (ULONG)v;
                 }
             }
         }
@@ -133,13 +151,15 @@ void LoadGenetRuntimeConfig()
 void DumpGenetRuntimeConfig()
 {
 #ifdef DEBUG
-    Kprintf("[genet] config: pri=%ld stack_bytes=%lu use_dma=%ld miami=%ld poll_delay_us=%lu budget=%u\n",
+    Kprintf("[genet] config: pri=%ld stack_bytes=%lu use_dma=%ld miami=%ld periodic_task_ms=%lu budget=%lu rx_coalesce_usecs=%lu rx_coalesce_frames=%lu tx_coalesce_frames=%lu\n",
             genetConfig.unit_task_priority,
             genetConfig.unit_stack_bytes,
             (ULONG)genetConfig.use_dma,
             (ULONG)genetConfig.use_miami_workaround,
-            genetConfig.poll_delay_us,
-            genetConfig.budget);
-            
+            genetConfig.periodic_task_ms,
+            genetConfig.budget,
+            genetConfig.rx_coalesce_usecs,
+            genetConfig.rx_coalesce_frames,
+            genetConfig.tx_coalesce_frames);
 #endif
 }

@@ -131,9 +131,6 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 
 int bcmgenet_gmac_eth_rx(struct GenetUnit *unit, unsigned int budget)
 {
-	/* Clear status before servicing to reduce spurious interrupts */
-	bcmgenet_rx_ring_int_clear(unit, 0); // ring=0??
-
 	UWORD rx_prod_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
 
 	if (rx_prod_index == unit->rx_ring.rx_cons_index)
@@ -230,7 +227,7 @@ static void bcmgenet_set_rx_coalesce(struct GenetUnit *unit, ULONG usecs, ULONG 
 	unit->rx_ring.rx_max_coalesced_frames = pkts;
 
 	writel(pkts, unit->genetBase + RDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH);
-
+	
 	ULONG reg = readl(unit->genetBase + RDMA_REG_BASE + DMA_RING16_TIMEOUT);
 	reg &= ~DMA_TIMEOUT_MASK;
 	reg |= DIV_ROUND_UP(usecs * 1000, 8192);
@@ -257,10 +254,6 @@ int bcmgenet_set_coalesce(struct GenetUnit *unit, ULONG tx_max_coalesced_frames,
 	/* GENET TDMA hardware does not support a configurable timeout, but will
 	 * always generate an interrupt either after MBDONE packets have been
 	 * transmitted, or when the ring is empty.
-	 */
-
-	/* Program all TX queues with the same values, as there is no
-	 * ethtool knob to do coalescing on a per-queue basis
 	 */
 	writel(tx_max_coalesced_frames, (ULONG)unit->genetBase + TDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH);
 
@@ -298,7 +291,7 @@ static int bcmgenet_init_rx_ring(struct GenetUnit *unit)
 		writel(len_stat, descriptor_address + DMA_DESC_LENGTH_STATUS);
 	}
 
-	bcmgenet_set_rx_coalesce(unit, 50, 1);
+	bcmgenet_set_rx_coalesce(unit, genetConfig.rx_coalesce_usecs, genetConfig.rx_coalesce_frames);
 
 	/* cannot init RDMA_PROD_INDEX to 0, so align RDMA_CONS_INDEX on it instead */
 	ring->rx_cons_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
@@ -366,8 +359,7 @@ static int bcmgenet_init_tx_ring(struct GenetUnit *unit)
 	ring->clean_ptr = ring->tx_cons_index;
 
 	/* Default, can be overridden using coalesce settings */
-	// TODO from genetConfig?
-	writel(10, (ULONG)unit->genetBase + TDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH);
+	writel(genetConfig.tx_coalesce_frames, (ULONG)unit->genetBase + TDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH);
 
 	/* Disable rate control for now */
 	writel(0x0, (ULONG)unit->genetBase + TDMA_FLOW_PERIOD);
@@ -637,10 +629,8 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	Kprintf("[genet] %s: Interrupt servers installed\n", __func__);
 
 	/* Monitor link interrupts now */
-	bcmgenet_link_intr_enable(unit);
-	bcmgenet_phy_det_intr_enable(unit);
-	bcmgenet_tx_ring_int_enable(unit, 0); // ring=0??
-	bcmgenet_rx_ring_int_enable(unit, 0); // ring=0??
+	bcmgenet_irq0_enable(unit, UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R);
+	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_MBDONE | UMAC_IRQ_TXDMA_MBDONE);
 
 	/* Enable Rx/Tx */
 	setbits_32((APTR)((ULONG)unit->genetBase + UMAC_CMD), CMD_TX_EN | CMD_RX_EN);
@@ -653,10 +643,6 @@ err_irq1:
 
 err_irq0:
 	gic400_rem_int_server(unit->irq0_number, &unit->irq0_isr);
-
-// err_fini_dma:
-// 	bcmgenet_dma_teardown(priv);
-// 	bcmgenet_fini_dma(priv);
 
 init_dma:
 	unit->rxbuffer = NULL;

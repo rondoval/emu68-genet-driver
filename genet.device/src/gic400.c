@@ -5,9 +5,11 @@
  * This is intended to handle SPIs only and is supposed to coexist with Emu68.
  * For start, well assume that:
  * - all SPIs are level-triggered, active high
- * - all SPIs are in Group 0
+ * - all SPIs will be assigned to group 0
  * - all SPIs are routed to CPU0 (where 68k emulation runs)
- * - secure/non-secure access is of no concern
+ * 
+ * Actually it seems M68k code is ruing in non-secure mode,
+ * so we can't reassign interrupts to group 1.
  */
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
@@ -639,8 +641,6 @@ static int gic400_parse_devicetree()
     const ULONG address_cells_parent = DT_GetPropertyValueULONG(parent_key, "#address-cells", 1, FALSE);
     const ULONG size_cells_parent = DT_GetPropertyValueULONG(parent_key, "#size-cells", 1, FALSE);
     const ULONG cells_per_record = address_cells_parent + size_cells_parent;
-    Kprintf("[gic] %s: address_cells_parent=%lu, size_cells_parent=%lu, cells_per_record=%lu\n",
-            __func__, address_cells_parent, size_cells_parent, cells_per_record);
 
     const ULONG *value = DT_GetPropValue(DT_FindProperty(gic_key, (CONST_STRPTR) "reg"));
 
@@ -708,22 +708,23 @@ int gic400_init()
     gicc_print_info();
     gicd_print_info();
 
-    gicd_enable_group(0);         // enable group 0
+    gicd_enable_group(0);         // enable secure group
+    //gicd_disable_group(1);        // disable non-secure group
     gicc_set_priority_mask(0xFF); // allow all priorities
 
     union GICC_CTLR_register ctlr;
     gicc_get_ctlr(&ctlr);
     ctlr.bits.ack_ctl = 0;             // FIQ or IRQ interrupt acknowledge (recommended 0)
-    ctlr.bits.cbpr = 1;                // only GICC_BPR for both groups
+    ctlr.bits.cbpr = 0;                // GICC_BPR for secure; GICC_ABPR for non-secure
     ctlr.bits.eoi_mode_s = 0;          // GICC_EOIR does both priority drop and deactivate
-    ctlr.bits.eoi_mode_ns = 0;         // GICC_EOIR does both priority drop and deactivate
-    ctlr.bits.enable_grp0 = 1;         // enable group 0
-    ctlr.bits.enable_grp1 = 0;         // disable group 1
+    //ctlr.bits.eoi_mode_ns = 0;         // GICC_EOIR does both priority drop and deactivate
+    ctlr.bits.enable_grp0 = 1;         // enable secure group
+    //ctlr.bits.enable_grp1 = 0;         // disable non-secure group
     ctlr.bits.fiq_en = 0;              // disable FIQ for group 0
     ctlr.bits.fiq_bypass_dis_grp0 = 1; // disable bypassing of FIQ for Group 0
     ctlr.bits.irq_bypass_dis_grp0 = 1; // disable bypassing of IRQ for Group 0
-    ctlr.bits.fiq_bypass_dis_grp1 = 1; // disable bypassing of FIQ for Group 1
-    ctlr.bits.irq_bypass_dis_grp1 = 1; // disable bypassing of IRQ for Group 1
+    //ctlr.bits.fiq_bypass_dis_grp1 = 1; // disable bypassing of FIQ for Group 1
+    //ctlr.bits.irq_bypass_dis_grp1 = 1; // disable bypassing of IRQ for Group 1
     gicc_set_ctlr(ctlr);
 
     gic_data.dispatcher_interrupt.is_Node.ln_Type = NT_INTERRUPT;
@@ -858,7 +859,6 @@ static inline void gic400_call_interrupt(struct Interrupt *interrupt, ULONG irq)
  */
 static ULONG gic400_exec_dispatcher(void)
 {
-    Kprintf("[gic] gic400_exec_dispatcher called\n");
     ULONG iar = gicc_acknowledge_interrupt_group(0);
     ULONG irq = iar & 0x3FF;
 
@@ -872,13 +872,12 @@ static ULONG gic400_exec_dispatcher(void)
         gicc_end_interrupt_group(iar, 0);
         return 0;
     }
-    Kprintf("[gic] Handling IRQ %ld\n", irq);
 
     struct gic_irq_handler *handler = find_handler(irq);
 
     if (handler && handler->interrupt)
     {
-        Kprintf("[gic] Invoking handler for IRQ %ld\n", irq);
+        KprintfH("[gic] Invoking handler for IRQ %ld\n", irq);
         gic400_call_interrupt(handler->interrupt, irq);
     }
 
