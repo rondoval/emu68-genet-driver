@@ -40,7 +40,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         goto free_signals;
     }
 
-    // Create a timer, we'll use it to poll the PHY
+    // Create a timer, we'll use it to poll the PHY and do housekeeping
     struct MsgPort *microHZTimerPort = CreateMsgPort();
     unit->openerPort = CreateMsgPort();
     struct timerequest *packetTimerReq = CreateIORequest(microHZTimerPort, sizeof(struct timerequest));
@@ -60,7 +60,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     /* used to reset stats on S2_ONLINE */
     TimerBase = packetTimerReq->tr_node.io_Device;
 
-    // Set a timer... we need to pull on RX
+    // Start the timer
     packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
     packetTimerReq->tr_time.tv_secs = 0;
     packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
@@ -85,6 +85,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
         UWORD budget = genetConfig.budget;
 
+#ifdef USE_PRIORITY_QUEUES
         /* Receive processing */
         if ((sigset & (1UL << unit->rx_signal)) && unit->state == STATE_ONLINE)
         {
@@ -112,6 +113,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             // TODO budget
             bcmgenet_tx_reclaim(unit);
         }
+#endif
 
         // IO queue got a new message
         if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
@@ -154,12 +156,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
         }
 
-        /* process PHY events */
+        /* process IRQ0 events */
         if (sigset & (1UL << unit->irq0_signal))
         {
-            KprintfH("[genet] %s: Interrupt upper half processing\n", __func__);
+            KprintfH("[genet] %s: Interrupt bottom-half processing, status=0x%08lx\n", __func__, unit->irq0_status);
             ULONG status = unit->irq0_status;
-            KprintfH("[genet] %s: IRQ0 status: 0x%08lx\n", __func__, status);
             unit->irq0_status = 0;
 
             if (status & UMAC_IRQ_PHY_DET_R && unit->phydev->autoneg != AUTONEG_ENABLE)
@@ -207,7 +208,8 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 if (budget == 0)
                 {
                     // Still more to process, signal ourselves again
-                    Signal(unit->task, 1UL << unit->rx_signal);
+                    unit->irq0_status |= UMAC_IRQ_RXDMA_DONE;
+                    Signal(unit->task, 1UL << unit->irq0_signal);
                 }
             }
         }
@@ -222,7 +224,9 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
             /* Periodic TX reclaim */
             if (unit->state == STATE_ONLINE)
-                bcmgenet_tx_reclaim(unit); // TODO pool PHY for state
+                bcmgenet_tx_reclaim(unit);
+                
+            // TODO pool PHY for state, BCM2711 genet has a bug where PHY interrupts don't work properly
 
             /* Re-arm timer */
             packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
