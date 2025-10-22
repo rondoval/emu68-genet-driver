@@ -112,7 +112,7 @@ void LoadGenetRuntimeConfig()
                 }
                 else if (!Stricmp((STRPTR)key, (STRPTR) "BUDGET"))
                 {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
+                    if (StrToLong((STRPTR)val, &v) && v > 0)
                         genetConfig.budget = (UWORD)v;
                 }
                 else if (!Stricmp((STRPTR)key, (STRPTR) "PERIODIC_TASK_MS"))
