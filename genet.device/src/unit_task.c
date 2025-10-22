@@ -10,6 +10,7 @@
 #include <dos/dos.h>
 
 #include <genet/bcmgenet-regs.h>
+#include <genet/bcmgenet-irq.h>
 #include <genet/phy.h>
 #include <compat.h>
 #include <device.h>
@@ -32,10 +33,10 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     // Allocate signals for interrupt handlers
     unit->rx_signal = AllocSignal(-1);
     unit->tx_signal = AllocSignal(-1);
-    unit->phy_signal = AllocSignal(-1);
-    if (unit->rx_signal == -1 || unit->tx_signal == -1 || unit->phy_signal == -1)
+    unit->irq0_signal = AllocSignal(-1);
+    if (unit->rx_signal == -1 || unit->tx_signal == -1 || unit->irq0_signal == -1)
     {
-        Kprintf("[genet] %s: Failed to allocate RX/TX/PHY signals\n", __func__);
+        Kprintf("[genet] %s: Failed to allocate RX/TX/IRQ0 signals\n", __func__);
         goto free_signals;
     }
 
@@ -62,7 +63,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     // Set a timer... we need to pull on RX
     packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
     packetTimerReq->tr_time.tv_secs = 0;
-    packetTimerReq->tr_time.tv_micro = genetConfig.poll_delay_us;
+    packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
     SendIO(&packetTimerReq->tr_node);
 
     unit->task = FindTask(NULL);
@@ -75,7 +76,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                      (1UL << microHZTimerPort->mp_SigBit) |
                      (1UL << unit->rx_signal) |
                      (1UL << unit->tx_signal) |
-                     (1UL << unit->phy_signal) |
+                     (1UL << unit->irq0_signal) |
                      SIGBREAKF_CTRL_C;
 
     do
@@ -105,7 +106,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             WaitIO(&packetTimerReq->tr_node);
             packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
             packetTimerReq->tr_time.tv_secs = 0;
-            packetTimerReq->tr_time.tv_micro = genetConfig.poll_delay_us;
+            packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
             SendIO(&packetTimerReq->tr_node);
 
             // TODO budget
@@ -154,23 +155,60 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         }
 
         /* process PHY events */
-        if (sigset & (1UL << unit->phy_signal))
+        if (sigset & (1UL << unit->irq0_signal))
         {
+            KprintfH("[genet] %s: Interrupt upper half processing\n", __func__);
             ULONG status = unit->irq0_status;
+            KprintfH("[genet] %s: IRQ0 status: 0x%08lx\n", __func__, status);
             unit->irq0_status = 0;
 
             if (status & UMAC_IRQ_PHY_DET_R && unit->phydev->autoneg != AUTONEG_ENABLE)
             {
-                //TODO phy_init_hw(unit->phydev);
+                // TODO phy_init_hw(unit->phydev);
                 genphy_config_aneg(unit->phydev);
             }
 
             /* Link UP/DOWN event */
-            if (status & UMAC_IRQ_LINK_EVENT)
+            if (status & UMAC_IRQ_LINK_DOWN)
             {
                 // phy_mac_interrupt(unit->phydev);
                 // TODO PHY state change
-                Kprintf("[genet] %s: PHY link state change event\n", __func__);
+                Kprintf("[genet] %s: PHY link down event\n", __func__);
+            }
+            else if (status & UMAC_IRQ_LINK_UP)
+            {
+                // phy_mac_interrupt(unit->phydev);
+                // TODO PHY state change
+                Kprintf("[genet] %s: PHY link up event\n", __func__);
+            }
+
+            /* Transmit processing */
+            if ((status & UMAC_IRQ_TXDMA_DONE) && unit->state == STATE_ONLINE)
+            {
+                KprintfH("[genet] %s: TX signal received, reclaiming\n", __func__);
+                // reschedule periodic reclaim
+                AbortIO(&packetTimerReq->tr_node);
+                WaitIO(&packetTimerReq->tr_node);
+                packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
+                packetTimerReq->tr_time.tv_secs = 0;
+                packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
+                SendIO(&packetTimerReq->tr_node);
+
+                // TODO budget
+                bcmgenet_tx_reclaim(unit);
+            }
+
+            /* Receive processing */
+            if ((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE)
+            {
+                KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
+                budget -= bcmgenet_gmac_eth_rx(unit, budget);
+                KprintfH("[genet] %s: Remaining budget: %ld\n", __func__, budget);
+                if (budget == 0)
+                {
+                    // Still more to process, signal ourselves again
+                    Signal(unit->task, 1UL << unit->rx_signal);
+                }
             }
         }
 
@@ -184,21 +222,12 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
             /* Periodic TX reclaim */
             if (unit->state == STATE_ONLINE)
-                bcmgenet_tx_reclaim(unit);
-
-            BOOL pending, active, enabled;
-            gic400_get_irq_status(unit->irq1_number, &pending, &active, &enabled);
-            Kprintf("[genet] %s: IRQ1 status - pending: %ld, active: %ld, enabled: %ld\n", __func__, pending, active, enabled);
-
-            gic400_get_irq_status(unit->irq0_number, &pending, &active, &enabled);
-            Kprintf("[genet] %s: IRQ0 status - pending: %ld, active: %ld, enabled: %ld\n", __func__, pending, active, enabled);
-
-            // TODO pool PHY for state
+                bcmgenet_tx_reclaim(unit); // TODO pool PHY for state
 
             /* Re-arm timer */
             packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
             packetTimerReq->tr_time.tv_secs = 0;
-            packetTimerReq->tr_time.tv_micro = genetConfig.poll_delay_us;
+            packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
             SendIO(&packetTimerReq->tr_node);
         }
 
@@ -218,7 +247,7 @@ free_ports:
 free_signals:
     FreeSignal(unit->rx_signal);
     FreeSignal(unit->tx_signal);
-    FreeSignal(unit->phy_signal);
+    FreeSignal(unit->irq0_signal);
 
     FreeSignal(unit->unit.unit_MsgPort.mp_SigBit);
     Signal(parent, SIGBREAKF_CTRL_F);

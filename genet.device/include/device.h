@@ -60,10 +60,10 @@ struct Opener
 	struct MinList readQueue;
 	struct MinList orphanQueue;
 	struct MinList eventQueue;
-	
+
 	/* Optimized queues for common packet types */
-	struct MinList ipv4Queue;  /* For 0x0800 */
-	struct MinList arpQueue;   /* For 0x0806 */
+	struct MinList ipv4Queue; /* For 0x0800 */
+	struct MinList arpQueue;  /* For 0x0806 */
 
 	struct SignalSemaphore openerSemaphore;
 
@@ -158,7 +158,6 @@ struct GenetUnit
 	struct MinList multicastRanges;
 	ULONG multicastCount;
 	BOOL mdfEnabled; /* Multicast filter enabled */
-	BYTE rx_signal, tx_signal, phy_signal;
 
 	/* Opener management (message-based modifications) */
 	struct MsgPort *openerPort; /* created in unit task */
@@ -170,8 +169,9 @@ struct GenetUnit
 	APTR gpioBase;
 
 	/* Interrupt config and status */
-	ULONG irq0_number, irq1_number; /* IRQ numbers from Device Tree */
-	ULONG irq0_status;				/* status bits of irq0*/
+	ULONG irq0_number, irq1_number;			/* IRQ numbers from Device Tree */
+	ULONG irq0_status;						/* status bits of irq0*/
+	BYTE rx_signal, tx_signal, irq0_signal; /* signals used to wake bottom-half */
 	struct Interrupt irq0_isr, irq1_isr;
 
 	/* PHY */
@@ -189,15 +189,14 @@ struct GenetUnit
 	struct bcmgenet_tx_ring tx_ring;
 	UBYTE *txbuffer_not_aligned;
 	UBYTE *txbuffer;
-
-	UWORD tx_watchdog_fast_ticks;/* remaining fast polls while data on TX ring */
 };
 
 /* Opener management commands */
 #define OPENER_CMD_ADD 1
 #define OPENER_CMD_REM 2
 
-struct OpenerControlMsg {
+struct OpenerControlMsg
+{
 	struct Message msg;
 	UWORD command; /* OPENER_CMD_* */
 	struct Opener *opener;
@@ -227,17 +226,17 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength, ULO
 void ProcessCommand(struct IOSana2Req *io);
 
 /* Inline function for fast packet type queue lookup */
-static inline struct MinList* GetPacketTypeQueue(struct Opener *opener, UWORD packetType)
+static inline struct MinList *GetPacketTypeQueue(struct Opener *opener, UWORD packetType)
 {
-    switch (packetType)
-    {
-        case 0x0800: /* IPv4 */
-            return &opener->ipv4Queue;
-        case 0x0806: /* ARP */
-            return &opener->arpQueue;
-        default:
-            return &opener->readQueue; /* Fallback to legacy port */
-    }
+	switch (packetType)
+	{
+	case 0x0800: /* IPv4 */
+		return &opener->ipv4Queue;
+	case 0x0806: /* ARP */
+		return &opener->arpQueue;
+	default:
+		return &opener->readQueue; /* Fallback to legacy port */
+	}
 }
 
 int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io);
