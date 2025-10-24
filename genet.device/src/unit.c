@@ -176,6 +176,7 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 			UnitOffline(unit);
 		}
 		UnitTaskStop(unit);
+		gic400_shutdown();
 		DeletePool(unit->memoryPool);
 		unit->memoryPool = NULL;
 		unit->state = STATE_UNCONFIGURED;

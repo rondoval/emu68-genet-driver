@@ -586,7 +586,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	unit->irq0_isr.is_Data = (APTR)unit;
 	unit->irq0_isr.is_Code = (APTR)bcmgenet_isr0;
 
-	ret = gic400_add_int_server(unit->irq0_number, &unit->irq0_isr);
+	ret = gic400_add_int_server(unit->irq0_number, 0x0, FALSE, &unit->irq0_isr);
 	if (ret < 0)
 	{
 		Kprintf("[genet] %s: can't register IRQ %ld\n", __func__, unit->irq0_number);
@@ -600,7 +600,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	unit->irq1_isr.is_Data = (APTR)unit;
 	unit->irq1_isr.is_Code = (APTR)bcmgenet_isr1;
 
-	ret = gic400_add_int_server(unit->irq1_number, &unit->irq1_isr);
+	ret = gic400_add_int_server(unit->irq1_number, 0x0, FALSE, &unit->irq1_isr);
 	if (ret < 0)
 	{
 		Kprintf("[genet] %s: can't register IRQ %ld\n", __func__, unit->irq1_number);
@@ -751,6 +751,10 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 	delay_us(1000);
 
 	bcmgenet_intr_disable(unit);
+#ifdef USE_PRIORITY_QUEUES
+	gic400_rem_int_server(unit->irq1_number, &unit->irq1_isr);
+#endif
+	gic400_rem_int_server(unit->irq0_number, &unit->irq0_isr);
 	
 	/* tx reclaim */
 	bcmgenet_tx_reclaim(unit);
