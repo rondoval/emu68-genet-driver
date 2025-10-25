@@ -50,9 +50,13 @@ static inline struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
 }
 
 /* Unlocked version of the reclaim routine */
-void bcmgenet_tx_reclaim(struct GenetUnit *unit)
+unsigned int bcmgenet_tx_reclaim(struct GenetUnit *unit, unsigned int budget)
 {
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
+
+	if (budget == 0U)
+		return 0;
+
 	ObtainSemaphore(&ring->tx_ring_sem);
 	/* Compute how many buffers are transmitted since last xmit call */
 	UWORD tx_cons_index = readl((ULONG)unit->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
@@ -61,10 +65,13 @@ void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 	/* Reclaim transmitted buffers */
 	UWORD txbds_processed = 0;
 	ULONG bytes_compl = 0;
-	UWORD pkts_compl = 0;
-	while (txbds_processed < txbds_ready)
+	unsigned int pkts_compl = 0;
+	while (txbds_processed < txbds_ready && pkts_compl < budget)
 	{
 		struct IOSana2Req *io = bcmgenet_free_tx_cb(&ring->tx_control_block[ring->clean_ptr]);
+		++txbds_processed;
+		++ring->clean_ptr;
+
 		if (io)
 		{
 			pkts_compl++;
@@ -72,13 +79,10 @@ void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 			KprintfH("[genet] %s: Reclaimed tx buffer 0x%lx, length %ld\n", __func__, io, io->ios2_DataLength);
 			ReplyMsg((struct Message *)io);
 		}
-
-		++txbds_processed;
-		++ring->clean_ptr;
 	}
 
 	ring->free_bds += txbds_processed;
-	ring->tx_cons_index = tx_cons_index;
+	ring->tx_cons_index = (ring->tx_cons_index + txbds_processed) & DMA_C_INDEX_MASK;
 
 	unit->stats.PacketsSent += pkts_compl;
 	unit->internalStats.tx_packets += pkts_compl;
@@ -86,6 +90,7 @@ void bcmgenet_tx_reclaim(struct GenetUnit *unit)
 	// bcmgenet_tx_ring_int_enable(ring); if we ever do something NAPI like
 
 	ReleaseSemaphore(&ring->tx_ring_sem);
+	return pkts_compl;
 }
 
 int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)

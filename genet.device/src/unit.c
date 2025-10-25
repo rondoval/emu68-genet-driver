@@ -93,17 +93,7 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		unit->memoryPool = NULL;
 		return result;
 	}
-
-	result = gic400_init();
-	if (result < 0)
-	{
-		Kprintf("[genet] %s: Failed to initialize GIC400: %ld\n", __func__, result);
-		DeletePool(unit->memoryPool);
-		unit->memoryPool = NULL;
-		result = S2ERR_NO_RESOURCES;
-		return result;
-	}
-
+	
 	/* On first open, we initialize current MAC to 0 to indicate it was not set yet */
 	_memset(unit->currentMacAddress, 0, sizeof(unit->currentMacAddress));
 	result = UnitTaskStart(unit);
@@ -112,6 +102,16 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 		Kprintf("[genet] %s: Failed to start unit task: %ld\n", __func__, result);
 		DeletePool(unit->memoryPool);
 		unit->memoryPool = NULL;
+		return result;
+	}
+
+	result = gic400_init();
+	if (result < 0)
+	{
+		Kprintf("[genet] %s: Failed to initialize GIC400: %ld\n", __func__, result);
+		DeletePool(unit->memoryPool);
+		unit->memoryPool = NULL;
+		result = S2ERR_NO_RESOURCES;
 		return result;
 	}
 

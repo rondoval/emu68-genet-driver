@@ -757,7 +757,7 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 	gic400_rem_int_server(unit->irq0_number, &unit->irq0_isr);
 	
 	/* tx reclaim */
-	bcmgenet_tx_reclaim(unit);
+	bcmgenet_tx_reclaim(unit, TX_DESCS);
 	// /* Really kill the PHY state machine and disconnect from it */
 	// phy_disconnect(dev->phydev);
 
