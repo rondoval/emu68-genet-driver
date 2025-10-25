@@ -82,19 +82,29 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     do
     {
         sigset = Wait(waitMask);
-
-        UWORD budget = genetConfig.budget;
+        UWORD budget;
 
 #ifdef USE_PRIORITY_QUEUES
         /* Receive processing */
         if ((sigset & (1UL << unit->rx_signal)) && unit->state == STATE_ONLINE)
         {
             KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
-            budget -= bcmgenet_gmac_eth_rx(unit, budget);
+            budget = genetConfig.budget;
+            int res = bcmgenet_gmac_eth_rx(unit, budget);
+            if (res > 0)
+            {
+                budget -= res;
+            }
+
             if (budget == 0)
             {
                 // Still more to process, signal ourselves again
                 Signal(unit->task, 1UL << unit->rx_signal);
+            }
+            else
+            {
+                /* We caught up, enable interrupts */
+                bcmgenet_rx_ring_int_enable(&unit->rx_ring);
             }
         }
 
@@ -110,14 +120,26 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
             SendIO(&packetTimerReq->tr_node);
 
-            // TODO budget
-            bcmgenet_tx_reclaim(unit);
+            budget = genetConfig.budget;
+            unsigned int tx_done = bcmgenet_tx_reclaim(unit, budget);
+            budget -= tx_done;
+
+            if (budget == 0)
+            {
+                Signal(unit->task, 1UL << unit->tx_signal);
+            }
+            else
+            {
+                /* We caught up, enable interrupts */
+                bcmgenet_tx_ring_int_enable(unit, 0);
+            }
         }
 #endif
 
         // IO queue got a new message
         if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
         {
+            budget = genetConfig.budget;
             struct IOSana2Req *io;
             // Drain command queue and process it
             while ((io = (struct IOSana2Req *)GetMsg(&unit->unit.unit_MsgPort)) && --budget)
@@ -134,6 +156,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         // Opener management messages
         if (unlikely(sigset & (1UL << unit->openerPort->mp_SigBit)))
         {
+            budget = genetConfig.budget;
             struct OpenerControlMsg *omsg;
             while ((omsg = (struct OpenerControlMsg *)GetMsg(unit->openerPort)) && --budget)
             {
@@ -195,21 +218,42 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
                 SendIO(&packetTimerReq->tr_node);
 
-                // TODO budget
-                bcmgenet_tx_reclaim(unit);
+                budget = genetConfig.budget;
+                UWORD tx_done = bcmgenet_tx_reclaim(unit, budget);
+                if (budget - tx_done == 0)
+                {
+                    // Still more to process, signal ourselves again
+                    unit->irq0_status |= UMAC_IRQ_TXDMA_DONE;
+                    Signal(unit->task, 1UL << unit->irq0_signal);
+                }
+                else
+                {
+                    /* We caught up, enable interrupts */
+                    bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
+                }
             }
 
             /* Receive processing */
             if ((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE)
             {
                 KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
-                budget -= bcmgenet_gmac_eth_rx(unit, budget);
+                budget = genetConfig.budget;
+                int res = bcmgenet_gmac_eth_rx(unit, budget);
+                if (res > 0)
+                {
+                    budget -= res;
+                }
                 KprintfH("[genet] %s: Remaining budget: %ld\n", __func__, budget);
                 if (budget == 0)
                 {
                     // Still more to process, signal ourselves again
                     unit->irq0_status |= UMAC_IRQ_RXDMA_DONE;
                     Signal(unit->task, 1UL << unit->irq0_signal);
+                }
+                else
+                {
+                    /* We caught up, enable interrupts */
+                    bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE);
                 }
             }
         }
@@ -222,9 +266,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 WaitIO(&packetTimerReq->tr_node);
             }
 
-            /* Periodic TX reclaim */
+            /* Just in case we got stuck */
             if (unit->state == STATE_ONLINE)
-                bcmgenet_tx_reclaim(unit);
+            {
+                bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE);
+            }
                 
             // TODO pool PHY for state, BCM2711 genet has a bug where PHY interrupts don't work properly
 

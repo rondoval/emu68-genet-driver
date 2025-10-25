@@ -277,7 +277,7 @@ static int bcmgenet_init_rx_ring(struct GenetUnit *unit)
 
 	_memset(ring->rx_control_block, 0, RX_DESCS * sizeof(struct enet_cb));
 
-	const ULONG len_stat = (RX_BUF_LENGTH << DMA_BUFLENGTH_SHIFT) | DMA_OWN;
+	const ULONG len_stat = (RX_BUF_LENGTH << DMA_BUFLENGTH_SHIFT);// | DMA_OWN;
 
 	for (ULONG i = 0; i < RX_DESCS; i++)
 	{
@@ -632,7 +632,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 
 	/* Monitor link interrupts now */
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R);
-	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_MBDONE | UMAC_IRQ_TXDMA_MBDONE);
+	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE | UMAC_IRQ_TXDMA_DONE);
 
 	/* Enable Rx/Tx */
 	setbits_32((APTR)((ULONG)unit->genetBase + UMAC_CMD), CMD_TX_EN | CMD_RX_EN);

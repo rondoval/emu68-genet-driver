@@ -105,16 +105,13 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     base->device.dd_Library.lib_Revision = DEVICE_REVISION;
     base->unit = NULL;
 
-    UtilityBase = OpenLibrary((CONST_STRPTR)"utility.library", LIB_MIN_VERSION);
+    UtilityBase = OpenLibrary((CONST_STRPTR) "utility.library", LIB_MIN_VERSION);
     if (UtilityBase == NULL)
     {
         Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
         expungeLib(base);
         return NULL;
     }
-
-    LoadGenetRuntimeConfig();
-    DumpGenetRuntimeConfig();
 
     return base;
 }
@@ -211,6 +208,13 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
         Kprintf("[genet] %s: Unit is already open, can't do exclusive access\n", __func__);
         io->ios2_Req.io_Error = IOERR_UNITBUSY;
         return;
+    }
+
+    if (base->unit->unit.unit_OpenCnt == 0)
+    {
+        /* We're reloading configuration only if the device was previously not in use */
+        LoadGenetRuntimeConfig();
+        DumpGenetRuntimeConfig();
     }
 
     struct Opener *opener = NULL;

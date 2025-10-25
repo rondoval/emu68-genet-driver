@@ -114,6 +114,9 @@ void bcmgenet_isr0(struct ExecBase *SysBase asm("a6"), struct GenetUnit *unit as
 	// 	wake_up(&priv->wq);
 	KprintfH("[genet] %s: IRQ0 status: 0x%08lX unit: 0x%08lx\n", __func__, status, (ULONG)unit);
 
+	/* Disable interrupts so that we're not flooded until bottom-half catches up */
+	bcmgenet_irq0_disable(unit, status & (UMAC_IRQ_RXDMA_DONE | UMAC_IRQ_TXDMA_DONE));
+
 	/* Save irq status for bottom-half processing. */
 	unit->irq0_status |= status;
 	Signal(unit->task, 1UL << unit->irq0_signal);
