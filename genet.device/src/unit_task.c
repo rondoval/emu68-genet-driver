@@ -70,6 +70,8 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     /* Signal parent that Unit task is up and running now */
     Signal(parent, SIGBREAKF_CTRL_F);
 
+    Kprintf("[genet] %s: Entering main unit task loop\n", __func__);
+
     ULONG sigset;
     ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
                      (1UL << unit->openerPort->mp_SigBit) |
@@ -82,6 +84,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     do
     {
         sigset = Wait(waitMask);
+        KprintfH("[genet] %s: Woke up, sigset=0x%08lx\n", __func__, sigset);
         UWORD budget;
 
 #ifdef USE_PRIORITY_QUEUES
@@ -271,7 +274,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             {
                 bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE);
             }
-                
+
             // TODO pool PHY for state, BCM2711 genet has a bug where PHY interrupts don't work properly
 
             /* Re-arm timer */
@@ -349,6 +352,8 @@ int UnitTaskStart(struct GenetUnit *unit)
     _NewMinList((struct MinList *)&task->tc_MemEntry);
     AddHead(&task->tc_MemEntry, &ml->ml_Node);
 
+    SetSignal(0UL, SIGBREAKF_CTRL_F);
+
     APTR result = AddTask(task, UnitTask, NULL);
     if (result == NULL)
     {
@@ -389,6 +394,8 @@ void UnitTaskStop(struct GenetUnit *unit)
         timerReq->tr_time.tv_micro = 250000;
         DoIO(&timerReq->tr_node);
     } while (unit->task != NULL);
+
+    SetSignal(0UL, SIGBREAKF_CTRL_F);
 
     CloseDevice(&timerReq->tr_node);
     DeleteIORequest(&timerReq->tr_node);
