@@ -67,6 +67,8 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     SendIO(&packetTimerReq->tr_node);
 
     unit->task = FindTask(NULL);
+    BYTE oldPri = SetTaskPri(unit->task, genetConfig.unit_task_priority);
+    Kprintf("[genet] %s: Adjusted task priority %ld -> %ld\n", __func__, (LONG)oldPri, (LONG)genetConfig.unit_task_priority);
     /* Signal parent that Unit task is up and running now */
     Signal(parent, SIGBREAKF_CTRL_F);
 
@@ -347,7 +349,7 @@ int UnitTaskStart(struct GenetUnit *unit)
 
     task->tc_Node.ln_Name = "genet rx/tx";
     task->tc_Node.ln_Type = NT_TASK;
-    task->tc_Node.ln_Pri = genetConfig.unit_task_priority;
+    task->tc_Node.ln_Pri = 0;
 
     _NewMinList((struct MinList *)&task->tc_MemEntry);
     AddHead(&task->tc_MemEntry, &ml->ml_Node);
