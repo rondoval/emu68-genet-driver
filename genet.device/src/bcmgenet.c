@@ -131,13 +131,14 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 
 int bcmgenet_gmac_eth_rx(struct GenetUnit *unit, unsigned int budget)
 {
-	UWORD rx_prod_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
+	UWORD rx_prod_reg = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX);
+	UWORD discards = (rx_prod_reg >> DMA_P_INDEX_DISCARD_CNT_SHIFT) & DMA_P_INDEX_DISCARD_CNT_MASK;
+	UWORD rx_prod_index = rx_prod_reg & DMA_P_INDEX_MASK;
 
 	if (rx_prod_index == unit->rx_ring.rx_cons_index)
 		return -EAGAIN;
 
-	UWORD discards = (rx_prod_index >> DMA_P_INDEX_DISCARD_CNT_SHIFT) & DMA_P_INDEX_DISCARD_CNT_MASK;
-	if (discards > unit->rx_ring.old_discards)
+	if (unlikely(discards > unit->rx_ring.old_discards))
 	{
 		discards = discards - unit->rx_ring.old_discards;
 		unit->internalStats.rx_overruns += discards; // dropped packets?
@@ -153,11 +154,14 @@ int bcmgenet_gmac_eth_rx(struct GenetUnit *unit, unsigned int budget)
 
 	KprintfH("[genet] %s: rx_prod_index=%ld, rx_cons_index=%ld\n", __func__, rx_prod_index, unit->rx_ring.rx_cons_index);
 
-	UWORD to_process = (rx_prod_index - unit->rx_ring.rx_cons_index) & DMA_C_INDEX_MASK;
-	UWORD processed = 0;
-	while (processed < to_process && processed < budget)
+	UWORD rx_cons_index = unit->rx_ring.rx_cons_index;
+	UWORD to_process = (rx_prod_index - rx_cons_index) & DMA_C_INDEX_MASK;
+	if(to_process > budget)
+		to_process = budget;
+	rx_prod_index = (rx_cons_index + to_process) & DMA_C_INDEX_MASK;
+	while (rx_cons_index != rx_prod_index)
 	{
-		struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[unit->rx_ring.rx_cons_index & 0xff];
+		struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[rx_cons_index & 0xff];
 		APTR desc_base = rx_cb->descriptor_address;
 		ULONG length = readl((ULONG)desc_base + DMA_DESC_LENGTH_STATUS);
 		UWORD dma_flags = length & 0xffff;
@@ -208,14 +212,14 @@ int bcmgenet_gmac_eth_rx(struct GenetUnit *unit, unsigned int budget)
 		} /* error packet */
 
 		ReceiveFrame(unit, (UBYTE *)addr + RX_BUF_OFFSET, length - RX_BUF_OFFSET, dma_flags);
-next:
-		unit->rx_ring.rx_cons_index = (unit->rx_ring.rx_cons_index + 1) & DMA_C_INDEX_MASK;
-		writel(unit->rx_ring.rx_cons_index, (ULONG)unit->genetBase + RDMA_CONS_INDEX);
-
-		processed++;
+	next:
+		rx_cons_index++;
 	}
+
+	unit->rx_ring.rx_cons_index = rx_cons_index;
+	writel(rx_cons_index, (ULONG)unit->genetBase + RDMA_CONS_INDEX);
 	
-	return processed;
+	return to_process;
 }
 
 #define DIV_ROUND_UP(n, d) (((n) + (d) - 1) / (d))

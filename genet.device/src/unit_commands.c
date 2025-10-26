@@ -291,9 +291,9 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
     if (unit->state != STATE_ONLINE)
     {
         Kprintf("[genet] %s: Bringing unit online\n", __func__);
-        _memset(&unit->stats, 0, sizeof(unit->stats));
-        GetSysTime(&unit->stats.LastStart);
-        Kprintf("[genet] %s: statistics zeroed, LastStart: %ld\n", __func__, unit->stats.LastStart.tv_secs);
+        _memset(&unit->internalStats, 0, sizeof(unit->internalStats));
+        GetSysTime(&unit->internalStats.last_start);
+        Kprintf("[genet] %s: statistics zeroed, LastStart: %ld\n", __func__, unit->internalStats.last_start.tv_secs);
 
         int result = UnitOnline(unit);
         if (result != S2ERR_NO_ERROR)
@@ -422,7 +422,16 @@ void ProcessCommand(struct IOSana2Req *io)
 
         case S2_GETGLOBALSTATS:
             KprintfH("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
-            CopyMem(&unit->stats, io->ios2_StatData, sizeof(struct Sana2DeviceStats));
+            struct Sana2DeviceStats *stats = (struct Sana2DeviceStats *)io->ios2_StatData;
+            stats->PacketsReceived = unit->internalStats.rx_packets;
+            stats->PacketsSent = unit->internalStats.tx_packets;
+            stats->UnknownTypesReceived = unit->internalStats.rx_dropped;
+            stats->Overruns = unit->internalStats.rx_overruns + unit->internalStats.tx_dropped;
+            stats->BadData = unit->internalStats.rx_other_errors + unit->internalStats.rx_crc_errors +
+                             unit->internalStats.rx_frame_errors + unit->internalStats.rx_length_errors +
+                             unit->internalStats.rx_fragmented_errors;
+            stats->LastStart = unit->internalStats.last_start;
+
             io->ios2_Req.io_Error = S2ERR_NO_ERROR;
             complete = COMMAND_PROCESSED;
             break;

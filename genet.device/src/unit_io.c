@@ -121,7 +121,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength, ULO
         }
     }
 
-    unit->stats.PacketsReceived++;
     unit->internalStats.rx_packets++;
     unit->internalStats.rx_bytes += packetLength;
     UWORD packetType = *(UWORD *)&packet[12];
@@ -130,6 +129,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength, ULO
     KprintfH("[genet] %s: Received packet of length %ld with type 0x%lx\n", __func__, packetLength, packetType);
 
     /* Fast path for common packet types */
+    //TODO get rid of semaphores
     if (likely(packetType == 0x0800 || packetType == 0x0806))
     {
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
@@ -186,7 +186,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, UBYTE *packet, ULONG packetLength, ULO
     /* No receiver for this packet found? It's an orphan then */
     if (unlikely(orphan))
     {
-        unit->stats.UnknownTypesReceived++;
         unit->internalStats.rx_dropped++;
 
         /* Go through all openers and offer orphan packet to anyone asking */

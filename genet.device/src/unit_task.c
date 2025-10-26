@@ -65,8 +65,6 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     SendIO(&packetTimerReq->tr_node);
 
     unit->task = FindTask(NULL);
-    BYTE oldPri = SetTaskPri(unit->task, genetConfig.unit_task_priority);
-    Kprintf("[genet] %s: Adjusted task priority %ld -> %ld\n", __func__, (LONG)oldPri, (LONG)genetConfig.unit_task_priority);
     /* Signal parent that Unit task is up and running now */
     Signal(parent, SIGBREAKF_CTRL_F);
 
@@ -135,20 +133,20 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             ULONG status = unit->irq0_status;
             unit->irq0_status = 0;
 
-            if (status & UMAC_IRQ_PHY_DET_R && unit->phydev->autoneg != AUTONEG_ENABLE)
+            if (unlikely((status & UMAC_IRQ_PHY_DET_R) && unit->phydev->autoneg != AUTONEG_ENABLE))
             {
                 // TODO phy_init_hw(unit->phydev);
                 genphy_config_aneg(unit->phydev);
             }
 
             /* Link UP/DOWN event */
-            if (status & UMAC_IRQ_LINK_DOWN)
+            if (unlikely(status & UMAC_IRQ_LINK_DOWN))
             {
                 // phy_mac_interrupt(unit->phydev);
                 // TODO PHY state change
                 Kprintf("[genet] %s: PHY link down event\n", __func__);
             }
-            else if (status & UMAC_IRQ_LINK_UP)
+            else if (unlikely(status & UMAC_IRQ_LINK_UP))
             {
                 // phy_mac_interrupt(unit->phydev);
                 // TODO PHY state change
@@ -156,7 +154,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
 
             /* Receive processing */
-            if ((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE)
+            if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {
                 KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
                 budget = genetConfig.budget;
@@ -203,7 +201,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             SendIO(&packetTimerReq->tr_node);
         }
 
-        if (sigset & SIGBREAKF_CTRL_C)
+        if (unlikely(sigset & SIGBREAKF_CTRL_C))
         {
             Kprintf("[genet] %s: Received SIGBREAKF_CTRL_C, stopping genet task\n", __func__);
             AbortIO(&packetTimerReq->tr_node);
@@ -262,9 +260,9 @@ int UnitTaskStart(struct GenetUnit *unit)
     *--stack = (ULONG)unit;
     task->tc_SPReg = stack;
 
-    task->tc_Node.ln_Name = "genet rx/tx";
+    task->tc_Node.ln_Name = "genet ethernet driver";
     task->tc_Node.ln_Type = NT_TASK;
-    task->tc_Node.ln_Pri = 0;
+    task->tc_Node.ln_Pri = genetConfig.unit_task_priority;
 
     _NewMinList((struct MinList *)&task->tc_MemEntry);
     AddHead(&task->tc_MemEntry, &ml->ml_Node);

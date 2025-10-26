@@ -119,11 +119,11 @@ struct enet_cb
 
 struct internal_stats
 {
-	ULONG rx_packets;
-	ULONG rx_bytes;
-	ULONG rx_dropped;
-	ULONG rx_arp_ip_dropped;
-	ULONG rx_overruns;
+	ULONG rx_packets;		 // Sana2 PacketsReceived
+	ULONG rx_bytes;			 // total bytes received
+	ULONG rx_dropped;		 // Sana2 UnknownTypesReceived
+	ULONG rx_arp_ip_dropped; // included in rx_dropped
+	ULONG rx_overruns;		 // Sana2 Overruns
 	ULONG rx_other_errors;
 	ULONG rx_crc_errors;
 	ULONG rx_over_errors;
@@ -131,11 +131,13 @@ struct internal_stats
 	ULONG rx_length_errors;
 	ULONG rx_fragmented_errors;
 
-	ULONG tx_packets;
-	ULONG tx_bytes;
-	ULONG tx_dma;
+	ULONG tx_packets; // Sana2 PacketsSent
+	ULONG tx_bytes;	  // total bytes transmitted
+	ULONG tx_dma;	  // tx_dma + tx_copy = tx_packets
 	ULONG tx_copy;
-	ULONG tx_dropped;
+	ULONG tx_dropped; // Sana2 Overruns
+
+	TimeVal_Type last_start;
 };
 
 struct GenetUnit
@@ -151,7 +153,6 @@ struct GenetUnit
 	/* unit/task state */
 	UnitState state;
 	struct Task *task;
-	struct Sana2DeviceStats stats;
 	struct internal_stats internalStats;
 	struct MinList openers;
 	struct MinList multicastRanges;
@@ -168,9 +169,9 @@ struct GenetUnit
 	APTR gpioBase;
 
 	/* Interrupt config and status */
-	ULONG irq0_number, irq1_number;			/* IRQ numbers from Device Tree */
-	ULONG irq0_status;						/* status bits of irq0*/
-	BYTE irq0_signal; /* signals used to wake bottom-half */
+	ULONG irq0_number, irq1_number; /* IRQ numbers from Device Tree */
+	ULONG irq0_status;				/* status bits of irq0*/
+	BYTE irq0_signal;				/* signals used to wake bottom-half */
 	struct Interrupt irq0_isr;
 
 	/* PHY */

@@ -82,7 +82,6 @@ unsigned int bcmgenet_tx_reclaim(struct GenetUnit *unit, unsigned int budget)
 
 	ring->tx_cons_index = (ring->tx_cons_index + txbds_processed) & DMA_C_INDEX_MASK;
 
-	unit->stats.PacketsSent += pkts_compl;
 	unit->internalStats.tx_packets += pkts_compl;
 	unit->internalStats.tx_bytes += bytes_compl;
 
