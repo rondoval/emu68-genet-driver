@@ -94,7 +94,6 @@ struct bcmgenet_tx_ring
 	struct enet_cb *tx_control_block; /* tx ring buffer control block*/
 	UBYTE clean_ptr;				  /* Tx ring clean pointer */
 	UWORD tx_cons_index;			  /* last consumer index of each ring*/
-	UWORD free_bds;					  /* # of free bds for each ring */
 	UBYTE write_ptr;				  /* Tx ring write pointer SW copy */
 	UWORD tx_prod_index;			  /* Tx ring producer index SW copy */
 

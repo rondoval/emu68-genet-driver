@@ -349,8 +349,6 @@ static int bcmgenet_init_tx_ring(struct GenetUnit *unit)
 		ring->tx_control_block[i].internal_buffer = &unit->txbuffer[i * RX_BUF_LENGTH];
 	}
 
-	ring->free_bds = TX_DESCS;
-
 	/* Cannot init TDMA_CONS_INDEX to 0, so align TDMA_PROD_INDEX on it instead */
 	ring->tx_cons_index = readl((ULONG)unit->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
 	writel(ring->tx_cons_index, (ULONG)unit->genetBase + TDMA_PROD_INDEX);
