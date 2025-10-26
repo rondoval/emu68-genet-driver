@@ -31,10 +31,8 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     unit->unit.unit_MsgPort.mp_Node.ln_Type = NT_MSGPORT;
 
     // Allocate signals for interrupt handlers
-    unit->rx_signal = AllocSignal(-1);
-    unit->tx_signal = AllocSignal(-1);
     unit->irq0_signal = AllocSignal(-1);
-    if (unit->rx_signal == -1 || unit->tx_signal == -1 || unit->irq0_signal == -1)
+    if (unit->irq0_signal == -1)
     {
         Kprintf("[genet] %s: Failed to allocate RX/TX/IRQ0 signals\n", __func__);
         goto free_signals;
@@ -78,8 +76,6 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
                      (1UL << unit->openerPort->mp_SigBit) |
                      (1UL << microHZTimerPort->mp_SigBit) |
-                     (1UL << unit->rx_signal) |
-                     (1UL << unit->tx_signal) |
                      (1UL << unit->irq0_signal) |
                      SIGBREAKF_CTRL_C;
 
@@ -88,58 +84,6 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         sigset = Wait(waitMask);
         KprintfH("[genet] %s: Woke up, sigset=0x%08lx\n", __func__, sigset);
         UWORD budget;
-
-#ifdef USE_PRIORITY_QUEUES
-        /* Receive processing */
-        if ((sigset & (1UL << unit->rx_signal)) && unit->state == STATE_ONLINE)
-        {
-            KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
-            budget = genetConfig.budget;
-            int res = bcmgenet_gmac_eth_rx(unit, budget);
-            if (res > 0)
-            {
-                budget -= res;
-            }
-
-            if (budget == 0)
-            {
-                // Still more to process, signal ourselves again
-                Signal(unit->task, 1UL << unit->rx_signal);
-            }
-            else
-            {
-                /* We caught up, enable interrupts */
-                bcmgenet_rx_ring_int_enable(&unit->rx_ring);
-            }
-        }
-
-        /* Transmit processing */
-        if ((sigset & (1UL << unit->tx_signal)) && unit->state == STATE_ONLINE)
-        {
-            KprintfH("[genet] %s: TX signal received, reclaiming\n", __func__);
-            // reschedule periodic reclaim
-            AbortIO(&packetTimerReq->tr_node);
-            WaitIO(&packetTimerReq->tr_node);
-            packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
-            packetTimerReq->tr_time.tv_secs = 0;
-            packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
-            SendIO(&packetTimerReq->tr_node);
-
-            budget = genetConfig.budget;
-            unsigned int tx_done = bcmgenet_tx_reclaim(unit, budget);
-            budget -= tx_done;
-
-            if (budget == 0)
-            {
-                Signal(unit->task, 1UL << unit->tx_signal);
-            }
-            else
-            {
-                /* We caught up, enable interrupts */
-                bcmgenet_tx_ring_int_enable(unit, 0);
-            }
-        }
-#endif
 
         // IO queue got a new message
         if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
@@ -211,33 +155,6 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 Kprintf("[genet] %s: PHY link up event\n", __func__);
             }
 
-            /* Transmit processing */
-            if ((status & UMAC_IRQ_TXDMA_DONE) && unit->state == STATE_ONLINE)
-            {
-                KprintfH("[genet] %s: TX signal received, reclaiming\n", __func__);
-                // reschedule periodic reclaim
-                AbortIO(&packetTimerReq->tr_node);
-                WaitIO(&packetTimerReq->tr_node);
-                packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
-                packetTimerReq->tr_time.tv_secs = 0;
-                packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
-                SendIO(&packetTimerReq->tr_node);
-
-                budget = genetConfig.budget;
-                UWORD tx_done = bcmgenet_tx_reclaim(unit, budget);
-                if (budget - tx_done == 0)
-                {
-                    // Still more to process, signal ourselves again
-                    unit->irq0_status |= UMAC_IRQ_TXDMA_DONE;
-                    Signal(unit->task, 1UL << unit->irq0_signal);
-                }
-                else
-                {
-                    /* We caught up, enable interrupts */
-                    bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
-                }
-            }
-
             /* Receive processing */
             if ((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE)
             {
@@ -300,8 +217,6 @@ free_ports:
     DeleteMsgPort(microHZTimerPort);
     DeleteMsgPort(unit->openerPort);
 free_signals:
-    FreeSignal(unit->rx_signal);
-    FreeSignal(unit->tx_signal);
     FreeSignal(unit->irq0_signal);
 
     FreeSignal(unit->unit.unit_MsgPort.mp_SigBit);

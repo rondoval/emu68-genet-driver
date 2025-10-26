@@ -170,8 +170,8 @@ struct GenetUnit
 	/* Interrupt config and status */
 	ULONG irq0_number, irq1_number;			/* IRQ numbers from Device Tree */
 	ULONG irq0_status;						/* status bits of irq0*/
-	BYTE rx_signal, tx_signal, irq0_signal; /* signals used to wake bottom-half */
-	struct Interrupt irq0_isr, irq1_isr;
+	BYTE irq0_signal; /* signals used to wake bottom-half */
+	struct Interrupt irq0_isr;
 
 	/* PHY */
 	phy_interface_t phy_interface;
