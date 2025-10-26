@@ -4,6 +4,7 @@
 The driver is based on [Das U-Boot](https://source.denx.de/u-boot/u-boot) bcmgenet driver. It also derives heavily from the [wifipi driver](https://github.com/michalsc/Emu68-tools/tree/master/network/wifipi.device) from Michal Schulz.
 
 Beware: The upcoming changes in Emu68 1.1 are likely not compatible with the interrupts implementation in this driver.
+Also, Amiga will get stuck at boot if you reboot with the driver online. This will likely need a fix in Emu68 reset handler... In such case interrupts remain enabled and there's nothing the driver can do about it.
 
 ## What's new
 
