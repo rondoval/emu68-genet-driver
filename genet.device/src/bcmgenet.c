@@ -18,8 +18,10 @@
 
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
+#include <clib/gic400_protos.h>
 #else
 #include <proto/exec.h>
+#include <proto/gic400.h>
 #endif
 
 #include <exec/types.h>
@@ -28,8 +30,6 @@
 #include <debug.h>
 #include <compat.h>
 #include <device.h>
-
-#include <gic400.h>
 
 #include <genet/phy.h>
 #include <genet/unimac.h>
@@ -588,7 +588,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	unit->irq0_isr.is_Data = (APTR)unit;
 	unit->irq0_isr.is_Code = (APTR)bcmgenet_isr0;
 
-	ret = gic400_add_int_server(unit->irq0_number, 0x0, FALSE, &unit->irq0_isr);
+	ret = AddIntServerEx(unit->irq0_number, 0, FALSE, &unit->irq0_isr);
 	if (ret < 0)
 	{
 		Kprintf("[genet] %s: can't register IRQ %ld\n", __func__, unit->irq0_number);
@@ -629,7 +629,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	return S2ERR_NO_ERROR;
 
 err_irq:
-	gic400_rem_int_server(unit->irq0_number, &unit->irq0_isr);
+	RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
 
 init_dma:
 	unit->rxbuffer = NULL;
@@ -736,8 +736,8 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 	delay_us(1000);
 
 	bcmgenet_intr_disable(unit);
-	gic400_rem_int_server(unit->irq0_number, &unit->irq0_isr);
-	
+	RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
+
 	/* tx reclaim */
 	bcmgenet_tx_reclaim(unit, TX_DESCS);
 	// /* Really kill the PHY state machine and disconnect from it */

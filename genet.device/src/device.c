@@ -96,6 +96,7 @@ static const APTR funcTable[] = {
 
 struct ExecBase *SysBase;
 struct Library *UtilityBase = NULL;
+struct Library *GIC400_Base = NULL;
 
 APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct GenetDevice *dev_base asm("a6") __attribute__((unused)))
 {
@@ -109,6 +110,14 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     if (UtilityBase == NULL)
     {
         Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
+        expungeLib(base);
+        return NULL;
+    }
+
+    GIC400_Base = OpenLibrary((CONST_STRPTR) "gic400.library", 0);
+    if (GIC400_Base == NULL)
+    {
+        Kprintf("[genet] %s: Failed to open gic400.library\n", __func__);
         expungeLib(base);
         return NULL;
     }
@@ -306,6 +315,12 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
         {
             CloseLibrary(UtilityBase);
             UtilityBase = NULL;
+        }
+
+        if (GIC400_Base != NULL)
+        {
+            CloseLibrary(GIC400_Base);
+            GIC400_Base = NULL;
         }
 
         ULONG segList = base->segList;
