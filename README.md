@@ -3,8 +3,11 @@
 **emu68-genet** is an Amiga OS driver for the Broadcom GENET v5 Ethernet controller found on the Raspberry PI 4B, designed for use with the Pistorm32-lite and Emu68 project.
 The driver is based on [Das U-Boot](https://source.denx.de/u-boot/u-boot) bcmgenet driver. It also derives heavily from the [wifipi driver](https://github.com/michalsc/Emu68-tools/tree/master/network/wifipi.device) from Michal Schulz.
 
-Beware: The upcoming changes in Emu68 1.1 are likely not compatible with the interrupts implementation in this driver.
-Also, Amiga will get stuck at boot if you reboot with the driver online. This will likely need a fix in Emu68 reset handler... In such case interrupts remain enabled and there's nothing the driver can do about it.
+Beware: The upcoming changes in Emu68 1.1 are likely not compatible with the interrupts implementation in this driver, as the new Arm side handler reads IAR and writes EORI registers.
+
+## Known bugs
+
+- Amiga will get stuck at boot if you soft reboot while the driver is online. This is likely due to the interrupts remaining enabled.
 
 ## What's new
 
@@ -31,7 +34,7 @@ Also, Amiga will get stuck at boot if you reboot with the driver online. This wi
 
 - Kickstart 3.0 (V39) or newer
 - Pistorm32-lite with Raspberry Pi 4B
-- Emu68, version 1.0.6
+- Emu68, version 1.0.6+PR#306
 - A network stack
 
 Tested using:
@@ -40,8 +43,6 @@ Tested using:
 - OS 3.2.3 + Miami DX
 - OS 3.0 + AmiTCP 4.2 (16 Jun 2022)
 on an A1200 with RPi4B.
-
-Note: the current version was only tested on AmiKit with Roadshow stack as of now.
 
 ## Sample Roadshow config file
 
@@ -62,10 +63,11 @@ copymode=fast
 Use Bebbo's GCC cross compiler and cmake.
 
 ```sh
-mkdir build
+mkdir build install
 cd build
 cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain.cmake
 make
+make install
 ```
 
 ## Runtime configuration (genet.prefs)
@@ -86,11 +88,11 @@ RX_COALESCE_FRAMES=10
 TX_COALESCE_FRAMES=10
 ```
 
-Setting descriptions (brief):
+Setting descriptions:
 
 - `UNIT_TASK_PRIORITY`  Exec task priority of the driver unit task (higher = runs sooner). 0 is neutral.
 - `UNIT_STACK_SIZE`  Stack size in bytes for the unit task. Minimum enforced is 4096.
-- `USE_DMA`  Leave at 0. Not supported: SANA-II does not guarantee the alignment Genet's DMA needs; enabling can result with instability or packets missing on TX.
+- `USE_DMA`  Leave at 0. Not supported: SANA-II does not guarantee the alignment Genet's DMA needs; enabling can result with instability or packets missing on TX. (DMA is still used internally, but the data is copied to/from internal, aligned buffers)
 - `USE_MIAMI_WORKAROUND`  1 enables length round up quirk for Miami DX stack; 0 disables.
 - `BUDGET`  Maximum number of work items the unit task and ISR handles per wake-up before rescheduling itself.
 - `PERIODIC_TASK_MS`  Interval in milliseconds for the housekeeping timer (PHY polling, interrupt watchdog).
@@ -99,5 +101,4 @@ Setting descriptions (brief):
 - `TX_COALESCE_FRAMES`  Number of transmitted frames that trigger a TX interrupt when reached.
 
 You can omit any line to keep its default.
-
-Changes require reloading the device (i.e. reboot or flush driver from memory) to take effect.
+In order for the changes to be applied, the device must be closed (e.g. shutdown your IP stack).
