@@ -34,7 +34,8 @@ Beware: The upcoming changes in Emu68 1.1 are likely not compatible with the int
 
 - Kickstart 3.0 (V39) or newer
 - Pistorm32-lite with Raspberry Pi 4B
-- Emu68, version 1.0.6+PR#306
+- Emu68, version 1.0.6+PR#306 (https://github.com/rondoval/Emu68/releases/tag/v1.0.6-pcie)
+- gic400.library (https://github.com/rondoval/emu68-gic400-library/releases/tag/v1.0)
 - A network stack
 
 Tested using:
