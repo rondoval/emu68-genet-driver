@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else

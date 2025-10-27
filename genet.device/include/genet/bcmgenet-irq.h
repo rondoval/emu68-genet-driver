@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 #ifndef BCMGENET_IRQ_H
 #define BCMGENET_IRQ_H
 
