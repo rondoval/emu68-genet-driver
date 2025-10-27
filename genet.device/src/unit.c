@@ -122,7 +122,6 @@ int UnitConfigure(struct GenetUnit *unit)
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to probe UMAC: %ld\n", __func__, result);
-		bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
 		return result;
 	}
 
