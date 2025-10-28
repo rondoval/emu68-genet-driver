@@ -69,7 +69,7 @@ static struct Resident const genetDeviceResident __attribute__((used)) = {
     can be sizeof(struct Library), sizeof(struct Device) or any size necessary to
     store user defined object extending the Device structure.
 */
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct GenetDevice *dev_base asm("a6"));
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6"));
 
 static const APTR funcTable[];
 static const APTR initTable[4] = {
@@ -98,9 +98,9 @@ struct ExecBase *SysBase;
 struct Library *UtilityBase = NULL;
 struct Library *GIC400_Base = NULL;
 
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct GenetDevice *dev_base asm("a6") __attribute__((unused)))
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6") __attribute__((unused)))
 {
-    SysBase = *((struct ExecBase **)4UL);
+    SysBase = _SysBase;
     Kprintf("[genet] %s: Initializing device\n", __func__);
     base->segList = segList;
     base->device.dd_Library.lib_Revision = DEVICE_REVISION;
@@ -110,7 +110,6 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     if (UtilityBase == NULL)
     {
         Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
-        expungeLib(base);
         return NULL;
     }
 
@@ -118,7 +117,6 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     if (GIC400_Base == NULL)
     {
         Kprintf("[genet] %s: Failed to open gic400.library\n", __func__);
-        expungeLib(base);
         return NULL;
     }
 
@@ -307,7 +305,7 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
     {
         Kprintf("[genet] %s: Device is still open, cannot expunge\n", __func__);
         base->device.dd_Library.lib_Flags |= LIBF_DELEXP;
-        return 0;
+        return NULL;
     }
     else
     {
