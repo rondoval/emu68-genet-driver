@@ -287,6 +287,15 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     Kprintf("[genet] %s: S2_ONLINE\n", __func__);
 
+    if(unit->state == STATE_UNCONFIGURED)
+    {
+        Kprintf("[genet] %s: Unit is unconfigured, cannot go online\n", __func__);
+        io->ios2_Req.io_Error = S2ERR_BAD_STATE;
+        io->ios2_WireError = S2WERR_NOT_CONFIGURED;
+        ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
+        return COMMAND_PROCESSED;
+    }
+
     /* If unit was not yet online, report event now */
     if (unit->state != STATE_ONLINE)
     {
@@ -337,8 +346,16 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
         }
         else
         {
+            ReportEvents(unit, S2EVENT_CONFIGCHANGED);
             Do_S2_ONLINE(io);
         }
+    }
+    else
+    {
+        KprintfH("[genet] %s: Unit already configured\n", __func__);
+        io->ios2_Req.io_Error = S2ERR_BAD_STATE;
+        io->ios2_WireError = S2WERR_IS_CONFIGURED;
+        ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
     }
 
     CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, sizeof(unit->currentMacAddress));

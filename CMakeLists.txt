@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14.0)
-project(emu68-genet-driver VERSION 2.1)
+project(emu68-genet-driver VERSION 2.2)
 
 include(cmake/verstring.cmake)
 get_verstring(VERSTRING)

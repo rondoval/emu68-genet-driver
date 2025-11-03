@@ -13,6 +13,9 @@ The driver is based on [Das U-Boot](https://source.denx.de/u-boot/u-boot) bcmgen
 - Amiga will get stuck at boot if you soft reboot while the driver is online. This is likely due to the interrupts remaining enabled.
 
 ## What's new
+2.2:
+- Fix an issue where the driver will attempt to process an S2_ONLINE request while unconfigured and crash.
+
 2.1:
 - Fix for issue #14: Driver crashes when gic400.library is not present. Now it doesn't.
 
