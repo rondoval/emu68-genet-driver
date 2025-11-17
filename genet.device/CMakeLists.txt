@@ -27,8 +27,12 @@ add_executable(genet.device
 
 target_include_directories(genet.device PRIVATE
     include
-    "${CMAKE_SOURCE_DIR}/gic400.library/include"
 )
-target_link_libraries(genet.device common runtime-config)
+target_link_libraries(genet.device
+    PRIVATE
+        runtime-config
+    Emu68Common::common
+        GIC400::gic400_headers
+)
 
-install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/genet.device DESTINATION .)
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/genet.device DESTINATION DEVS/Networks)
