@@ -50,7 +50,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     UBYTE ret = OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_MICROHZ, (struct IORequest *)packetTimerReq, LIB_MIN_VERSION);
     if (ret)
     {
-        Kprintf("[genet] %s: Failed to open timer device ret=%d\n", __func__, ret);
+        Kprintf("[genet] %s: Failed to open timer device ret=%ld\n", __func__, ret);
         goto free_ports;
     }
 

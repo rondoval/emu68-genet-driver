@@ -180,7 +180,7 @@ int bcmgenet_gmac_eth_rx(struct GenetUnit *unit, unsigned int budget)
 
 		if (unlikely(!(dma_flags & DMA_EOP) || !(dma_flags & DMA_SOP)))
 		{
-			KprintfH("[genet] %s: dropping fragmented packet, dma_flags=0x%x\n", __func__, (unsigned int)dma_flags);
+			KprintfH("[genet] %s: dropping fragmented packet, dma_flags=0x%lx\n", __func__, (unsigned int)dma_flags);
 			unit->internalStats.rx_fragmented_errors++;
 			goto next;
 		}
@@ -192,7 +192,7 @@ int bcmgenet_gmac_eth_rx(struct GenetUnit *unit, unsigned int budget)
 								 DMA_RX_LG |
 								 DMA_RX_RXER)))
 		{
-			KprintfH("[genet] %s: Packet error, length=%ld, dma_flag=0x%x\n",
+			KprintfH("[genet] %s: Packet error, length=%ld, dma_flag=0x%lx\n",
 					__func__, length, (unsigned int)dma_flags);
 			if (dma_flags & DMA_RX_CRC_ERROR)
 				unit->internalStats.rx_crc_errors++;
@@ -422,7 +422,7 @@ static int bcmgenet_adjust_link(struct GenetUnit *unit)
 		speed = CMD_SPEED_10;
 		break;
 	default:
-		Kprintf("[genet] %s: Unsupported PHY speed: %d\n", __func__, phy_dev->speed);
+		Kprintf("[genet] %s: Unsupported PHY speed: %ld\n", __func__, phy_dev->speed);
 		return S2ERR_BAD_ARGUMENT;
 	}
 
@@ -605,7 +605,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	ret = phy_startup(unit->phydev);
 	if (ret)
 	{
-		Kprintf("[genet] %s: PHY startup failed: %d\n", __func__, ret);
+		Kprintf("[genet] %s: PHY startup failed: %ld\n", __func__, ret);
 		goto err_irq;
 	}
 
@@ -613,7 +613,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	ret = bcmgenet_adjust_link(unit);
 	if (ret != S2ERR_NO_ERROR)
 	{
-		Kprintf("[genet] %s: adjust PHY link failed: %d\n", __func__, ret);
+		Kprintf("[genet] %s: adjust PHY link failed: %ld\n", __func__, ret);
 		goto err_irq;
 	}
 	Kprintf("[genet] %s: Interrupt servers installed\n", __func__);
@@ -662,7 +662,7 @@ static int bcmgenet_phy_init(struct GenetUnit *unit)
 	int result = phy_config(phydev);
 	if (result < 0)
 	{
-		Kprintf("[genet] %s: PHY config failed: %d\n", __func__, result);
+		Kprintf("[genet] %s: PHY config failed: %ld\n", __func__, result);
 		phy_destroy(phydev);
 		unit->phydev = NULL;
 		return S2ERR_SOFTWARE;
@@ -683,7 +683,7 @@ static int bcmgenet_interface_set(struct GenetUnit *unit)
 		writel(PORT_MODE_EXT_GPHY, (ULONG)unit->genetBase + SYS_PORT_CTRL);
 		break;
 	default:
-		Kprintf("[genet] %s: unknown phy mode: %d\n", __func__, unit->phy_interface);
+		Kprintf("[genet] %s: unknown phy mode: %ld\n", __func__, unit->phy_interface);
 		return S2ERR_BAD_ARGUMENT;
 	}
 
