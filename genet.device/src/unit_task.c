@@ -215,8 +215,8 @@ free_ports:
     DeleteMsgPort(unit->openerPort);
 free_signals:
     FreeSignal(unit->irq0_signal);
-
     FreeSignal(unit->unit.unit_MsgPort.mp_SigBit);
+
     Signal(parent, SIGBREAKF_CTRL_F);
     unit->task = NULL;
 }

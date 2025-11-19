@@ -98,7 +98,7 @@ struct ExecBase *SysBase;
 struct Library *UtilityBase = NULL;
 struct Library *GIC400_Base = NULL;
 
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6") __attribute__((unused)))
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6"))
 {
     SysBase = _SysBase;
     Kprintf("[genet] %s: Initializing device\n", __func__);
