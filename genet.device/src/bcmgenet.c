@@ -595,6 +595,7 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 		ret = S2ERR_SOFTWARE;
 		goto init_dma;
 	}
+	Kprintf("[genet] %s: Interrupt server for IRQ %ld registered\n", __func__, unit->irq0_number);
 
 	// bcmgenet_mii_probe(unit);
 	//  rx_pause=1, tx_pause=1
@@ -616,11 +617,11 @@ int bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 		Kprintf("[genet] %s: adjust PHY link failed: %ld\n", __func__, ret);
 		goto err_irq;
 	}
-	Kprintf("[genet] %s: Interrupt servers installed\n", __func__);
 
 	/* Monitor link interrupts now */
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R);
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE | UMAC_IRQ_TXDMA_DONE);
+	Kprintf("[genet] %s: Enabled link and RX/TX DMA interrupts\n", __func__);
 
 	/* Enable Rx/Tx */
 	setbits_32((APTR)((ULONG)unit->genetBase + UMAC_CMD), CMD_TX_EN | CMD_RX_EN);

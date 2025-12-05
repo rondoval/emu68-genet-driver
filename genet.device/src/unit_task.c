@@ -151,7 +151,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 // TODO PHY state change
                 Kprintf("[genet] %s: PHY link up event\n", __func__);
             }
-
+            
             /* Receive processing */
             if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {
@@ -172,6 +172,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 else
                 {
                     /* We caught up, enable interrupts */
+                    writel(UMAC_IRQ_RXDMA_DONE, (ULONG)unit->genetBase + GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR);
                     bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE);
                 }
             }
