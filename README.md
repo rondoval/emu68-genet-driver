@@ -74,12 +74,31 @@ copymode=fast
 
 Use Bebbo's GCC cross compiler and cmake.
 
+This project uses CMake packages from these companion projects:
+
+- `devicetree.resource`
+- `emu68-common`
+- `emu68-gic400-library`
+
+The simplest setup is to install all of them into the same prefix and then point `CMAKE_PREFIX_PATH` at that one location.
+
 ```sh
-mkdir build install
+mkdir build
 cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain.cmake
+cmake .. \
+	-DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain.cmake \
+	-DCMAKE_PREFIX_PATH=/path/to/emu68-sdk \
+	-DCMAKE_INSTALL_PREFIX=/path/to/emu68-sdk
 make
 make install
+```
+
+If you keep dependencies in separate install trees instead, set `CMAKE_PREFIX_PATH` to all of them, separated with semicolons.
+
+```sh
+cmake .. \
+	-DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain.cmake \
+	-DCMAKE_PREFIX_PATH="/path/to/emu68-gic400-library/install;/path/to/emu68-common/install;/path/to/devicetree.resource/install"
 ```
 
 ## Runtime configuration (genet.prefs)
