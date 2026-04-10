@@ -5,7 +5,6 @@ get_verstring(VERSTRING)
 
 add_link_options(-ffreestanding -nostdlib -nostartfiles -s -Wl,-e,_doNotExecute)
 add_compile_options(-Os -m68040 -Wall -Wextra -DDEBUG -fomit-frame-pointer)
-add_compile_definitions(PRIVATE DEVICE_IDSTRING="${VERSTRING}" DEVICE_VERSION=${PROJECT_VERSION_MAJOR} DEVICE_REVISION=${PROJECT_VERSION_MINOR} DEVICE_NAME="${PROJECT_NAME}")
 
 add_executable(genet.device
     src/device.c
@@ -23,6 +22,13 @@ add_executable(genet.device
     src/phy.c
     src/phy_interface.c
     src/device_end.c
+)
+
+target_compile_definitions(genet.device PRIVATE
+    DEVICE_IDSTRING="${VERSTRING}"
+    DEVICE_VERSION=${PROJECT_VERSION_MAJOR}
+    DEVICE_REVISION=${PROJECT_VERSION_MINOR}
+    DEVICE_NAME="${PROJECT_NAME}"
 )
 
 target_include_directories(genet.device PRIVATE

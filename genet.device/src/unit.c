@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
-#include <clib/dos_protos.h>
-#include <clib/utility_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
-#include <proto/dos.h>
-#include <proto/utility.h>
 #endif
 
 #include <exec/execbase.h>
@@ -16,7 +14,7 @@
 #include <debug.h>
 #include <device.h>
 #include <bcm_gpio.h>
-#include <compat.h>
+#include <emu_memory.h>
 #include <minlist.h>
 #include <runtime_config.h>
 
@@ -72,6 +70,8 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	unit->flags = flags;
 	unit->unit.unit_OpenCnt = 1;
 	unit->unitNumber = unitNumber;
+	unit->use_miami_workaround = unit->device->runtimeConfig.use_miami_workaround;
+	unit->budget = unit->device->runtimeConfig.budget;
 
 	unit->memoryPool = CreatePool(MEMF_FAST | MEMF_PUBLIC, 16384, 8192);
 	if (unit->memoryPool == NULL)

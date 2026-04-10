@@ -3,13 +3,16 @@
 #include <clib/utility_protos.h>
 #include <clib/exec_protos.h>
 #else
+#define __NOLIBBASE__
+#define UTILITY_BASE_NAME unit->device->utilityBase
 #include <proto/utility.h>
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #endif
 
 #include <genet/bcmgenet-regs.h>
 #include <device.h>
-#include <compat.h>
+#include <emu_types.h>
 #include <debug.h>
 #include <runtime_config.h>
 
@@ -76,7 +79,7 @@ static inline void CopyPacket(struct IOSana2Req *io, UBYTE *packet, ULONG packet
     /* Packet not filtered. Send it now and reply request. */
     if (likely(!packetFiltered))
     {
-        ULONG copyLen = genetConfig.use_miami_workaround ? ((packetLength + 3) & ~3u) : packetLength;
+        ULONG copyLen = unit->use_miami_workaround ? ((packetLength + 3) & ~3u) : packetLength;
         if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, copyLen) == 0)
         {
             KprintfH("[genet] %s: Failed to copy packet data to buffer\n", __func__);

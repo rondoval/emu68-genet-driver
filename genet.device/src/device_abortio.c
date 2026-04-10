@@ -2,6 +2,8 @@
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #endif
 

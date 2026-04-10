@@ -3,7 +3,10 @@
 #include <clib/timer_protos.h>
 #include <clib/exec_protos.h>
 #else
+#define __NOLIBBASE__
+#define TIMER_BASE_NAME unitTimerBase
 #include <proto/timer.h>
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #endif
 
@@ -13,7 +16,8 @@
 
 #include <device.h>
 #include <debug.h>
-#include <compat.h>
+#include <emu_memory.h>
+#include <emu_types.h>
 
 static const UWORD GENET_SupportedCommands[] = {
     CMD_FLUSH,
@@ -301,8 +305,16 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
     {
         Kprintf("[genet] %s: Bringing unit online\n", __func__);
         _memset(&unit->internalStats, 0, sizeof(unit->internalStats));
-        GetSysTime(&unit->internalStats.last_start);
-        Kprintf("[genet] %s: statistics zeroed, LastStart: %ld\n", __func__, unit->internalStats.last_start.tv_secs);
+        struct Device *unitTimerBase = unit->timerBase;
+        if (unitTimerBase != NULL)
+        {
+            GetSysTime(&unit->internalStats.last_start);
+            Kprintf("[genet] %s: statistics zeroed, LastStart: %ld\n", __func__, unit->internalStats.last_start.tv_secs);
+        }
+        else
+        {
+            Kprintf("[genet] %s: Timer device is not available, continuing without LastStart reset\n", __func__);
+        }
 
         int result = UnitOnline(unit);
         if (result != S2ERR_NO_ERROR)

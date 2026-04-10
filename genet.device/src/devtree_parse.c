@@ -2,11 +2,11 @@
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #include <clib/devicetree_protos.h>
-#include <clib/utility_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #include <proto/devicetree.h>
-#include <proto/utility.h>
 #endif
 
 #include <exec/types.h>
@@ -15,13 +15,15 @@
 
 #include <debug.h>
 #include <device.h>
-#include <compat.h>
-
-APTR DeviceTreeBase;
 
 int DevTreeParse(struct GenetUnit *unit)
 {
-	DT_Init();
+	APTR DeviceTreeBase = OpenResource((CONST_STRPTR) "devicetree.resource");
+	if (DeviceTreeBase == NULL)
+	{
+		Kprintf("[genet] %s: Failed to open devicetree.resource\n", __func__);
+		return S2ERR_NO_RESOURCES;
+	}
 
 	char alias[12] = "ethernet0";
 	alias[8] = '0' + unit->unitNumber;

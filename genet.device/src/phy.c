@@ -10,11 +10,17 @@
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #endif
 
 #include <debug.h>
-#include <compat.h>
+#include <emu_bits.h>
+#include <emu_byteorder.h>
+#include <emu_errors.h>
+#include <emu_iomem.h>
+#include <emu_timing.h>
 #include <device.h>
 
 #include <genet/phy.h>

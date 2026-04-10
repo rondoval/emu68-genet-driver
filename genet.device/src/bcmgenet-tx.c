@@ -7,10 +7,13 @@
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #endif
 
-#include <compat.h>
+#include <emu_iomem.h>
+#include <emu_types.h>
 #include <debug.h>
 #include <device.h>
 #include <runtime_config.h>
@@ -174,7 +177,7 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	{
 	use_software_copy:
 		KprintfH("[genet] %s: Using software copy from buffer\n", __func__);
-		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, genetConfig.use_miami_workaround ? ((io->ios2_DataLength + 3) & ~3) : io->ios2_DataLength) == 0)
+		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, unit->use_miami_workaround ? ((io->ios2_DataLength + 3) & ~3) : io->ios2_DataLength) == 0)
 		{
 			KprintfH("[genet] %s: Failed to copy packet data from buffer\n", __func__);
 			goto ret_error;

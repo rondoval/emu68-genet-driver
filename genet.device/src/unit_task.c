@@ -3,6 +3,8 @@
 #include <clib/exec_protos.h>
 #include <clib/timer_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #include <proto/timer.h>
 #endif
@@ -12,16 +14,17 @@
 #include <genet/bcmgenet-regs.h>
 #include <genet/bcmgenet-irq.h>
 #include <genet/phy.h>
-#include <compat.h>
 #include <device.h>
 #include <minlist.h>
 #include <debug.h>
+#include <emu_iomem.h>
+#include <emu_types.h>
 #include <runtime_config.h>
-
-struct Device *TimerBase = NULL;
 
 static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 {
+	const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
+
     // Initialize the built in msg port, we'll receive commands here
     _NewMinList((struct MinList *)&unit->unit.unit_MsgPort.mp_MsgList);
     unit->unit.unit_MsgPort.mp_SigTask = FindTask(NULL);
@@ -54,13 +57,12 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         goto free_ports;
     }
 
-    /* used to reset stats on S2_ONLINE */
-    TimerBase = packetTimerReq->tr_node.io_Device;
+    unit->timerBase = packetTimerReq->tr_node.io_Device;
 
     // Start the timer
     packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
     packetTimerReq->tr_time.tv_secs = 0;
-    packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
+    packetTimerReq->tr_time.tv_micro = config->periodic_task_ms * 1000;
     SendIO(&packetTimerReq->tr_node);
 
     unit->task = FindTask(NULL);
@@ -85,7 +87,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         // IO queue got a new message
         if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
         {
-            budget = genetConfig.budget;
+            budget = unit->budget;
             struct IOSana2Req *io;
             // Drain command queue and process it
             while ((io = (struct IOSana2Req *)GetMsg(&unit->unit.unit_MsgPort)) && --budget)
@@ -102,7 +104,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         // Opener management messages
         if (unlikely(sigset & (1UL << unit->openerPort->mp_SigBit)))
         {
-            budget = genetConfig.budget;
+            budget = unit->budget;
             struct OpenerControlMsg *omsg;
             while ((omsg = (struct OpenerControlMsg *)GetMsg(unit->openerPort)) && --budget)
             {
@@ -156,7 +158,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {
                 KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
-                budget = genetConfig.budget;
+                budget = unit->budget;
                 int res = bcmgenet_gmac_eth_rx(unit, budget);
                 if (res > 0)
                 {
@@ -197,7 +199,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             /* Re-arm timer */
             packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
             packetTimerReq->tr_time.tv_secs = 0;
-            packetTimerReq->tr_time.tv_micro = genetConfig.periodic_task_ms * 1000;
+            packetTimerReq->tr_time.tv_micro = config->periodic_task_ms * 1000;
             SendIO(&packetTimerReq->tr_node);
         }
 
@@ -210,6 +212,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     } while ((sigset & SIGBREAKF_CTRL_C) == 0);
 
     CloseDevice(&packetTimerReq->tr_node);
+    unit->timerBase = NULL;
 free_ports:
     DeleteIORequest(&packetTimerReq->tr_node);
     DeleteMsgPort(microHZTimerPort);
@@ -225,11 +228,12 @@ free_signals:
 int UnitTaskStart(struct GenetUnit *unit)
 {
     Kprintf("[genet] %s: genet task starting\n", __func__);
+	const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
 
     // Get all memory we need for the receiver task
     struct MemList *ml = AllocMem(sizeof(struct MemList) + sizeof(struct MemEntry), MEMF_PUBLIC | MEMF_CLEAR);
     struct Task *task = AllocMem(sizeof(struct Task), MEMF_PUBLIC | MEMF_CLEAR);
-    ULONG *stack = AllocMem(genetConfig.unit_stack_bytes, MEMF_PUBLIC | MEMF_CLEAR);
+    ULONG *stack = AllocMem(config->unit_stack_bytes, MEMF_PUBLIC | MEMF_CLEAR);
     if (!ml || !task || !stack)
     {
         Kprintf("[genet] %s: Failed to allocate memory for genet task\n", __func__);
@@ -238,7 +242,7 @@ int UnitTaskStart(struct GenetUnit *unit)
         if (task)
             FreeMem(task, sizeof(struct Task));
         if (stack)
-            FreeMem(stack, genetConfig.unit_stack_bytes);
+            FreeMem(stack, config->unit_stack_bytes);
         return S2ERR_NO_RESOURCES;
     }
 
@@ -248,11 +252,11 @@ int UnitTaskStart(struct GenetUnit *unit)
     ml->ml_ME[0].me_Length = sizeof(struct Task);
 
     ml->ml_ME[1].me_Un.meu_Addr = &stack[0];
-    ml->ml_ME[1].me_Length = genetConfig.unit_stack_bytes;
+    ml->ml_ME[1].me_Length = config->unit_stack_bytes;
 
     // Set up stack
     task->tc_SPLower = &stack[0];
-    task->tc_SPUpper = &stack[genetConfig.unit_stack_bytes / sizeof(ULONG)];
+    task->tc_SPUpper = &stack[config->unit_stack_bytes / sizeof(ULONG)];
 
     // Push ThisTask and Unit on the stack
     stack = (ULONG *)task->tc_SPUpper;
@@ -262,7 +266,7 @@ int UnitTaskStart(struct GenetUnit *unit)
 
     task->tc_Node.ln_Name = "genet ethernet driver";
     task->tc_Node.ln_Type = NT_TASK;
-    task->tc_Node.ln_Pri = genetConfig.unit_task_priority;
+    task->tc_Node.ln_Pri = config->unit_task_priority;
 
     _NewMinList((struct MinList *)&task->tc_MemEntry);
     AddHead(&task->tc_MemEntry, &ml->ml_Node);
@@ -275,7 +279,7 @@ int UnitTaskStart(struct GenetUnit *unit)
         Kprintf("[genet] %s: Failed to add genet task\n", __func__);
         FreeMem(ml, sizeof(struct MemList) + sizeof(struct MemEntry));
         FreeMem(task, sizeof(struct Task));
-        FreeMem(&stack[0], genetConfig.unit_stack_bytes);
+        FreeMem(&stack[0], config->unit_stack_bytes);
         return S2ERR_NO_RESOURCES;
     }
 

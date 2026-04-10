@@ -3,6 +3,8 @@
 #include <clib/exec_protos.h>
 #include <clib/utility_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #include <proto/utility.h>
 #endif
@@ -21,6 +23,22 @@
 #include <minlist.h>
 #include <debug.h>
 #include <runtime_config.h>
+
+#ifndef DEVICE_NAME
+#define DEVICE_NAME "genet.device"
+#endif
+
+#ifndef DEVICE_IDSTRING
+#define DEVICE_IDSTRING "genet.device 2.3"
+#endif
+
+#ifndef DEVICE_VERSION
+#define DEVICE_VERSION 2
+#endif
+
+#ifndef DEVICE_REVISION
+#define DEVICE_REVISION 3
+#endif
 
 /*
     Put the function at the very beginning of the file in order to avoid
@@ -94,31 +112,55 @@ static const APTR funcTable[] = {
     (APTR)abortIO,
     (APTR)-1};
 
-struct ExecBase *SysBase;
-struct Library *UtilityBase = NULL;
-struct Library *GIC400_Base = NULL;
+static void genet_close_libraries(struct GenetDevice *base)
+{
+    if (base->gic400Base != NULL)
+    {
+        CloseLibrary(base->gic400Base);
+        base->gic400Base = NULL;
+    }
+
+    if (base->utilityBase != NULL)
+    {
+        CloseLibrary(base->utilityBase);
+        base->utilityBase = NULL;
+    }
+}
+
+static int genet_open_libraries(struct GenetDevice *base)
+{
+    if (base->utilityBase != NULL && base->gic400Base != NULL)
+        return 0;
+
+    genet_close_libraries(base);
+
+    base->utilityBase = OpenLibrary((CONST_STRPTR) "utility.library", LIB_MIN_VERSION);
+    if (base->utilityBase == NULL)
+    {
+        Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
+        return -1;
+    }
+
+    base->gic400Base = OpenLibrary((CONST_STRPTR) "gic400.library", 0);
+    if (base->gic400Base == NULL)
+    {
+        Kprintf("[genet] %s: Failed to open gic400.library\n", __func__);
+        genet_close_libraries(base);
+        return -1;
+    }
+
+    return 0;
+}
 
 APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6"))
 {
-    SysBase = _SysBase;
+    (void)_SysBase;
     Kprintf("[genet] %s: Initializing device\n", __func__);
     base->segList = segList;
     base->device.dd_Library.lib_Revision = DEVICE_REVISION;
     base->unit = NULL;
-
-    UtilityBase = OpenLibrary((CONST_STRPTR) "utility.library", LIB_MIN_VERSION);
-    if (UtilityBase == NULL)
-    {
-        Kprintf("[genet] %s: Failed to open utility.library\n", __func__);
-        return NULL;
-    }
-
-    GIC400_Base = OpenLibrary((CONST_STRPTR) "gic400.library", 0);
-    if (GIC400_Base == NULL)
-    {
-        Kprintf("[genet] %s: Failed to open gic400.library\n", __func__);
-        return NULL;
-    }
+    base->utilityBase = NULL;
+    base->gic400Base = NULL;
 
     return base;
 }
@@ -131,7 +173,7 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
         func;                                                 \
     })
 
-struct Opener *createOpener(struct TagItem *tags)
+struct Opener *createOpener(struct TagItem *tags, struct Library *UtilityBase, const struct GenetRuntimeConfig *config)
 {
     struct Opener *opener = NULL;
     opener = AllocMem(sizeof(struct Opener), MEMF_PUBLIC | MEMF_CLEAR);
@@ -158,7 +200,7 @@ struct Opener *createOpener(struct TagItem *tags)
     opener->CopyToBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyToBuff32, S2_CopyToBuff16, S2_CopyToBuff);
     opener->CopyFromBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyFromBuff32, S2_CopyFromBuff16, S2_CopyFromBuff);
 
-    if (genetConfig.use_dma)
+    if (config->use_dma)
     {
         opener->DMACopyToBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyToBuff32, NULL, tags);
         opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);
@@ -183,6 +225,9 @@ struct Opener *createOpener(struct TagItem *tags)
 void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
              ULONG flags asm("d1"), struct GenetDevice *base asm("a6"))
 {
+    BOOL firstOpen = FALSE;
+    BOOL createdUnit = FALSE;
+
     Kprintf("[genet] %s: Opening device with unit number %ld and flags %lx\n", __func__, unitNumber, flags);
     if (unitNumber != 0)
     {
@@ -208,6 +253,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
             io->ios2_Req.io_Error = IOERR_OPENFAIL;
             return;
         }
+        base->unit->device = base;
+        createdUnit = TRUE;
     }
 
     if (flags & SANA2OPF_MINE && base->unit->unit.unit_OpenCnt > 0)
@@ -217,17 +264,29 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
         return;
     }
 
+    firstOpen = (base->device.dd_Library.lib_OpenCnt == 0);
+    if (firstOpen && genet_open_libraries(base) != 0)
+    {
+        io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        if (createdUnit)
+        {
+            FreeMem(base->unit, sizeof(struct GenetUnit));
+            base->unit = NULL;
+        }
+        return;
+    }
+
     if (base->unit->unit.unit_OpenCnt == 0)
     {
         /* We're reloading configuration only if the device was previously not in use */
-        LoadGenetRuntimeConfig();
-        DumpGenetRuntimeConfig();
+        LoadGenetRuntimeConfig(&base->runtimeConfig);
+        DumpGenetRuntimeConfig(&base->runtimeConfig);
     }
 
     struct Opener *opener = NULL;
     if (io->ios2_Req.io_Message.mn_Length >= sizeof(struct IOSana2Req))
     {
-        opener = createOpener(io->ios2_BufferManagement);
+        opener = createOpener(io->ios2_BufferManagement, base->utilityBase, &base->runtimeConfig);
         if (opener == NULL)
         {
             io->ios2_Req.io_Error = IOERR_OPENFAIL;
@@ -236,6 +295,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
                 FreeMem(base->unit, sizeof(struct GenetUnit));
                 base->unit = NULL;
             }
+            if (firstOpen)
+                genet_close_libraries(base);
             return;
         }
         io->ios2_BufferManagement = opener;
@@ -255,6 +316,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     {
         Kprintf("[genet] %s: Failed to open unit, error code %ld\n", __func__, result);
         io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        if (firstOpen)
+            genet_close_libraries(base);
     }
 
     /* In contrast to normal library there is no need to return anything */
@@ -289,6 +352,7 @@ ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6
 
     if (base->device.dd_Library.lib_OpenCnt == 0)
     {
+        genet_close_libraries(base);
         if (base->device.dd_Library.lib_Flags & LIBF_DELEXP)
         {
             return expungeLib(base);
@@ -309,18 +373,6 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
     }
     else
     {
-        if (UtilityBase != NULL)
-        {
-            CloseLibrary(UtilityBase);
-            UtilityBase = NULL;
-        }
-
-        if (GIC400_Base != NULL)
-        {
-            CloseLibrary(GIC400_Base);
-            GIC400_Base = NULL;
-        }
-
         ULONG segList = base->segList;
 
         /* Remove yourself from list of devices */

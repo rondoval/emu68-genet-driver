@@ -87,8 +87,8 @@ mkdir build
 cd build
 cmake .. \
 	-DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain.cmake \
-	-DCMAKE_PREFIX_PATH=/path/to/emu68-sdk \
-	-DCMAKE_INSTALL_PREFIX=/path/to/emu68-sdk
+	-DCMAKE_PREFIX_PATH=/path/to/emu68-driver-stack \
+	-DCMAKE_INSTALL_PREFIX=/path/to/emu68-driver-stack
 make
 make install
 ```

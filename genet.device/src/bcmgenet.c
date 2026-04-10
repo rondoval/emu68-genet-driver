@@ -20,7 +20,11 @@
 #include <clib/exec_protos.h>
 #include <clib/gic400_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
+
+#define GIC400_BASE_NAME unit->device->gic400Base
 #include <proto/gic400.h>
 #endif
 
@@ -28,7 +32,12 @@
 #include <limits.h>
 
 #include <debug.h>
-#include <compat.h>
+#include <emu_bits.h>
+#include <emu_errors.h>
+#include <emu_iomem.h>
+#include <emu_memory.h>
+#include <emu_timing.h>
+#include <emu_types.h>
 #include <device.h>
 
 #include <genet/phy.h>
@@ -295,7 +304,7 @@ static int bcmgenet_init_rx_ring(struct GenetUnit *unit)
 		writel(len_stat, descriptor_address + DMA_DESC_LENGTH_STATUS);
 	}
 
-	bcmgenet_set_rx_coalesce(unit, genetConfig.rx_coalesce_usecs, genetConfig.rx_coalesce_frames);
+	bcmgenet_set_rx_coalesce(unit, unit->device->runtimeConfig.rx_coalesce_usecs, unit->device->runtimeConfig.rx_coalesce_frames);
 
 	/* cannot init RDMA_PROD_INDEX to 0, so align RDMA_CONS_INDEX on it instead */
 	ring->rx_cons_index = readl((ULONG)unit->genetBase + RDMA_PROD_INDEX) & DMA_P_INDEX_MASK;
@@ -361,7 +370,7 @@ static int bcmgenet_init_tx_ring(struct GenetUnit *unit)
 	ring->clean_ptr = ring->tx_cons_index;
 
 	/* Default, can be overridden using coalesce settings */
-	writel(genetConfig.tx_coalesce_frames, (ULONG)unit->genetBase + TDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH);
+	writel(unit->device->runtimeConfig.tx_coalesce_frames, (ULONG)unit->genetBase + TDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH);
 
 	/* Disable rate control for now */
 	writel(0x0, (ULONG)unit->genetBase + TDMA_FLOW_PERIOD);

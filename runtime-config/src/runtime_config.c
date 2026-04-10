@@ -2,52 +2,46 @@
 #ifdef __INTELLISENSE__
 #include <clib/dos_protos.h>
 #include <clib/exec_protos.h>
-#include <clib/utility_protos.h>
 #else
+#define __NOLIBBASE__
 #include <proto/dos.h>
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
-#include <proto/utility.h>
 #endif
 
 #include <exec/types.h>
 #include <exec/memory.h>
 
+#include <emu_string.h>
 #include <runtime_config.h>
 #include <debug.h>
 
-struct DosLibrary *DOSBase = NULL;
-struct GenetRuntimeConfig genetConfig;
-
-static void ApplyDefaults()
+static void ApplyDefaults(struct GenetRuntimeConfig *config)
 {
-    genetConfig.unit_task_priority = DEFAULT_UNIT_TASK_PRIORITY;
-    genetConfig.unit_stack_bytes = DEFAULT_UNIT_STACK_BYTES;
-    genetConfig.use_dma = DEFAULT_USE_DMA;
-    genetConfig.use_miami_workaround = DEFAULT_USE_MIAMI_WORKAROUND;
-    genetConfig.budget = DEFAULT_BUDGET;
-    genetConfig.periodic_task_ms = DEFAULT_PERIODIC_TASK_MS;
-    genetConfig.rx_coalesce_usecs = DEFAULT_RX_COALESCE_USECS;
-    genetConfig.rx_coalesce_frames = DEFAULT_RX_COALESCE_FRAMES;
-    genetConfig.tx_coalesce_frames = DEFAULT_TX_COALESCE_FRAMES;
+    config->unit_task_priority = DEFAULT_UNIT_TASK_PRIORITY;
+    config->unit_stack_bytes = DEFAULT_UNIT_STACK_BYTES;
+    config->use_dma = DEFAULT_USE_DMA;
+    config->use_miami_workaround = DEFAULT_USE_MIAMI_WORKAROUND;
+    config->budget = DEFAULT_BUDGET;
+    config->periodic_task_ms = DEFAULT_PERIODIC_TASK_MS;
+    config->rx_coalesce_usecs = DEFAULT_RX_COALESCE_USECS;
+    config->rx_coalesce_frames = DEFAULT_RX_COALESCE_FRAMES;
+    config->tx_coalesce_frames = DEFAULT_TX_COALESCE_FRAMES;
 }
 
-void LoadGenetRuntimeConfig()
+void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
 {
     Kprintf("[genet] %s: Loading defaults\n", __func__);
-    ApplyDefaults();
+    ApplyDefaults(config);
 
-    DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR) "dos.library", 0);
+    struct DosLibrary *DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR) "dos.library", 0);
     if (!DOSBase)
         return;
 
     BPTR fh = Open((CONST_STRPTR) "ENV:genet.prefs", MODE_OLDFILE);
     if (!fh)
     {
-        if (DOSBase)
-        {
-            CloseLibrary((struct Library *)DOSBase);
-            DOSBase = NULL;
-        }
+        CloseLibrary((struct Library *)DOSBase);
         return;
     }
     Kprintf("[genet] %s: Reading ENV:genet.prefs\n", __func__);
@@ -87,79 +81,74 @@ void LoadGenetRuntimeConfig()
             if (*key && *val)
             {
                 LONG v;
-                if (!Stricmp((STRPTR)key, (STRPTR) "UNIT_TASK_PRIORITY"))
+                if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_TASK_PRIORITY") == 0)
                 {
                     if (StrToLong((STRPTR)val, &v))
-                        genetConfig.unit_task_priority = v;
+                        config->unit_task_priority = v;
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "UNIT_STACK_SIZE"))
+                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_STACK_SIZE") == 0)
                 {
                     if (StrToLong((STRPTR)val, &v) && v > 0)
-                        genetConfig.unit_stack_bytes = (ULONG)v;
-                    if (genetConfig.unit_stack_bytes < 4096)
-                        genetConfig.unit_stack_bytes = 4096; /* floor */
-                    genetConfig.unit_stack_bytes &= ~3UL;    /* 32-bit align */
+                        config->unit_stack_bytes = (ULONG)v;
+                    if (config->unit_stack_bytes < 4096)
+                        config->unit_stack_bytes = 4096; /* floor */
+                    config->unit_stack_bytes &= ~3UL;    /* 32-bit align */
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "USE_DMA"))
+                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "USE_DMA") == 0)
                 {
                     if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.use_dma = (UBYTE)v;
+                        config->use_dma = (UBYTE)v;
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "USE_MIAMI_WORKAROUND"))
+                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "USE_MIAMI_WORKAROUND") == 0)
                 {
                     if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.use_miami_workaround = (UBYTE)v;
+                        config->use_miami_workaround = (UBYTE)v;
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "BUDGET"))
+                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "BUDGET") == 0)
                 {
                     if (StrToLong((STRPTR)val, &v) && v > 0)
-                        genetConfig.budget = (UWORD)v;
+                        config->budget = (UWORD)v;
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "PERIODIC_TASK_MS"))
+                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "PERIODIC_TASK_MS") == 0)
                 {
                     if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.periodic_task_ms = (ULONG)v;
+                        config->periodic_task_ms = (ULONG)v;
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "RX_COALESCE_USECS"))
+                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_USECS") == 0)
                 {
                     if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.rx_coalesce_usecs = (ULONG)v;
+                        config->rx_coalesce_usecs = (ULONG)v;
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "RX_COALESCE_FRAMES"))
+                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_FRAMES") == 0)
                 {
                     if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.rx_coalesce_frames = (ULONG)v;
+                        config->rx_coalesce_frames = (ULONG)v;
                 }
-                else if (!Stricmp((STRPTR)key, (STRPTR) "TX_COALESCE_FRAMES"))
+                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "TX_COALESCE_FRAMES") == 0)
                 {
                     if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        genetConfig.tx_coalesce_frames = (ULONG)v;
+                        config->tx_coalesce_frames = (ULONG)v;
                 }
             }
         }
     }
 
     Close(fh);
-
-    if (DOSBase)
-    {
-        CloseLibrary((struct Library *)DOSBase);
-        DOSBase = NULL;
-    }
+    CloseLibrary((struct Library *)DOSBase);
 }
 
-void DumpGenetRuntimeConfig()
+void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config)
 {
 #ifdef DEBUG
     Kprintf("[genet] config: pri=%ld stack_bytes=%lu use_dma=%ld miami=%ld periodic_task_ms=%lu budget=%lu rx_coalesce_usecs=%lu rx_coalesce_frames=%lu tx_coalesce_frames=%lu\n",
-            genetConfig.unit_task_priority,
-            genetConfig.unit_stack_bytes,
-            (ULONG)genetConfig.use_dma,
-            (ULONG)genetConfig.use_miami_workaround,
-            genetConfig.periodic_task_ms,
-            genetConfig.budget,
-            genetConfig.rx_coalesce_usecs,
-            genetConfig.rx_coalesce_frames,
-            genetConfig.tx_coalesce_frames);
+            config->unit_task_priority,
+            config->unit_stack_bytes,
+            (ULONG)config->use_dma,
+            (ULONG)config->use_miami_workaround,
+            config->periodic_task_ms,
+            config->budget,
+            config->rx_coalesce_usecs,
+            config->rx_coalesce_frames,
+            config->tx_coalesce_frames);
 #endif
 }

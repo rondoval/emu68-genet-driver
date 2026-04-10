@@ -33,9 +33,7 @@ struct GenetRuntimeConfig
     ULONG tx_coalesce_frames;
 };
 
-extern struct GenetRuntimeConfig genetConfig;
-
-void LoadGenetRuntimeConfig();
-void DumpGenetRuntimeConfig();
+void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config);
+void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config);
 
 #endif /* GENET_RUNTIME_CONFIG_H */

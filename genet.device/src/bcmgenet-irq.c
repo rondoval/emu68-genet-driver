@@ -2,10 +2,12 @@
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #endif
 
-#include <compat.h>
+#include <emu_iomem.h>
 #include <debug.h>
 #include <genet/bcmgenet-regs.h>
 #include <device.h>
@@ -41,9 +43,10 @@ void bcmgenet_intr_disable(struct GenetUnit *unit)
 }
 
 /* bcmgenet_isr0: handle other stuff */
-void bcmgenet_isr0(struct ExecBase *SysBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"))
+void bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"))
 {
 	(void)irq;
+	(void)execBase;
 
 	/* Read irq status */
 	ULONG status = readl((ULONG)unit->genetBase + GENET_INTRL2_0_OFF + INTRL2_CPU_STAT) &
@@ -51,7 +54,7 @@ void bcmgenet_isr0(struct ExecBase *SysBase asm("a6"), struct GenetUnit *unit as
 
 	if (status & UMAC_IRQ_TXDMA_DONE)
 	{
-		bcmgenet_tx_reclaim(unit, genetConfig.budget);
+		bcmgenet_tx_reclaim(unit, unit->budget);
 	}
 
 	/* Disable interrupts so that we're not flooded until bottom-half catches up */

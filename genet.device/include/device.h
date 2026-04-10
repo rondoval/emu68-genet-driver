@@ -8,6 +8,7 @@
 #endif
 
 #include <exec/devices.h>
+#include <exec/interrupts.h>
 #include <exec/types.h>
 #include <exec/semaphores.h>
 #include <devices/sana2.h>
@@ -144,15 +145,19 @@ struct GenetUnit
 {
 	struct Unit unit;
 	APTR memoryPool;
+	struct GenetDevice *device;
 
 	/* config */
 	LONG unitNumber;
 	LONG flags;
 	UBYTE currentMacAddress[6];
+	UBYTE use_miami_workaround;
+	UWORD budget;
 
 	/* unit/task state */
 	UnitState state;
 	struct Task *task;
+	struct Device *timerBase;
 	struct internal_stats internalStats;
 	struct MinList openers;
 	struct MinList multicastRanges;
@@ -206,6 +211,9 @@ struct GenetDevice
 {
 	struct Device device;
 	ULONG segList;
+	struct GenetRuntimeConfig runtimeConfig;
+	struct Library *utilityBase;
+	struct Library *gic400Base;
 
 	// For now, we'll just assume there can be only one unit
 	struct GenetUnit *unit;
