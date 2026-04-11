@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-2.0+
+
 cmake_minimum_required(VERSION 3.14.0)
 project(runtime-config VERSION ${CMAKE_PROJECT_VERSION})
 

@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.14.0)
 project(emu68-genet-driver VERSION 2.4)
 
-include(cmake/verstring.cmake)
-get_verstring(VERSTRING)
+string(TIMESTAMP CURRENT_DATE "(%d.%m.%Y)")
+set(VERSTRING "$VER: ${PROJECT_NAME} ${PROJECT_VERSION} ${CURRENT_DATE}")
 
 find_package(GIC400 REQUIRED)
 find_package(Emu68Common REQUIRED)

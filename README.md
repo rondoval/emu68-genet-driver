@@ -1,10 +1,9 @@
 # emu68-genet
 
 **emu68-genet** is an Amiga OS driver for the Broadcom GENET v5 Ethernet controller found on the Raspberry PI 4B, designed for use with the Pistorm32-lite and Emu68 project.
-The driver is based on [Das U-Boot](https://source.denx.de/u-boot/u-boot) bcmgenet driver. It also derives heavily from the [wifipi driver](https://github.com/michalsc/Emu68-tools/tree/master/network/wifipi.device) from Michal Schulz.
+The hardware-facing GENET and PHY implementation is based primarily on [Das U-Boot](https://source.denx.de/u-boot/u-boot) and Linux GENET code. The Amiga SANA-II device scaffolding resembles both generic AmigaOS SANA-II drivers and, in some files, Michal Schulz's [WiFiPi.device](https://github.com/michalsc/WiFiPi.device) more specifically.
 
 **Beware:**
-- The upcoming changes in Emu68 1.1 are likely not compatible with the interrupts implementation in this driver, as the new Arm side handler reads IAR and writes EORI registers.
 - v2.0 **requires** gic400.library and Emu68 build with PR#306 - see below for details
 - The available genet.prefs settings list has changed due to interrupts use
 

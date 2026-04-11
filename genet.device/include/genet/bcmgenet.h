@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
+// SPDX-License-Identifier: GPL-2.0+
 #ifndef __BCMGENET_H
 #define __BCMGENET_H
 

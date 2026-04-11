@@ -17,6 +17,8 @@
 - This is a SANA-II driver; be conservative with opener, queue, and packet-copying logic.
 - Preserve the current split between hardware-facing code in `genet.device/` and user-configurable defaults in `runtime-config/`.
 - `gic400.library` is a hard runtime dependency for interrupt handling in current versions.
+- This repository is mixed-license; preserve existing SPDX headers and do not relabel imported AmigaOS SDK headers without explicit provenance work.
+- Treat clearly original repository files as `GPL-2.0+` unless a task establishes a different provenance requirement.
 - The README documents a soft-reboot hang when the driver is online; be cautious with interrupt enable and teardown changes.
 
 ## Validation
