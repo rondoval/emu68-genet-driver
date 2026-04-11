@@ -13,7 +13,7 @@
 
 #include <device.h>
 #include <debug.h>
-#include <emu_memory.h>
+#include <memory.h>
 
 static inline uint64_t GetAddress(const UBYTE *addr)
 {
@@ -79,7 +79,7 @@ int Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
         ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
         return COMMAND_PROCESSED;
     }
-    _memset(range, 0, sizeof(struct MulticastRange));
+    mem_zero(range, sizeof(struct MulticastRange));
     range->useCount = 1;
     range->lowerBound = lower_bound;
     range->upperBound = upper_bound;

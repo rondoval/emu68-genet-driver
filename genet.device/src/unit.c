@@ -14,7 +14,7 @@
 #include <debug.h>
 #include <device.h>
 #include <bcm_gpio.h>
-#include <emu_memory.h>
+#include <memory.h>
 #include <minlist.h>
 #include <runtime_config.h>
 
@@ -94,7 +94,7 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	}
 	
 	/* On first open, we initialize current MAC to 0 to indicate it was not set yet */
-	_memset(unit->currentMacAddress, 0, sizeof(unit->currentMacAddress));
+	mem_zero(unit->currentMacAddress, sizeof(unit->currentMacAddress));
 	result = UnitTaskStart(unit);
 	if (result != S2ERR_NO_ERROR)
 	{

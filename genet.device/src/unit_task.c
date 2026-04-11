@@ -11,14 +11,15 @@
 
 #include <dos/dos.h>
 
+#include <genet/bcmgenet.h>
 #include <genet/bcmgenet-regs.h>
 #include <genet/bcmgenet-irq.h>
 #include <genet/phy.h>
 #include <device.h>
 #include <minlist.h>
 #include <debug.h>
-#include <emu_iomem.h>
-#include <emu_types.h>
+#include <iomem.h>
+#include <types.h>
 #include <runtime_config.h>
 
 static void UnitTask(struct GenetUnit *unit, struct Task *parent)
@@ -174,7 +175,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 else
                 {
                     /* We caught up, enable interrupts */
-                    writel(UMAC_IRQ_RXDMA_DONE, (ULONG)unit->genetBase + GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR);
+                    mmio_write32(UMAC_IRQ_RXDMA_DONE, BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
                     bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE);
                 }
             }

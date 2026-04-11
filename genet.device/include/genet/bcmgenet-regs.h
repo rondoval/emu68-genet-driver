@@ -9,6 +9,8 @@
 #ifndef _BCMGENET_REGS_H
 #define _BCMGENET_REGS_H
 
+#include <bits.h>
+
 #define SYS_REV_CTRL 0x00
 
 #define SYS_PORT_CTRL 0x04

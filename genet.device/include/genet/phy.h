@@ -10,6 +10,7 @@
 #define _PHY_H
 
 #include <exec/types.h>
+#include <bits.h>
 #include <genet/phy_interface.h>
 #include <genet/ethtool.h>
 

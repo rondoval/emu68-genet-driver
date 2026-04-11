@@ -16,11 +16,11 @@
 #endif
 
 #include <debug.h>
-#include <emu_bits.h>
-#include <emu_byteorder.h>
-#include <emu_errors.h>
-#include <emu_iomem.h>
-#include <emu_timing.h>
+#include <bits.h>
+#include <byteorder.h>
+#include <errors.h>
+#include <iomem.h>
+#include <timing.h>
 #include <device.h>
 
 #include <genet/phy.h>
@@ -48,12 +48,12 @@ static inline int wait_for_bit_32(APTR reg,
 {
 	// Kprintf("[genet] %s: reg=%ld mask=0x%lx set=%ld timeout=%ld\n", __func__, reg, mask, set, timeout_ms);
 	ULONG val;
-	ULONG start = LE32(*(volatile ULONG *)0xf2003004); // TODO get from device tree
+	ULONG start = le32(*(volatile ULONG *)0xf2003004); // TODO get from device tree
 	ULONG end = start + timeout_ms * 1000;
 
 	while (1)
 	{
-		val = readl(reg);
+		val = mmio_read32(reg);
 
 		if (!set)
 			val = ~val;
@@ -61,7 +61,7 @@ static inline int wait_for_bit_32(APTR reg,
 		if ((val & mask) == mask)
 			return 0;
 
-		if (end < LE32(*(volatile ULONG *)0xf2003004))
+		if (end < le32(*(volatile ULONG *)0xf2003004))
 			break;
 
 		delay_us(1);
@@ -75,7 +75,7 @@ static inline int wait_for_bit_32(APTR reg,
 static inline void mdio_start(struct GenetUnit *unit)
 {
 	// Kprintf("%s\n", __func__);
-	setbits_32(unit->genetBase + MDIO_CMD, MDIO_START_BUSY);
+	mmio_set32(unit->genetBase + MDIO_CMD, MDIO_START_BUSY);
 }
 
 static int mdio_write(struct phy_device *phy, int reg, UWORD value)
@@ -87,7 +87,7 @@ static int mdio_write(struct phy_device *phy, int reg, UWORD value)
 	/* Prepare the read operation */
 	val = MDIO_WR | (phy->addr << MDIO_PMD_SHIFT) |
 		  (reg << MDIO_REG_SHIFT) | (0xffff & value);
-	writel(val, unit->genetBase + MDIO_CMD);
+	mmio_write32(val, unit->genetBase + MDIO_CMD);
 
 	/* Start MDIO transaction */
 	mdio_start(unit);
@@ -105,7 +105,7 @@ static int mdio_read(struct phy_device *phy, int reg)
 
 	/* Prepare the read operation */
 	val = MDIO_RD | (phy->addr << MDIO_PMD_SHIFT) | (reg << MDIO_REG_SHIFT);
-	writel(val, unit->genetBase + MDIO_CMD);
+	mmio_write32(val, unit->genetBase + MDIO_CMD);
 
 	/* Start MDIO transaction */
 	mdio_start(unit);
@@ -115,7 +115,7 @@ static int mdio_read(struct phy_device *phy, int reg)
 	if (ret)
 		return ret;
 
-	val = readl(unit->genetBase + MDIO_CMD);
+	val = mmio_read32(unit->genetBase + MDIO_CMD);
 	// Kprintf("[genet] %s: phy=%ld reg=%ld value=0x%lx\n", __func__, phy->addr, reg, val);
 
 	return val & 0xffff;

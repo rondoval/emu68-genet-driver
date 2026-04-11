@@ -12,8 +12,8 @@
 #include <proto/exec.h>
 #endif
 
-#include <emu_iomem.h>
-#include <emu_types.h>
+#include <iomem.h>
+#include <types.h>
 #include <debug.h>
 #include <device.h>
 #include <runtime_config.h>
@@ -25,8 +25,8 @@
 /* Combined address + length/status setter */
 static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
 {
-	writel((ULONG)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
-	writel(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
+	mmio_write32((ULONG)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
+	mmio_write32(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
 }
 
 static inline struct enet_cb *bcmgenet_get_txcb(struct bcmgenet_tx_ring *ring)
@@ -61,7 +61,7 @@ unsigned int bcmgenet_tx_reclaim(struct GenetUnit *unit, unsigned int budget)
 		return 0;
 
 	/* Compute how many buffers are transmitted since last xmit call */
-	UWORD tx_cons_index = readl((ULONG)unit->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
+	UWORD tx_cons_index = mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK;
 	UWORD txbds_ready = (tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK;
 
 	/* Reclaim transmitted buffers */
@@ -207,7 +207,7 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	ring->tx_prod_index++;
 	ring->tx_prod_index &= DMA_P_INDEX_MASK;
 
-	writel(ring->tx_prod_index, (ULONG)unit->genetBase + TDMA_PROD_INDEX);
+	mmio_write32(ring->tx_prod_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
 	KprintfH("[genet] %s: Transmitting packet, tx_prod_index %ld\n", __func__, ring->tx_prod_index);
 
 	ReleaseSemaphore(&ring->tx_ring_sem);

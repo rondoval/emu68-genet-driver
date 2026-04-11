@@ -12,7 +12,7 @@
 
 #include <genet/bcmgenet-regs.h>
 #include <device.h>
-#include <emu_types.h>
+#include <types.h>
 #include <debug.h>
 #include <runtime_config.h>
 

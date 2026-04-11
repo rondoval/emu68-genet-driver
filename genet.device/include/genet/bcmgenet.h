@@ -4,6 +4,11 @@
 
 #include <exec/types.h>
 
+struct GenetUnit;
+struct IOSana2Req;
+
+#define BCMGENET_REG(unit, offset) ((unit)->genetBase + (offset))
+
 int bcmgenet_eth_probe(struct GenetUnit *unit);
 int bcmgenet_gmac_eth_start(struct GenetUnit *unit);
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit);

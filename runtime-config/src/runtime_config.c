@@ -12,7 +12,7 @@
 #include <exec/types.h>
 #include <exec/memory.h>
 
-#include <emu_string.h>
+#include <strutil.h>
 #include <runtime_config.h>
 #include <debug.h>
 

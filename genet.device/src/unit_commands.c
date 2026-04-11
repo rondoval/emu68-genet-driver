@@ -16,8 +16,8 @@
 
 #include <device.h>
 #include <debug.h>
-#include <emu_memory.h>
-#include <emu_types.h>
+#include <memory.h>
+#include <types.h>
 
 static const UWORD GENET_SupportedCommands[] = {
     CMD_FLUSH,
@@ -304,7 +304,7 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
     if (unit->state != STATE_ONLINE)
     {
         Kprintf("[genet] %s: Bringing unit online\n", __func__);
-        _memset(&unit->internalStats, 0, sizeof(unit->internalStats));
+        mem_zero(&unit->internalStats, sizeof(unit->internalStats));
         struct Device *unitTimerBase = unit->timerBase;
         if (unitTimerBase != NULL)
         {
