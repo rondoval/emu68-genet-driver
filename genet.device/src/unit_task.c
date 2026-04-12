@@ -29,7 +29,13 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     // Initialize the built in msg port, we'll receive commands here
     _NewMinList((struct MinList *)&unit->unit.unit_MsgPort.mp_MsgList);
     unit->unit.unit_MsgPort.mp_SigTask = FindTask(NULL);
-    unit->unit.unit_MsgPort.mp_SigBit = AllocSignal(-1);
+    BYTE msg_sigbit = AllocSignal(-1);
+    if (msg_sigbit == -1)
+    {
+        Kprintf("[genet] %s: Failed to allocate unit message signal\n", __func__);
+        goto free_signals;
+    }
+    unit->unit.unit_MsgPort.mp_SigBit = (UBYTE)msg_sigbit;
     unit->unit.unit_MsgPort.mp_Flags = PA_SIGNAL;
     unit->unit.unit_MsgPort.mp_Node.ln_Type = NT_MSGPORT;
 
@@ -51,7 +57,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         goto free_ports;
     }
 
-    UBYTE ret = OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_MICROHZ, (struct IORequest *)packetTimerReq, LIB_MIN_VERSION);
+    BYTE ret = OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_MICROHZ, (struct IORequest *)packetTimerReq, LIB_MIN_VERSION);
     if (ret)
     {
         Kprintf("[genet] %s: Failed to open timer device ret=%ld\n", __func__, ret);
@@ -83,7 +89,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     {
         sigset = Wait(waitMask);
         KprintfH("[genet] %s: Woke up, sigset=0x%08lx\n", __func__, sigset);
-        UWORD budget;
+        u16 budget;
 
         // IO queue got a new message
         if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
@@ -132,7 +138,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         if (sigset & (1UL << unit->irq0_signal))
         {
             KprintfH("[genet] %s: Interrupt bottom-half processing, status=0x%08lx\n", __func__, unit->irq0_status);
-            ULONG status = unit->irq0_status;
+            u32 status = unit->irq0_status;
             unit->irq0_status = 0;
 
             if (unlikely((status & UMAC_IRQ_PHY_DET_R) && unit->phydev->autoneg != AUTONEG_ENABLE))
@@ -160,10 +166,10 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             {
                 KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
                 budget = unit->budget;
-                int res = bcmgenet_gmac_eth_rx(unit, budget);
+                s32 res = bcmgenet_gmac_eth_rx(unit, budget);
                 if (res > 0)
                 {
-                    budget -= res;
+                    budget = (u16)(budget - res);
                 }
                 KprintfH("[genet] %s: Remaining budget: %ld\n", __func__, budget);
                 if (budget == 0)
@@ -220,13 +226,13 @@ free_ports:
     DeleteMsgPort(unit->openerPort);
 free_signals:
     FreeSignal(unit->irq0_signal);
-    FreeSignal(unit->unit.unit_MsgPort.mp_SigBit);
+    FreeSignal((BYTE)unit->unit.unit_MsgPort.mp_SigBit);
 
     Signal(parent, SIGBREAKF_CTRL_F);
     unit->task = NULL;
 }
 
-int UnitTaskStart(struct GenetUnit *unit)
+u32 UnitTaskStart(struct GenetUnit *unit)
 {
     Kprintf("[genet] %s: genet task starting\n", __func__);
 	const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;

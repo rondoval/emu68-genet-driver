@@ -9,7 +9,7 @@
 #ifndef _PHY_H
 #define _PHY_H
 
-#include <exec/types.h>
+#include <types.h>
 #include <bits.h>
 #include <genet/phy_interface.h>
 #include <genet/ethtool.h>
@@ -21,7 +21,7 @@ struct GenetUnit;
 /* MDIO registers, BCM2711 */
 #define MDIO_START_BUSY BIT(29)
 #define MDIO_READ_FAIL BIT(28)
-#define MDIO_RD (2 << 26)
+#define MDIO_RD (2U << 26)
 #define MDIO_WR BIT(26)
 #define MDIO_PMD_SHIFT 21
 #define MDIO_PMD_MASK 0x1f
@@ -32,10 +32,10 @@ struct GenetUnit;
 #define MDIO_CMD (GENET_UMAC_OFF + 0x614)
 
 /* MII_STAT1000 masks */
-#define PHY_1000BTSR_1000FD 0x0800
-#define PHY_1000BTSR_1000HD 0x0400
+#define PHY_1000BTSR_1000FD BIT(11)
+#define PHY_1000BTSR_1000HD BIT(10)
 
-#define PHY_FLAG_BROKEN_RESET (1 << 0) /* soft reset not supported */
+#define PHY_FLAG_BROKEN_RESET BIT(0) /* soft reset not supported */
 
 #define PHY_DEFAULT_FEATURES (SUPPORTED_Autoneg | \
 							  SUPPORTED_TP |      \
@@ -64,21 +64,21 @@ struct phy_device
 	/* forced speed & duplex (no autoneg)
 	 * partner speed & duplex & pause (autoneg)
 	 */
-	int speed;
-	int duplex;
+	u16 speed;
+	u8 duplex;
 
 	/* The most recently read link state */
-	int link;
+	BOOL link;
 	phy_interface_t interface;
 
-	ULONG features;
-	ULONG advertising;
-	ULONG supported;
+	u32 features;
+	u32 advertising;
+	u32 supported;
 
-	int autoneg;
-	int addr;
-	ULONG phy_id;
-	ULONG flags;
+	u8 autoneg;
+	u8 addr;
+	u32 phy_id;
+	u32 flags;
 };
 
 /**
@@ -88,7 +88,7 @@ struct phy_device
  * @phydev:	PHY to reset
  * @return: 0 if OK, -ve on error
  */
-int phy_reset(struct phy_device *phydev);
+s32 phy_reset(struct phy_device *phydev);
 
 /**
  * phy_connect() - Creates a PHY device for the Ethernet interface
@@ -105,9 +105,9 @@ int phy_reset(struct phy_device *phydev);
  */
 struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface);
 
-int phy_config(struct phy_device *phydev);
-int phy_startup(struct phy_device *phydev);
+s32 phy_config(struct phy_device *phydev);
+s32 phy_startup(struct phy_device *phydev);
 void phy_destroy(struct phy_device *phydev);
-int genphy_config_aneg(struct phy_device *phydev);
+s32 genphy_config_aneg(struct phy_device *phydev);
 
 #endif

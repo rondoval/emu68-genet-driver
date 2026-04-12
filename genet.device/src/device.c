@@ -40,11 +40,13 @@
 #define DEVICE_REVISION 3
 #endif
 
+LONG __attribute__((used, no_reorder)) doNotExecute(void);
+
 /*
     Put the function at the very beginning of the file in order to avoid
     unexpected results when user executes the device by mistake
 */
-int __attribute__((used, no_reorder)) doNotExecute()
+LONG __attribute__((used, no_reorder)) doNotExecute(void)
 {
     return -1;
 }
@@ -127,7 +129,7 @@ static void genet_close_libraries(struct GenetDevice *base)
     }
 }
 
-static int genet_open_libraries(struct GenetDevice *base)
+static s32 genet_open_libraries(struct GenetDevice *base)
 {
     if (base->utilityBase != NULL && base->gic400Base != NULL)
         return 0;
@@ -173,7 +175,7 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
         func;                                                 \
     })
 
-struct Opener *createOpener(struct TagItem *tags, struct Library *UtilityBase, const struct GenetRuntimeConfig *config)
+static struct Opener *createOpener(struct TagItem *tags, struct Library *UtilityBase, const struct GenetRuntimeConfig *config)
 {
     struct Opener *opener = NULL;
     opener = AllocMem(sizeof(struct Opener), MEMF_PUBLIC | MEMF_CLEAR);
@@ -302,14 +304,14 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
         io->ios2_BufferManagement = opener;
     }
 
-    int result = UnitOpen(base->unit, unitNumber, flags, opener);
+    u32 result = UnitOpen(base->unit, (u32)unitNumber, (u32)flags, opener);
     io->ios2_Req.io_Unit = (struct Unit *)base->unit;
 
     if (result == S2ERR_NO_ERROR)
     {
         Kprintf("[genet] %s: Unit opened successfully\n", __func__);
         base->device.dd_Library.lib_OpenCnt++;
-        base->device.dd_Library.lib_Flags &= ~LIBF_DELEXP;
+        base->device.dd_Library.lib_Flags &= (UBYTE)~LIBF_DELEXP;
         io->ios2_Req.io_Message.mn_Node.ln_Type = NT_REPLYMSG;
     }
     else
@@ -335,7 +337,7 @@ ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6
         opener = io->ios2_BufferManagement;
     }
 
-    int result = UnitClose(unit, opener);
+    u32 result = UnitClose(unit, opener);
     if (result == 0) // last user of Unit disappeared
     {
         Kprintf("[genet] %s: Unit closed successfully, freeing resources\n", __func__);
@@ -381,7 +383,7 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
         Permit();
 
         /* Calculate size of device base and deallocate memory */
-        ULONG size = base->device.dd_Library.lib_NegSize + base->device.dd_Library.lib_PosSize;
+        ULONG size = (ULONG)(base->device.dd_Library.lib_NegSize + base->device.dd_Library.lib_PosSize);
         APTR pointer = (APTR)((ULONG)base - base->device.dd_Library.lib_NegSize);
         FreeMem(pointer, size);
 

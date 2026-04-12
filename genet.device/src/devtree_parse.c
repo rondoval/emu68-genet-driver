@@ -15,8 +15,9 @@
 
 #include <debug.h>
 #include <device.h>
+#include <types.h>
 
-int DevTreeParse(struct GenetUnit *unit)
+u32 DevTreeParse(struct GenetUnit *unit)
 {
 	APTR DeviceTreeBase = OpenResource((CONST_STRPTR) "devicetree.resource");
 	if (DeviceTreeBase == NULL)
@@ -26,7 +27,7 @@ int DevTreeParse(struct GenetUnit *unit)
 	}
 
 	char alias[12] = "ethernet0";
-	alias[8] = '0' + unit->unitNumber;
+	alias[8] = (char)('0' + unit->unitNumber);
 	CONST_STRPTR ethernet_alias = DT_GetAlias((CONST_STRPTR)alias);
 	CONST_STRPTR gpio_alias = DT_GetAlias((CONST_STRPTR) "gpio");
 	if (ethernet_alias == NULL || gpio_alias == NULL)
@@ -45,7 +46,7 @@ int DevTreeParse(struct GenetUnit *unit)
 	unit->compatible = DT_GetPropValue(DT_FindProperty(key, (CONST_STRPTR) "compatible"));
 	unit->localMacAddress = DT_GetPropValue(DT_FindProperty(key, (CONST_STRPTR) "local-mac-address"));
 	// CONST_STRPTR status = DT_GetPropValue(DT_FindProperty(key, (CONST_STRPTR) "status"));
-	const ULONG phy_handle = DT_GetPropertyValueULONG(key, "phy-handle", 0, FALSE);
+	const u32 phy_handle = DT_GetPropertyValueULONG(key, "phy-handle", 0, FALSE);
 	CONST_STRPTR phyMode = DT_GetPropValue(DT_FindProperty(key, (CONST_STRPTR) "phy-mode"));
 	unit->phy_interface = phyMode ? interface_for_phy_string((char *)phyMode) : PHY_INTERFACE_MODE_NA;
 
@@ -59,19 +60,34 @@ int DevTreeParse(struct GenetUnit *unit)
 
 	Kprintf("[genet] %s: compatible: %s\n", __func__, unit->compatible);
 	Kprintf("[genet] %s: local-mac-address: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__, unit->localMacAddress[0], unit->localMacAddress[1], unit->localMacAddress[2], unit->localMacAddress[3], unit->localMacAddress[4], unit->localMacAddress[5]);
-	Kprintf("[genet] %s: phy-handle: %08lx\n", __func__, phy_handle);
+	Kprintf("[genet] %s: phy-handle: %08lx\n", __func__, (ULONG)phy_handle);
 	Kprintf("[genet] %s: phy-mode: %s\n", __func__, phy_string_for_interface(unit->phy_interface));
 	Kprintf("[genet] %s: register base: %08lx\n", __func__, unit->genetBase);
 
-	unit->irq0_number = DT_GetInterrupt(key, 0) + 32;
-	unit->irq1_number = DT_GetInterrupt(key, 1) + 32;
+	s32 irq0 = DT_GetInterrupt(key, 0);
+	s32 irq1 = DT_GetInterrupt(key, 1);
+	if (irq0 < 0 || irq1 < 0)
+	{
+		Kprintf("[genet] %s: Failed to get interrupt numbers\n", __func__);
+		DT_CloseKey(key);
+		return S2ERR_NO_RESOURCES;
+	}
+	unit->irq0_number = (u32)(irq0 + 32);
+	unit->irq1_number = (u32)(irq1 + 32);
 
 	// Now find phy address
 	APTR phy_key = DT_FindByPHandle(key, phy_handle);
 	if (phy_key)
 	{
 		Kprintf("[genet] %s: Found phy key: %s\n", __func__, DT_GetKeyName(phy_key));
-		unit->phyaddr = DT_GetPropertyValueULONG(phy_key, "reg", 1, FALSE);
+		u32 phyaddr = DT_GetPropertyValueULONG(phy_key, "reg", 1, FALSE);
+		if (phyaddr > 0xffU)
+		{
+			Kprintf("[genet] %s: Invalid phy address %08lx\n", __func__, (ULONG)phyaddr);
+			DT_CloseKey(key);
+			return S2ERR_NO_RESOURCES;
+		}
+		unit->phyaddr = (u8)phyaddr;
 		Kprintf("[genet] %s: phy-addr: %lx\n", __func__, unit->phyaddr);
 	}
 	else
@@ -92,5 +108,5 @@ int DevTreeParse(struct GenetUnit *unit)
 
 	// We're done with the device tree
 	DT_CloseKey(key);
-	return 0;
+	return S2ERR_NO_ERROR;
 }

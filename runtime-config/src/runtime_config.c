@@ -12,6 +12,7 @@
 #include <exec/types.h>
 #include <exec/memory.h>
 
+#include <types.h>
 #include <strutil.h>
 #include <runtime_config.h>
 #include <debug.h>
@@ -80,54 +81,55 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
                 *--end = '\0';
             if (*key && *val)
             {
-                LONG v;
+                LONG parsed;
+
                 if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_TASK_PRIORITY") == 0)
                 {
-                    if (StrToLong((STRPTR)val, &v))
-                        config->unit_task_priority = v;
+                    if (StrToLong((STRPTR)val, &parsed))
+                        config->unit_task_priority = (s8)parsed;
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_STACK_SIZE") == 0)
                 {
-                    if (StrToLong((STRPTR)val, &v) && v > 0)
-                        config->unit_stack_bytes = (ULONG)v;
+                    if (StrToLong((STRPTR)val, &parsed) && parsed > 0)
+                        config->unit_stack_bytes = (u32)parsed;
                     if (config->unit_stack_bytes < 4096)
                         config->unit_stack_bytes = 4096; /* floor */
-                    config->unit_stack_bytes &= ~3UL;    /* 32-bit align */
+                    config->unit_stack_bytes &= ~3u;    /* 32-bit align */
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "USE_DMA") == 0)
                 {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        config->use_dma = (UBYTE)v;
+                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
+                        config->use_dma = (u8)parsed;
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "USE_MIAMI_WORKAROUND") == 0)
                 {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        config->use_miami_workaround = (UBYTE)v;
+                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
+                        config->use_miami_workaround = (u8)parsed;
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "BUDGET") == 0)
                 {
-                    if (StrToLong((STRPTR)val, &v) && v > 0)
-                        config->budget = (UWORD)v;
+                    if (StrToLong((STRPTR)val, &parsed) && parsed > 0)
+                        config->budget = (u16)parsed;
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "PERIODIC_TASK_MS") == 0)
                 {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        config->periodic_task_ms = (ULONG)v;
+                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
+                        config->periodic_task_ms = (u32)parsed;
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_USECS") == 0)
                 {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        config->rx_coalesce_usecs = (ULONG)v;
+                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
+                        config->rx_coalesce_usecs = (u32)parsed;
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_FRAMES") == 0)
                 {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        config->rx_coalesce_frames = (ULONG)v;
+                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
+                        config->rx_coalesce_frames = (u32)parsed;
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "TX_COALESCE_FRAMES") == 0)
                 {
-                    if (StrToLong((STRPTR)val, &v) && v >= 0)
-                        config->tx_coalesce_frames = (ULONG)v;
+                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
+                        config->tx_coalesce_frames = (u32)parsed;
                 }
             }
         }
@@ -141,14 +143,14 @@ void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config)
 {
 #ifdef DEBUG
     Kprintf("[genet] config: pri=%ld stack_bytes=%lu use_dma=%ld miami=%ld periodic_task_ms=%lu budget=%lu rx_coalesce_usecs=%lu rx_coalesce_frames=%lu tx_coalesce_frames=%lu\n",
-            config->unit_task_priority,
-            config->unit_stack_bytes,
+            (LONG)config->unit_task_priority,
+            (ULONG)config->unit_stack_bytes,
             (ULONG)config->use_dma,
             (ULONG)config->use_miami_workaround,
-            config->periodic_task_ms,
-            config->budget,
-            config->rx_coalesce_usecs,
-            config->rx_coalesce_frames,
-            config->tx_coalesce_frames);
+            (ULONG)config->periodic_task_ms,
+            (ULONG)config->budget,
+            (ULONG)config->rx_coalesce_usecs,
+            (ULONG)config->rx_coalesce_frames,
+            (ULONG)config->tx_coalesce_frames);
 #endif
 }

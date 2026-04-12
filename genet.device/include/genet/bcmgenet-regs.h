@@ -66,35 +66,35 @@
 /* Tx/Rx Dma Descriptor common bits */
 #define DMA_EN BIT(0)
 #define DMA_RING_BUF_EN_SHIFT 0x01
-#define DMA_RING_BUF_EN_MASK 0xffff
-#define DMA_BUFLENGTH_MASK 0x0fff
+#define DMA_RING_BUF_EN_MASK 0xffffU
+#define DMA_BUFLENGTH_MASK 0x0fffU
 #define DMA_BUFLENGTH_SHIFT 16
 #define DMA_RING_SIZE_SHIFT 16
-#define DMA_OWN 0x8000
-#define DMA_EOP 0x4000
-#define DMA_SOP 0x2000
-#define DMA_WRAP 0x1000
-#define DMA_MAX_BURST_LENGTH 0x8
+#define DMA_OWN 0x8000U
+#define DMA_EOP 0x4000U
+#define DMA_SOP 0x2000U
+#define DMA_WRAP 0x1000U
+#define DMA_MAX_BURST_LENGTH 0x8U
 
 /* Tx specific DMA descriptor bits */
-#define DMA_TX_UNDERRUN 0x0200
-#define DMA_TX_APPEND_CRC 0x0040
-#define DMA_TX_OW_CRC 0x0020
-#define DMA_TX_DO_CSUM 0x0010
+#define DMA_TX_UNDERRUN 0x0200U
+#define DMA_TX_APPEND_CRC 0x0040U
+#define DMA_TX_OW_CRC 0x0020U
+#define DMA_TX_DO_CSUM 0x0010U
 #define DMA_TX_QTAG_SHIFT 7
 
 /* DMA registers common definitions */
-#define DMA_RW_POINTER_MASK		0x1FF
-#define DMA_P_INDEX_DISCARD_CNT_MASK	0xFFFF
-#define DMA_P_INDEX_DISCARD_CNT_SHIFT	16
-#define DMA_BUFFER_DONE_CNT_MASK	0xFFFF
-#define DMA_BUFFER_DONE_CNT_SHIFT	16
-#define DMA_P_INDEX_MASK		0xFFFF
-#define DMA_C_INDEX_MASK		0xFFFF
+#define DMA_RW_POINTER_MASK 0x1FFU
+#define DMA_P_INDEX_DISCARD_CNT_MASK 0xFFFFU
+#define DMA_P_INDEX_DISCARD_CNT_SHIFT 16
+#define DMA_BUFFER_DONE_CNT_MASK 0xFFFFU
+#define DMA_BUFFER_DONE_CNT_SHIFT 16
+#define DMA_P_INDEX_MASK 0xFFFFU
+#define DMA_C_INDEX_MASK 0xFFFFU
 
 /* DMA rings size */
-#define DMA_RING_SIZE 0x40
-#define DMA_RINGS_SIZE (DMA_RING_SIZE * (DEFAULT_Q + 1))
+#define DMA_RING_SIZE 0x40U
+#define DMA_RINGS_SIZE (DMA_RING_SIZE * (DEFAULT_Q + 1U))
 
 /* DMA descriptor */
 #define DMA_DESC_LENGTH_STATUS 0x00
@@ -175,15 +175,15 @@
 #define DMA_INDEX2RING_7 0x8C
 
 /* DMA timeout register */
-#define DMA_TIMEOUT_MASK 0xFFFF
-#define DMA_TIMEOUT_VAL 5000 /* micro seconds */
+#define DMA_TIMEOUT_MASK 0xFFFFU
+#define DMA_TIMEOUT_VAL 5000U /* micro seconds */
 
 #define DMA_ARBITER_RR 0x00
 #define DMA_ARBITER_WRR 0x01
 #define DMA_ARBITER_SP 0x02
 
 /* DMA interrupt threshold register */
-#define DMA_INTR_THRESHOLD_MASK 0x01FF
+#define DMA_INTR_THRESHOLD_MASK 0x01FFU
 
 #define RX_BUF_LENGTH 2048
 #define RX_TOTAL_BUFSIZE (RX_BUF_LENGTH * RX_DESCS)
@@ -191,71 +191,71 @@
 #define RX_BUF_OFFSET 2
 
 /* Rx Specific Dma descriptor bits */
-#define DMA_RX_CHK_V3PLUS		0x8000
-#define DMA_RX_CHK_V12			0x1000
-#define DMA_RX_BRDCAST			0x0040
-#define DMA_RX_MULT			0x0020
-#define DMA_RX_LG			0x0010
-#define DMA_RX_NO			0x0008
-#define DMA_RX_RXER			0x0004
-#define DMA_RX_CRC_ERROR		0x0002
-#define DMA_RX_OV			0x0001
-#define DMA_RX_FI_MASK			0x001F
-#define DMA_RX_FI_SHIFT			0x0007
-#define DMA_DESC_ALLOC_MASK		0x00FF
+#define DMA_RX_CHK_V3PLUS 0x8000U
+#define DMA_RX_CHK_V12 0x1000U
+#define DMA_RX_BRDCAST 0x0040U
+#define DMA_RX_MULT 0x0020U
+#define DMA_RX_LG 0x0010U
+#define DMA_RX_NO 0x0008U
+#define DMA_RX_RXER 0x0004U
+#define DMA_RX_CRC_ERROR 0x0002U
+#define DMA_RX_OV 0x0001U
+#define DMA_RX_FI_MASK 0x001FU
+#define DMA_RX_FI_SHIFT 0x0007U
+#define DMA_DESC_ALLOC_MASK 0x00FFU
 
 /* INTRL2 register block offsets */
-#define GENET_INTRL2_0_OFF		0x0200
-#define GENET_INTRL2_1_OFF		0x0240
+#define GENET_INTRL2_0_OFF 0x0200
+#define GENET_INTRL2_1_OFF 0x0240
 
 /* uniMac intrl2 registers */
-#define INTRL2_CPU_STAT			0x00
-#define INTRL2_CPU_SET			0x04
-#define INTRL2_CPU_CLEAR		0x08
-#define INTRL2_CPU_MASK_STATUS		0x0C
-#define INTRL2_CPU_MASK_SET		0x10
-#define INTRL2_CPU_MASK_CLEAR		0x14
+#define INTRL2_CPU_STAT 0x00
+#define INTRL2_CPU_SET 0x04
+#define INTRL2_CPU_CLEAR 0x08
+#define INTRL2_CPU_MASK_STATUS 0x0C
+#define INTRL2_CPU_MASK_SET 0x10
+#define INTRL2_CPU_MASK_CLEAR 0x14
 
 /* INTRL2 instance 0 definitions */
-#define UMAC_IRQ_SCB			(1 << 0)
-#define UMAC_IRQ_EPHY			(1 << 1)
-#define UMAC_IRQ_PHY_DET_R		(1 << 2)
-#define UMAC_IRQ_PHY_DET_F		(1 << 3)
-#define UMAC_IRQ_LINK_UP		(1 << 4)
-#define UMAC_IRQ_LINK_DOWN		(1 << 5)
-#define UMAC_IRQ_LINK_EVENT		(UMAC_IRQ_LINK_UP | UMAC_IRQ_LINK_DOWN)
-#define UMAC_IRQ_UMAC			(1 << 6)
-#define UMAC_IRQ_UMAC_TSV		(1 << 7)
-#define UMAC_IRQ_TBUF_UNDERRUN		(1 << 8)
-#define UMAC_IRQ_RBUF_OVERFLOW		(1 << 9)
-#define UMAC_IRQ_HFB_SM			(1 << 10)
-#define UMAC_IRQ_HFB_MM			(1 << 11)
-#define UMAC_IRQ_MPD_R			(1 << 12)
-#define UMAC_IRQ_WAKE_EVENT		(UMAC_IRQ_HFB_SM | UMAC_IRQ_HFB_MM | \
-					 UMAC_IRQ_MPD_R)
-#define UMAC_IRQ_RXDMA_MBDONE		(1 << 13)
-#define UMAC_IRQ_RXDMA_PDONE		(1 << 14)
-#define UMAC_IRQ_RXDMA_BDONE		(1 << 15)
-#define UMAC_IRQ_RXDMA_DONE		UMAC_IRQ_RXDMA_MBDONE
-#define UMAC_IRQ_TXDMA_MBDONE		(1 << 16)
-#define UMAC_IRQ_TXDMA_PDONE		(1 << 17)
-#define UMAC_IRQ_TXDMA_BDONE		(1 << 18)
-#define UMAC_IRQ_TXDMA_DONE		UMAC_IRQ_TXDMA_MBDONE
+#define UMAC_IRQ_SCB BIT(0)
+#define UMAC_IRQ_EPHY BIT(1)
+#define UMAC_IRQ_PHY_DET_R BIT(2)
+#define UMAC_IRQ_PHY_DET_F BIT(3)
+#define UMAC_IRQ_LINK_UP BIT(4)
+#define UMAC_IRQ_LINK_DOWN BIT(5)
+#define UMAC_IRQ_LINK_EVENT (UMAC_IRQ_LINK_UP | UMAC_IRQ_LINK_DOWN)
+#define UMAC_IRQ_UMAC BIT(6)
+#define UMAC_IRQ_UMAC_TSV BIT(7)
+#define UMAC_IRQ_TBUF_UNDERRUN BIT(8)
+#define UMAC_IRQ_RBUF_OVERFLOW BIT(9)
+#define UMAC_IRQ_HFB_SM BIT(10)
+#define UMAC_IRQ_HFB_MM BIT(11)
+#define UMAC_IRQ_MPD_R BIT(12)
+#define UMAC_IRQ_WAKE_EVENT (UMAC_IRQ_HFB_SM | UMAC_IRQ_HFB_MM | \
+							 UMAC_IRQ_MPD_R)
+#define UMAC_IRQ_RXDMA_MBDONE BIT(13)
+#define UMAC_IRQ_RXDMA_PDONE BIT(14)
+#define UMAC_IRQ_RXDMA_BDONE BIT(15)
+#define UMAC_IRQ_RXDMA_DONE UMAC_IRQ_RXDMA_MBDONE
+#define UMAC_IRQ_TXDMA_MBDONE BIT(16)
+#define UMAC_IRQ_TXDMA_PDONE BIT(17)
+#define UMAC_IRQ_TXDMA_BDONE BIT(18)
+#define UMAC_IRQ_TXDMA_DONE UMAC_IRQ_TXDMA_MBDONE
 
 /* Only valid for GENETv3+ */
-#define UMAC_IRQ_MDIO_DONE		(1 << 23)
-#define UMAC_IRQ_MDIO_ERROR		(1 << 24)
-#define UMAC_IRQ_MDIO_EVENT		(UMAC_IRQ_MDIO_DONE | \
-					 UMAC_IRQ_MDIO_ERROR)
+#define UMAC_IRQ_MDIO_DONE BIT(23)
+#define UMAC_IRQ_MDIO_ERROR BIT(24)
+#define UMAC_IRQ_MDIO_EVENT (UMAC_IRQ_MDIO_DONE | \
+							 UMAC_IRQ_MDIO_ERROR)
 
 /* INTRL2 instance 1 definitions */
-#define UMAC_IRQ1_TX_INTR_MASK		0xFFFF
-#define UMAC_IRQ1_RX_INTR_MASK		0xFFFF
-#define UMAC_IRQ1_RX_INTR_SHIFT		16
+#define UMAC_IRQ1_TX_INTR_MASK 0xFFFFU
+#define UMAC_IRQ1_RX_INTR_MASK 0xFFFFU
+#define UMAC_IRQ1_RX_INTR_SHIFT 16
 
 #define GENMASK(h, l) \
 	(((~0UL) << (l)) & (~0UL >> (sizeof(ULONG) * CHAR_BIT - 1 - (h))))
 
-#define GENET_QTAG_MASK 0x3F
+#define GENET_QTAG_MASK 0x3FU
 
 #endif

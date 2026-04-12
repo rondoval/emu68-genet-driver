@@ -18,13 +18,13 @@
  * We're not using priority queues, so these are not generated.
  */
 
-void bcmgenet_irq0_enable(struct GenetUnit *unit, ULONG irq_mask)
+void bcmgenet_irq0_enable(struct GenetUnit *unit, u32 irq_mask)
 {
 	mmio_write32(irq_mask,
 		   BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_CLEAR));
 }
 
-void bcmgenet_irq0_disable(struct GenetUnit *unit, ULONG irq_mask)
+void bcmgenet_irq0_disable(struct GenetUnit *unit, u32 irq_mask)
 {
 	mmio_write32(irq_mask,
 		   BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_SET));
@@ -50,7 +50,7 @@ void bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit a
 	(void)execBase;
 
 	/* Read irq status */
-	ULONG status = mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_STAT)) &
+	u32 status = mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_STAT)) &
 				   ~mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_STATUS));
 
 	if (status & UMAC_IRQ_TXDMA_DONE)
@@ -67,7 +67,7 @@ void bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit a
 
 	// if (bcmgenet_has_mdio_intr(priv) && status & UMAC_IRQ_MDIO_EVENT)
 	// 	wake_up(&priv->wq);
-	KprintfH("[genet] %s: IRQ0 status: 0x%08lX unit: 0x%08lx\n", __func__, status, (ULONG)unit);
+	KprintfH("[genet] %s: IRQ0 status: 0x%08lX unit: 0x%08lx\n", __func__, (ULONG)status, (ULONG)unit);
 
 	status &= ~UMAC_IRQ_TXDMA_DONE;
 	if (status)

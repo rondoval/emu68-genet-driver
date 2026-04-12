@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.14.0)
 project(genet.device VERSION ${CMAKE_PROJECT_VERSION})
 
 add_link_options(-ffreestanding -nostdlib -nostartfiles -s -Wl,-e,_doNotExecute)
-add_compile_options(-Os -m68040 -Wall -Wextra -DDEBUG -fomit-frame-pointer)
+add_compile_options(-Os -m68040 -Wall -Wextra -Wconversion -Wsign-conversion -Wshadow -Wmissing-prototypes -Wstrict-prototypes -DDEBUG -fomit-frame-pointer)
 
 add_executable(genet.device
     src/device.c

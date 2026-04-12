@@ -19,7 +19,7 @@
 #include <memory.h>
 #include <types.h>
 
-static const UWORD GENET_SupportedCommands[] = {
+static const u16 GENET_SupportedCommands[] = {
     CMD_FLUSH,
     CMD_READ,
     CMD_WRITE,
@@ -52,9 +52,9 @@ static const UWORD GENET_SupportedCommands[] = {
                     S2EVENT_ERROR | S2EVENT_HARDWARE | S2EVENT_SOFTWARE)
 
 /* Report events to this unit */
-void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
+void ReportEvents(struct GenetUnit *unit, u32 eventSet)
 {
-    KprintfH("[genet] %s: Reporting events %08lx\n", __func__, eventSet);
+    KprintfH("[genet] %s: Reporting events %08lx\n", __func__, (ULONG)eventSet);
 
     /* Report event to every listener of every opener accepting the mask */
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
@@ -82,7 +82,7 @@ void ReportEvents(struct GenetUnit *unit, ULONG eventSet)
     KprintfH("[genet] %s: Reporting done\n", __func__);
 }
 
-static int Do_S2_ONEVENT(struct IOSana2Req *io)
+static u32 Do_S2_ONEVENT(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfH("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
@@ -96,7 +96,7 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
         return COMMAND_PROCESSED;
     }
 
-    ULONG preset = (unit->state == STATE_ONLINE) ? S2EVENT_ONLINE : S2EVENT_OFFLINE;
+    u32 preset = (unit->state == STATE_ONLINE) ? S2EVENT_ONLINE : S2EVENT_OFFLINE;
 
     /* If expected flags match preset, return back (almost) immediately */
     if (io->ios2_WireError & preset)
@@ -118,7 +118,7 @@ static int Do_S2_ONEVENT(struct IOSana2Req *io)
     }
 }
 
-static int Do_CMD_FLUSH(struct IOSana2Req *io)
+static u32 Do_CMD_FLUSH(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfH("[genet] %s: CMD_FLUSH\n", __func__);
@@ -178,7 +178,7 @@ static int Do_CMD_FLUSH(struct IOSana2Req *io)
     return COMMAND_PROCESSED;
 }
 
-static int Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
+static u32 Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
 {
     KprintfH("[genet] %s: NSCMD_DEVICEQUERY\n", __func__);
     struct NSDeviceQueryResult *dq = io->io_Data;
@@ -199,7 +199,7 @@ static int Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
     return COMMAND_PROCESSED;
 }
 
-static inline int Do_CMD_READ(struct IOSana2Req *io)
+static inline u32 Do_CMD_READ(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfH("[genet] %s: CMD_READ for packet type 0x%lx\n", __func__, io->ios2_PacketType);
@@ -213,22 +213,22 @@ static inline int Do_CMD_READ(struct IOSana2Req *io)
     }
 
     struct Opener *opener = io->ios2_BufferManagement;
-    UWORD packetType = io->ios2_PacketType;
+    u16 packetType = (u16)io->ios2_PacketType;
 
     /* Get the appropriate queue for this packet type */
     struct MinList *queue = GetPacketTypeQueue(opener, packetType);
 
     /* Queue the request */
-    io->ios2_Req.io_Flags &= ~IOF_QUICK;
+    io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
     ObtainSemaphore(&opener->openerSemaphore);
     AddTailMinList(queue, (struct MinNode *)io);
     ReleaseSemaphore(&opener->openerSemaphore);
 
-    KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%lx\n", __func__, packetType);
+    KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%lx\n", __func__, (ULONG)packetType);
     return COMMAND_SCHEDULED;
 }
 
-static inline int Do_S2_READORPHAN(struct IOSana2Req *io)
+static inline u32 Do_S2_READORPHAN(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfH("[genet] %s: S2_READORPHAN\n", __func__);
@@ -247,7 +247,7 @@ static inline int Do_S2_READORPHAN(struct IOSana2Req *io)
     return COMMAND_SCHEDULED;
 }
 
-static inline int Do_CMD_WRITE(struct IOSana2Req *io)
+static inline u32 Do_CMD_WRITE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfH("[genet] %s: CMD_WRITE\n", __func__);
@@ -260,12 +260,11 @@ static inline int Do_CMD_WRITE(struct IOSana2Req *io)
         return COMMAND_PROCESSED;
     }
 
-    io->ios2_Req.io_Flags &= ~IOF_QUICK;
-    int result = bcmgenet_xmit(io, unit);
-    return result;
+    io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
+    return bcmgenet_xmit(io, unit);
 }
 
-int Do_S2_DEVICEQUERY(struct IOSana2Req *io)
+static u32 Do_S2_DEVICEQUERY(struct IOSana2Req *io)
 {
     Kprintf("[genet] %s: S2_DEVICEQUERY\n", __func__);
 
@@ -286,7 +285,7 @@ int Do_S2_DEVICEQUERY(struct IOSana2Req *io)
     return COMMAND_PROCESSED;
 }
 
-static int Do_S2_ONLINE(struct IOSana2Req *io)
+static u32 Do_S2_ONLINE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     Kprintf("[genet] %s: S2_ONLINE\n", __func__);
@@ -316,11 +315,11 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
             Kprintf("[genet] %s: Timer device is not available, continuing without LastStart reset\n", __func__);
         }
 
-        int result = UnitOnline(unit);
+        u32 result = UnitOnline(unit);
         if (result != S2ERR_NO_ERROR)
         {
-            Kprintf("[genet] %s: Failed to bring unit online: %ld\n", __func__, result);
-            io->ios2_Req.io_Error = result;
+            Kprintf("[genet] %s: Failed to bring unit online: %lu\n", __func__, result);
+            io->ios2_Req.io_Error = (BYTE)result;
             io->ios2_WireError = S2WERR_GENERIC_ERROR;
             ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
         }
@@ -334,7 +333,7 @@ static int Do_S2_ONLINE(struct IOSana2Req *io)
     return COMMAND_PROCESSED;
 }
 
-static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
+static u32 Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     Kprintf("[genet] %s: S2_CONFIGINTERFACE\n", __func__);
@@ -348,11 +347,11 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
                 unit->currentMacAddress[2], unit->currentMacAddress[3],
                 unit->currentMacAddress[4], unit->currentMacAddress[5]);
 
-        int result = UnitConfigure(unit);
+        u32 result = UnitConfigure(unit);
         if (result != S2ERR_NO_ERROR)
         {
-            Kprintf("[genet] %s: Failed to configure unit: %ld\n", __func__, result);
-            io->ios2_Req.io_Error = result;
+            Kprintf("[genet] %s: Failed to configure unit: %lu\n", __func__, result);
+            io->ios2_Req.io_Error = (BYTE)result;
             io->ios2_WireError = S2WERR_GENERIC_ERROR;
             ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
         }
@@ -374,7 +373,7 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
     return COMMAND_PROCESSED;
 }
 
-static int Do_S2_OFFLINE(struct IOSana2Req *io)
+static u32 Do_S2_OFFLINE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     Kprintf("[genet] %s: S2_OFFLINE\n", __func__);
@@ -396,7 +395,7 @@ void ProcessCommand(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
 
-    ULONG complete = COMMAND_SCHEDULED;
+    u32 complete = COMMAND_SCHEDULED;
 
     /*
         Only NSCMD_DEVICEQUERY can use standard sized request. All other must be of

@@ -3,7 +3,7 @@
 cmake_minimum_required(VERSION 3.14.0)
 project(runtime-config VERSION ${CMAKE_PROJECT_VERSION})
 
-add_compile_options(-Os -m68040 -fomit-frame-pointer -Wall -Wextra -DDEBUG)
+add_compile_options(-Os -m68040 -fomit-frame-pointer -Wall -Wextra -Wconversion -Wsign-conversion -Wshadow -Wmissing-prototypes -Wstrict-prototypes -DDEBUG)
 file(GLOB_RECURSE runtime_config_sources src/*.c)
 add_library(runtime-config STATIC ${runtime_config_sources})
 

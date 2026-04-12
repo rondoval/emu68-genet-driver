@@ -2,12 +2,13 @@
 #ifndef BCMGENET_IRQ_H
 #define BCMGENET_IRQ_H
 
+#include <types.h>
 #include <genet/bcmgenet-regs.h>
 #include <device.h>
 
 /* Interrupt enable/disable */
-void bcmgenet_irq0_enable(struct GenetUnit *unit, ULONG irq_mask);
-void bcmgenet_irq0_disable(struct GenetUnit *unit, ULONG irq_mask);
+void bcmgenet_irq0_enable(struct GenetUnit *unit, u32 irq_mask);
+void bcmgenet_irq0_disable(struct GenetUnit *unit, u32 irq_mask);
 void bcmgenet_intr_disable(struct GenetUnit *unit);
 
 /* Interrupt handler */

@@ -31,7 +31,7 @@ void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6")
     {
         KprintfH("[genet] %s: Queuing %04lx\n", __func__, io->ios2_Req.io_Command);
         io->ios2_Req.io_Error = S2ERR_NO_ERROR;
-        io->ios2_Req.io_Flags &= ~IOF_QUICK;
+        io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
         PutMsg(&unit->unit.unit_MsgPort, (struct Message *)io);
     }
 }

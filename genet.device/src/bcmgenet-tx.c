@@ -23,9 +23,9 @@
 #include <genet/bcmgenet-irq.h>
 
 /* Combined address + length/status setter */
-static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
+static inline void dmadesc_set(APTR descriptor_address, dma_addr_t addr, u32 val)
 {
-	mmio_write32((ULONG)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
+	mmio_write32((u32)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
 	mmio_write32(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
 }
 
@@ -53,7 +53,7 @@ static inline struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
 }
 
 /* Unlocked version of the reclaim routine */
-unsigned int bcmgenet_tx_reclaim(struct GenetUnit *unit, unsigned int budget)
+u16 bcmgenet_tx_reclaim(struct GenetUnit *unit, u16 budget)
 {
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
@@ -61,13 +61,13 @@ unsigned int bcmgenet_tx_reclaim(struct GenetUnit *unit, unsigned int budget)
 		return 0;
 
 	/* Compute how many buffers are transmitted since last xmit call */
-	UWORD tx_cons_index = mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK;
-	UWORD txbds_ready = (tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK;
+	u16 tx_cons_index = mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK;
+	u16 txbds_ready = (u16)((u32)(tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK);
 
 	/* Reclaim transmitted buffers */
-	UWORD txbds_processed = 0;
-	ULONG bytes_compl = 0;
-	unsigned int pkts_compl = 0;
+	u16 txbds_processed = 0;
+	u32 bytes_compl = 0;
+	u16 pkts_compl = 0;
 	while (txbds_processed < txbds_ready && pkts_compl < budget)
 	{
 		struct IOSana2Req *io = bcmgenet_free_tx_cb(&ring->tx_control_block[ring->clean_ptr]);
@@ -83,7 +83,7 @@ unsigned int bcmgenet_tx_reclaim(struct GenetUnit *unit, unsigned int budget)
 		}
 	}
 
-	ring->tx_cons_index = (ring->tx_cons_index + txbds_processed) & DMA_C_INDEX_MASK;
+	ring->tx_cons_index = (u16)((u32)(ring->tx_cons_index + txbds_processed) & DMA_C_INDEX_MASK);
 
 	unit->internalStats.tx_packets += pkts_compl;
 	unit->internalStats.tx_bytes += bytes_compl;
@@ -91,17 +91,17 @@ unsigned int bcmgenet_tx_reclaim(struct GenetUnit *unit, unsigned int budget)
 	return pkts_compl;
 }
 
-int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
+u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: unit %ld, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
+	KprintfH("[genet] %s: unit %lu, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
 	struct Opener *opener = io->ios2_BufferManagement;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 	ObtainSemaphore(&ring->tx_ring_sem);
 
 	KprintfH("[genet] %s: pre: tx_prod_index %ld, write_ptr %ld\n", __func__, ring->tx_prod_index, ring->write_ptr);
 
-	UWORD free_bds = TX_DESCS - ((ring->tx_prod_index - ring->tx_cons_index) & DMA_P_INDEX_MASK);
-	UBYTE bds_required = (io->ios2_Req.io_Flags & SANA2IOF_RAW) ? 1 : 2;
+	u16 free_bds = (u16)(TX_DESCS - ((u32)(ring->tx_prod_index - ring->tx_cons_index) & DMA_P_INDEX_MASK));
+	u8 bds_required = (io->ios2_Req.io_Flags & SANA2IOF_RAW) ? 1 : 2;
 	if (unlikely(free_bds <= bds_required))
 	{
 		KprintfH("[genet] %s: Not enough free BDs\n", __func__);
@@ -119,24 +119,21 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 		KprintfH("[genet] %s: adding ethernet header\n", __func__);
 
 		struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(ring);
-		UBYTE *ptr = (UBYTE *)tx_cb_ptr->internal_buffer;
+		u8 *ptr = (u8 *)tx_cb_ptr->internal_buffer;
 		tx_cb_ptr->data_buffer = NULL;
 		tx_cb_ptr->ioReq = NULL;
 
+		/* Copy Ethernet header: DST (6), SRC (6), EtherType (2) */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
-		// Copy destination MAC address (6 bytes)
-		*(ULONG *)&ptr[0] = *(ULONG *)&io->ios2_DstAddr[0];
-		*(UWORD *)&ptr[4] = *(UWORD *)&io->ios2_DstAddr[4];
-
-		// Copy source MAC address (6 bytes)
-		*(ULONG *)&ptr[6] = *(ULONG *)&unit->currentMacAddress[0];
-		*(UWORD *)&ptr[10] = *(UWORD *)&unit->currentMacAddress[4];
+		*(ULONG *)ptr        = *(const ULONG *)io->ios2_DstAddr;
+		*(UWORD *)(ptr + 4)  = *(const UWORD *)&io->ios2_DstAddr[4];
+		*(ULONG *)(ptr + 6)  = *(const ULONG *)unit->currentMacAddress;
+		*(UWORD *)(ptr + 10) = *(const UWORD *)&unit->currentMacAddress[4];
+		*(UWORD *)(ptr + 12) = (UWORD)io->ios2_PacketType;
 #pragma GCC diagnostic pop
 
-		*(UWORD *)&ptr[12] = io->ios2_PacketType;
-
-		ULONG len_stat = (ETH_HLEN << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT);
+		u32 len_stat = (ETH_HLEN << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT);
 		/* Note: if we ever change from DMA_TX_APPEND_CRC below we
 		 * will need to restore software padding of "runt" packets
 		 */
@@ -145,8 +142,8 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 
 		dmadesc_set(tx_cb_ptr->descriptor_address, tx_cb_ptr->internal_buffer, len_stat);
 
-		ULONG len = ETH_HLEN;
-		CachePreDMA(tx_cb_ptr->internal_buffer, &len, DMA_ReadFromRAM);
+		u32 len = ETH_HLEN;
+		CachePreDMA((APTR)tx_cb_ptr->internal_buffer, &len, DMA_ReadFromRAM);
 
 		/* Advance our write pointer */
 		ring->tx_prod_index++;
@@ -162,22 +159,25 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	/* We'll use the ln_Pred pointer to mark it is on the TX ring now and can't be aborted */
 	io->ios2_Req.io_Message.mn_Node.ln_Pred = NULL;
 
-	if (unlikely(opener->DMACopyFromBuff) && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
+	if (unlikely(opener->DMACopyFromBuff) && (tx_cb_ptr->data_buffer = (dma_addr_t)opener->DMACopyFromBuff(io->ios2_Data)) != 0)
 	{
-		if (unlikely(tx_cb_ptr->data_buffer <= (APTR)0x1FFFFF))
+		if (unlikely(tx_cb_ptr->data_buffer <= 0x1FFFFFUL))
 		{
 			KprintfH("[genet] %s: Cannot use buffers in CHIP memory, falling back to copying.\n", __func__);
 			// opener->DMACopyFromBuff = NULL; // Disable DMA copy
 			goto use_software_copy;
 		}
-		KprintfH("[genet] %s: Using DMA copy from buffer 0x%lx\n", __func__, (ULONG)tx_cb_ptr->data_buffer);
+		KprintfH("[genet] %s: Using DMA copy from buffer 0x%lx\n", __func__, tx_cb_ptr->data_buffer);
 		unit->internalStats.tx_dma++;
 	}
 	else
 	{
 	use_software_copy:
 		KprintfH("[genet] %s: Using software copy from buffer\n", __func__);
-		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, unit->use_miami_workaround ? ((io->ios2_DataLength + 3) & ~3) : io->ios2_DataLength) == 0)
+		u32 copy_length = io->ios2_DataLength;
+		if (unit->use_miami_workaround)
+			copy_length = (copy_length + 3U) & ~3U;
+		if (!opener->CopyFromBuff || opener->CopyFromBuff((APTR)tx_cb_ptr->internal_buffer, io->ios2_Data, copy_length) == 0)
 		{
 			KprintfH("[genet] %s: Failed to copy packet data from buffer\n", __func__);
 			goto ret_error;
@@ -186,7 +186,7 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 		unit->internalStats.tx_copy++;
 	}
 
-	ULONG len_stat = (io->ios2_DataLength << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT);
+	u32 len_stat = (io->ios2_DataLength << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT);
 	/* Note: if we ever change from DMA_TX_APPEND_CRC below we
 	 * will need to restore software padding of "runt" packets
 	 */
@@ -201,7 +201,7 @@ int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 
 	dmadesc_set(tx_cb_ptr->descriptor_address, tx_cb_ptr->data_buffer, len_stat);
 
-	CachePreDMA(tx_cb_ptr->data_buffer, &io->ios2_DataLength, DMA_ReadFromRAM);
+	CachePreDMA((APTR)tx_cb_ptr->data_buffer, &io->ios2_DataLength, DMA_ReadFromRAM);
 
 	/* Advance our write pointer */
 	ring->tx_prod_index++;

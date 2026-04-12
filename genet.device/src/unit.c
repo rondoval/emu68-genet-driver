@@ -30,21 +30,21 @@ static void SetupMDIO(struct GenetUnit *unit)
 static void SetupRGMII(struct GenetUnit *unit)
 {
 	Kprintf("[genet] %s: Setting up RGMII bus\n", __func__);
-	for (int i = 46; i < 58; i++)
+	for (u8 i = 46; i < 58; i++)
 	{
 		gpioSetAlternate(unit->gpioBase, i, GPIO_AF_INPUT);
 	}
 	gpioSetPull(unit->gpioBase, 46, GPIO_PULL_UP);
 	gpioSetPull(unit->gpioBase, 47, GPIO_PULL_UP);
-	for (int i = 48; i < 58; i++)
+	for (u8 i = 48; i < 58; i++)
 	{
 		gpioSetPull(unit->gpioBase, i, GPIO_PULL_DOWN);
 	}
 }
 
-int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener *opener)
+u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *opener)
 {
-	Kprintf("[genet] %s: Opening unit %ld with flags %lx\n", __func__, unitNumber, flags);
+	Kprintf("[genet] %s: Opening unit %lu with flags %lx\n", __func__, unitNumber, flags);
 	if (unit->unit.unit_OpenCnt > 0)
 	{
 		Kprintf("[genet] %s: Unit already running; using message to add opener\n", __func__);
@@ -84,7 +84,7 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 
 	_NewMinList(&unit->openers);
 
-	int result = DevTreeParse(unit);
+	u32 result = DevTreeParse(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to parse device tree: %ld\n", __func__, result);
@@ -112,13 +112,13 @@ int UnitOpen(struct GenetUnit *unit, LONG unitNumber, LONG flags, struct Opener 
 	return S2ERR_NO_ERROR;
 }
 
-int UnitConfigure(struct GenetUnit *unit)
+u32 UnitConfigure(struct GenetUnit *unit)
 {
 	SetupMDIO(unit);
 	SetupRGMII(unit);
 
 	Kprintf("[genet] %s: About to probe UMAC\n", __func__);
-	int result = bcmgenet_eth_probe(unit);
+	u32 result = bcmgenet_eth_probe(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to probe UMAC: %ld\n", __func__, result);
@@ -129,10 +129,10 @@ int UnitConfigure(struct GenetUnit *unit)
 	return S2ERR_NO_ERROR;
 }
 
-int UnitOnline(struct GenetUnit *unit)
+u32 UnitOnline(struct GenetUnit *unit)
 {
 	Kprintf("[genet] %s: About to start UMAC\n", __func__);
-	int result = bcmgenet_gmac_eth_start(unit);
+	u32 result = bcmgenet_gmac_eth_start(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to start UMAC: %ld\n", __func__, result);
@@ -151,9 +151,9 @@ void UnitOffline(struct GenetUnit *unit)
 	bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
 }
 
-int UnitClose(struct GenetUnit *unit, struct Opener *opener)
+u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 {
-	Kprintf("[genet] %s: Closing unit %ld with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
+	Kprintf("[genet] %s: Closing unit %lu with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
 
 	unit->unit.unit_OpenCnt--;
 	if (unit->unit.unit_OpenCnt == 0)
@@ -183,5 +183,5 @@ int UnitClose(struct GenetUnit *unit, struct Opener *opener)
 		DeleteMsgPort(replyPort);
 	}
 
-	return unit->unit.unit_OpenCnt;
+	return (u32)unit->unit.unit_OpenCnt;
 }
