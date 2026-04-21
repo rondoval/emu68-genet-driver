@@ -72,8 +72,8 @@ u32 DevTreeParse(struct GenetUnit *unit)
 		DT_CloseKey(key);
 		return S2ERR_NO_RESOURCES;
 	}
-	unit->irq0_number = (u32)(irq0 + 32);
-	unit->irq1_number = (u32)(irq1 + 32);
+	unit->irq0_number = (u32)irq0;
+	unit->irq1_number = (u32)irq1;
 
 	// Now find phy address
 	APTR phy_key = DT_FindByPHandle(key, phy_handle);
