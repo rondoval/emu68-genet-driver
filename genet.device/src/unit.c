@@ -161,7 +161,7 @@ u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 	}
 	else if (opener != NULL)
 	{
-		UnitSubmitControlAsync(unit, UNIT_CTRL_OPENER_REM, (union UnitControlPayload){ .opener = opener });
+		UnitSubmitControl(unit, UNIT_CTRL_OPENER_REM, (union UnitControlPayload){ .opener = opener });
 	}
 
 	return (u32)unit->unit.unit_OpenCnt;
