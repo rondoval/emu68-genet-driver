@@ -19,6 +19,9 @@
 #include <memory.h>
 #include <types.h>
 
+#include <genet/bcmgenet_mib.h>
+#include <genet/genet_specialstats.h>
+
 static const u16 GENET_SupportedCommands[] = {
     CMD_FLUSH,
     CMD_READ,
@@ -34,7 +37,7 @@ static const u16 GENET_SupportedCommands[] = {
     // S2_TRACKTYPE,
     // S2_UNTRACKTYPE,
     // S2_GETTYPESTATS,
-    // S2_GETSPECIALSTATS,
+    S2_GETSPECIALSTATS,
     S2_GETGLOBALSTATS,
     S2_ONEVENT,
     S2_READORPHAN,
@@ -81,6 +84,104 @@ void ReportEvents(struct GenetUnit *unit, u32 eventSet)
     }
     KprintfH("[genet] %s: Reporting done\n", __func__);
 }
+
+static inline ULONG sat_u64_to_ulong(u64 v)
+{
+    return (v > 0xFFFFFFFFULL) ? 0xFFFFFFFFUL : (ULONG)v;
+}
+
+static ULONG emit_ss(struct Sana2SpecialStatRecord *rec, ULONG max, ULONG idx,
+                     ULONG type, const char *name, u64 value)
+{
+    if (idx >= max) return idx;
+    rec[idx].Type   = type;
+    rec[idx].Count  = sat_u64_to_ulong(value);
+    rec[idx].String = (STRPTR)name;
+    return idx + 1;
+}
+
+static u32 Do_S2_GETSPECIALSTATS(struct IOSana2Req *io)
+{
+    struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    KprintfH("[genet] %s: S2_GETSPECIALSTATS\n", __func__);
+
+    struct Sana2SpecialStatHeader *hdr = (struct Sana2SpecialStatHeader *)io->ios2_StatData;
+    if (hdr == NULL) {
+        io->ios2_Req.io_Error = S2ERR_BAD_ARGUMENT;
+        return COMMAND_PROCESSED;
+    }
+
+    struct mib_snapshot mib;
+    bcmgenet_read_mib_snapshot(unit, &mib);
+    const struct internal_stats *st = &unit->internalStats;
+
+    struct Sana2SpecialStatRecord *rec = (struct Sana2SpecialStatRecord *)(hdr + 1);
+    ULONG max = hdr->RecordCountMax;
+    ULONG idx = 0;
+
+    /* Driver software counters */
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_OVERRUNS,        "rx_overruns",        st->rx_overruns);
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_CRC_ERRORS,      "rx_crc_errors",      st->rx_crc_errors);
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_OVER_ERRORS,     "rx_over_errors",     st->rx_over_errors);
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_FRAME_ERRORS,    "rx_frame_errors",    st->rx_frame_errors);
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_LENGTH_ERRORS,   "rx_length_errors",   st->rx_length_errors);
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_FRAGMENTED,      "rx_fragmented",      st->rx_fragmented_errors);
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_OTHER_ERRORS,    "rx_other_errors",    st->rx_other_errors);
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_DROP_NO_OPENER,  "rx_orphan",          st->rx_orphan);
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_DROP_QUEUE_FULL, "rx_buffer_errors",   st->rx_buffer_errors);
+    idx = emit_ss(rec, max, idx, GENET_SS_RX_ARP_IP_DROPPED,  "rx_arp_ip_dropped",  st->rx_arp_ip_dropped);
+
+    idx = emit_ss(rec, max, idx, GENET_SS_TX_DROPPED,         "tx_dropped",         st->tx_dropped);
+    idx = emit_ss(rec, max, idx, GENET_SS_TX_DMA,             "tx_dma",             st->tx_dma);
+    idx = emit_ss(rec, max, idx, GENET_SS_TX_COPY,            "tx_copy",            st->tx_copy);
+    idx = emit_ss(rec, max, idx, GENET_SS_IRQ0_COUNT,         "irq0_count",         st->irq0_count);
+    idx = emit_ss(rec, max, idx, GENET_SS_IRQ0_TX_COUNT,      "irq0_tx_count",      st->irq0_tx_count);
+    idx = emit_ss(rec, max, idx, GENET_SS_IRQ0_RX_COUNT,      "irq0_rx_count",      st->irq0_rx_count);
+    idx = emit_ss(rec, max, idx, GENET_SS_IRQ0_OTHER_COUNT,   "irq0_other_count",   st->irq0_other_count);
+
+    /* Hardware MIB RX (counters reset at S2_ONLINE) */
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_PKTS,         "hw_rx_pkts",         mib.rx_pkts);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_BYTES,        "hw_rx_bytes",        mib.rx_bytes);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_MULTICAST,    "hw_rx_multicast",    mib.rx_mca);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_BROADCAST,    "hw_rx_broadcast",    mib.rx_bca);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_UNICAST,      "hw_rx_unicast",      mib.rx_uc);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_FCS_ERR,      "hw_rx_fcs_err",      mib.rx_fcs);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_ALIGN_ERR,    "hw_rx_align_err",    mib.rx_aln);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_PAUSE,        "hw_rx_pause",        mib.rx_pf);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_OVERSIZE,     "hw_rx_oversize",     mib.rx_ovr);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_JABBER,       "hw_rx_jabber",       mib.rx_jbr);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_GOOD,         "hw_rx_good",         mib.rx_pok);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RX_RUNT,         "hw_rx_runt",         mib.rx_runt);
+
+    /* Hardware MIB TX */
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_PKTS,         "hw_tx_pkts",         mib.tx_pkts);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_BYTES,        "hw_tx_bytes",        mib.tx_bytes);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_MULTICAST,    "hw_tx_multicast",    mib.tx_mca);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_BROADCAST,    "hw_tx_broadcast",    mib.tx_bca);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_UNICAST,      "hw_tx_unicast",      mib.tx_uc);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_FCS_ERR,      "hw_tx_fcs_err",      mib.tx_fcs);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_PAUSE,        "hw_tx_pause",        mib.tx_pf);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_SINGLE_COL,   "hw_tx_single_col",   mib.tx_scl);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_MULTI_COL,    "hw_tx_multi_col",    mib.tx_mcl);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_LATE_COL,     "hw_tx_late_col",     mib.tx_lcl);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_EXCESS_COL,   "hw_tx_excess_col",   mib.tx_ecl);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_TOTAL_COL,    "hw_tx_total_col",    mib.tx_ncl);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_DEFER,        "hw_tx_defer",        mib.tx_drf);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_EXCESS_DEFER, "hw_tx_excess_defer", mib.tx_edf);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_JABBER,       "hw_tx_jabber",       mib.tx_jbr);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_OVERSIZE,     "hw_tx_oversize",     mib.tx_ovr);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_TX_GOOD,         "hw_tx_good",         mib.tx_pok);
+
+    /* Hardware MAC misc */
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RBUF_OVFL,       "hw_rbuf_overflow",   mib.rbuf_ovfl);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_RBUF_ERR,        "hw_rbuf_err",        mib.rbuf_err);
+    idx = emit_ss(rec, max, idx, GENET_SS_HW_MDF_ERR,         "hw_mdf_err",         mib.mdf_err);
+
+    hdr->RecordCountSupplied = idx;
+    io->ios2_Req.io_Error = S2ERR_NO_ERROR;
+    return COMMAND_PROCESSED;
+}
+
 
 static u32 Do_S2_ONEVENT(struct IOSana2Req *io)
 {
@@ -266,7 +367,7 @@ static inline u32 Do_CMD_WRITE(struct IOSana2Req *io)
 
 static u32 Do_S2_DEVICEQUERY(struct IOSana2Req *io)
 {
-    Kprintf("[genet] %s: S2_DEVICEQUERY\n", __func__);
+    KprintfH("[genet] %s: S2_DEVICEQUERY\n", __func__);
 
     struct Sana2DeviceQuery *info = io->ios2_StatData;
 
@@ -304,6 +405,8 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
     {
         Kprintf("[genet] %s: Bringing unit online\n", __func__);
         mem_zero(&unit->internalStats, sizeof(unit->internalStats));
+        bcmgenet_reset_mib_counters(unit);
+
         struct Device *unitTimerBase = unit->timerBase;
         if (unitTimerBase != NULL)
         {
@@ -441,7 +544,7 @@ void ProcessCommand(struct IOSana2Req *io)
             break;
 
         case S2_GETSTATIONADDRESS:
-            Kprintf("[genet] %s: S2_GETSTATIONADDRESS\n", __func__);
+            KprintfH("[genet] %s: S2_GETSTATIONADDRESS\n", __func__);
             CopyMem(unit->localMacAddress, io->ios2_DstAddr, 6);
             CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, 6);
             io->ios2_Req.io_Error = S2ERR_NO_ERROR;
@@ -460,8 +563,8 @@ void ProcessCommand(struct IOSana2Req *io)
                              unit->internalStats.rx_fragmented_errors;
             stats->LastStart = unit->internalStats.last_start;
 
-            io->ios2_Req.io_Error = S2ERR_NO_ERROR;
-            complete = COMMAND_PROCESSED;
+        case S2_GETSPECIALSTATS:
+            complete = Do_S2_GETSPECIALSTATS(io);
             break;
 
         case S2_ADDMULTICASTADDRESS: /* Fallthrough */

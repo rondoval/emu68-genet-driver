@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14.0)
-project(emu68-genet-driver VERSION 3.0)
+project(emu68-genet-driver VERSION 3.1)
 
 string(TIMESTAMP CURRENT_DATE "(%d.%m.%Y)")
 set(VERSTRING "$VER: ${PROJECT_NAME} ${PROJECT_VERSION} ${CURRENT_DATE}")

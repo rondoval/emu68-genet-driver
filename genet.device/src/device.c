@@ -208,9 +208,9 @@ static struct Opener *createOpener(struct TagItem *tags, struct Library *Utility
         opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);
     }
 
-    Kprintf("[genet] %s: CopyToBuff=%lx, CopyFromBuff=%lx, PacketFilter=%lx\n",
+    KprintfH("[genet] %s: CopyToBuff=%lx, CopyFromBuff=%lx, PacketFilter=%lx\n",
             __func__, opener->CopyToBuff, opener->CopyFromBuff, opener->packetFilter);
-    Kprintf("[genet] %s: DMACopyToBuff=%lx, DMACopyFromBuff=%lx\n",
+    KprintfH("[genet] %s: DMACopyToBuff=%lx, DMACopyFromBuff=%lx\n",
             __func__, opener->DMACopyToBuff, opener->DMACopyFromBuff);
 
     _NewMinList(&opener->readQueue);
@@ -230,10 +230,10 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     BOOL firstOpen = FALSE;
     BOOL createdUnit = FALSE;
 
-    Kprintf("[genet] %s: Opening device with unit number %ld and flags %lx\n", __func__, unitNumber, flags);
+    KprintfH("[genet] %s: Opening device with unit number %ld and flags %lx\n", __func__, unitNumber, flags);
     if (unitNumber != 0)
     {
-        Kprintf("[genet] %s: Invalid unit number %ld\n", __func__, unitNumber);
+        KprintfH("[genet] %s: Invalid unit number %ld\n", __func__, unitNumber);
         io->ios2_Req.io_Error = IOERR_OPENFAIL;
         return;
     }

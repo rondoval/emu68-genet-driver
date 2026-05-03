@@ -47,6 +47,53 @@
 #define MIB_RESET_RUNT BIT(1)
 #define MIB_RESET_TX BIT(2)
 
+/*
+ * MIB counter block. Byte offsets are relative to genetBase (absolute).
+ * Layout: RX named counters, 0xC gap, TX named counters, 0xC gap, RUNT.
+ * The 10 size-bucket counters preceding each block are skipped here.
+ */
+#define UMAC_MIB_BASE       (GENET_UMAC_OFF + 0x400)
+
+/* RX MIB named counters (struct bcmgenet_rx_counters) */
+#define UMAC_MIB_RX_PKT     (UMAC_MIB_BASE + 0x028)
+#define UMAC_MIB_RX_BYTES   (UMAC_MIB_BASE + 0x02C)
+#define UMAC_MIB_RX_MCA     (UMAC_MIB_BASE + 0x030)
+#define UMAC_MIB_RX_BCA     (UMAC_MIB_BASE + 0x034)
+#define UMAC_MIB_RX_FCS     (UMAC_MIB_BASE + 0x038)
+#define UMAC_MIB_RX_PF      (UMAC_MIB_BASE + 0x040)
+#define UMAC_MIB_RX_ALN     (UMAC_MIB_BASE + 0x048)
+#define UMAC_MIB_RX_OVR     (UMAC_MIB_BASE + 0x058)
+#define UMAC_MIB_RX_JBR     (UMAC_MIB_BASE + 0x05C)
+#define UMAC_MIB_RX_POK     (UMAC_MIB_BASE + 0x064)
+#define UMAC_MIB_RX_UC      (UMAC_MIB_BASE + 0x068)
+
+/* TX MIB named counters (struct bcmgenet_tx_counters) — TX block starts at +0x80 */
+#define UMAC_MIB_TX_PKTS    (UMAC_MIB_BASE + 0x0A8)
+#define UMAC_MIB_TX_MCA     (UMAC_MIB_BASE + 0x0AC)
+#define UMAC_MIB_TX_BCA     (UMAC_MIB_BASE + 0x0B0)
+#define UMAC_MIB_TX_PF      (UMAC_MIB_BASE + 0x0B4)
+#define UMAC_MIB_TX_FCS     (UMAC_MIB_BASE + 0x0BC)
+#define UMAC_MIB_TX_OVR     (UMAC_MIB_BASE + 0x0C0)
+#define UMAC_MIB_TX_DRF     (UMAC_MIB_BASE + 0x0C4)
+#define UMAC_MIB_TX_EDF     (UMAC_MIB_BASE + 0x0C8)
+#define UMAC_MIB_TX_SCL     (UMAC_MIB_BASE + 0x0CC)
+#define UMAC_MIB_TX_MCL     (UMAC_MIB_BASE + 0x0D0)
+#define UMAC_MIB_TX_LCL     (UMAC_MIB_BASE + 0x0D4)
+#define UMAC_MIB_TX_ECL     (UMAC_MIB_BASE + 0x0D8)
+#define UMAC_MIB_TX_NCL     (UMAC_MIB_BASE + 0x0E0)
+#define UMAC_MIB_TX_JBR     (UMAC_MIB_BASE + 0x0E4)
+#define UMAC_MIB_TX_BYTES   (UMAC_MIB_BASE + 0x0E8)
+#define UMAC_MIB_TX_POK     (UMAC_MIB_BASE + 0x0EC)
+#define UMAC_MIB_TX_UC      (UMAC_MIB_BASE + 0x0F0)
+
+/* RUNT — block starts after TX + 0xC gap */
+#define UMAC_MIB_RX_RUNT    (UMAC_MIB_BASE + 0x100)
+
+/* Misc MAC counters (V3+ register offsets within RBUF / UMAC blocks) */
+#define UMAC_RBUF_OVFL_CNT  (GENET_RBUF_OFF + 0x94)
+#define UMAC_RBUF_ERR_CNT   (GENET_RBUF_OFF + 0x98)
+#define UMAC_MDF_ERR_CNT    (GENET_UMAC_OFF + 0x638)
+
 /* total number of Buffer Descriptors, same for Rx/Tx */
 #define TOTAL_DESCS 256
 #define RX_DESCS TOTAL_DESCS

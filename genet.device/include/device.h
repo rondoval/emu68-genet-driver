@@ -18,6 +18,7 @@
 
 #include <genet/phy.h>
 #include <genet/bcmgenet.h>
+#include <genet/bcmgenet_mib.h>
 #include <runtime_config.h>
 
 #define LIB_MIN_VERSION 39 /* we use memory pools */
@@ -32,12 +33,8 @@
 #define COMMAND_SCHEDULED 0u
 
 /* Generic TODOs
-use HW bcast/mcast flags
 cleanup mcast handling
-packet stats from HW, custom command to expose more stats and tool to read
-type statistics
 PHY link state updates at runtime
-interrupts
 
 Long shot:
 - SANA-II updates to enable zero-copy DMA on TX and RX
