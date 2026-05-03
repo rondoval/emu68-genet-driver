@@ -20,7 +20,7 @@
 
 static void SetupMDIO(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Setting up MDIO bus\n", __func__);
+	KprintfH("[genet] %s: Setting up MDIO bus\n", __func__);
 	gpioSetAlternate(unit->gpioBase, PIN_RGMII_MDIO, GPIO_AF_5);
 	gpioSetAlternate(unit->gpioBase, PIN_RGMII_MDC, GPIO_AF_5);
 	gpioSetPull(unit->gpioBase, PIN_RGMII_MDIO, GPIO_PULL_UP);
@@ -29,7 +29,7 @@ static void SetupMDIO(struct GenetUnit *unit)
 
 static void SetupRGMII(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Setting up RGMII bus\n", __func__);
+	KprintfH("[genet] %s: Setting up RGMII bus\n", __func__);
 	for (u8 i = 46; i < 58; i++)
 	{
 		gpioSetAlternate(unit->gpioBase, i, GPIO_AF_INPUT);
@@ -44,10 +44,10 @@ static void SetupRGMII(struct GenetUnit *unit)
 
 u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *opener)
 {
-	Kprintf("[genet] %s: Opening unit %lu with flags %lx\n", __func__, unitNumber, flags);
+	KprintfH("[genet] %s: Opening unit %lu with flags %lx\n", __func__, unitNumber, flags);
 	if (unit->unit.unit_OpenCnt > 0)
 	{
-		Kprintf("[genet] %s: Unit already running; using message to add opener\n", __func__);
+		KprintfH("[genet] %s: Unit already running; using control helper to add opener\n", __func__);
 		unit->unit.unit_OpenCnt++;
 		if (opener)
 		{
@@ -62,7 +62,7 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 			GetMsg(replyPort);
 			DeleteMsgPort(replyPort);
 		}
-		Kprintf("[genet] %s: Unit opened successfully, current open count: %ld\n", __func__, unit->unit.unit_OpenCnt);
+		KprintfH("[genet] %s: Unit opened successfully, current open count: %ld\n", __func__, unit->unit.unit_OpenCnt);
 		return S2ERR_NO_ERROR;
 	}
 
@@ -117,7 +117,7 @@ u32 UnitConfigure(struct GenetUnit *unit)
 	SetupMDIO(unit);
 	SetupRGMII(unit);
 
-	Kprintf("[genet] %s: About to probe UMAC\n", __func__);
+	KprintfH("[genet] %s: About to probe UMAC\n", __func__);
 	u32 result = bcmgenet_eth_probe(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
@@ -131,7 +131,7 @@ u32 UnitConfigure(struct GenetUnit *unit)
 
 u32 UnitOnline(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: About to start UMAC\n", __func__);
+	KprintfH("[genet] %s: About to start UMAC\n", __func__);
 	u32 result = bcmgenet_gmac_eth_start(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
@@ -146,14 +146,14 @@ u32 UnitOnline(struct GenetUnit *unit)
 
 void UnitOffline(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Stopping UMAC\n", __func__);
+	KprintfH("[genet] %s: Stopping UMAC\n", __func__);
 	unit->state = STATE_OFFLINE;
 	bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
 }
 
 u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 {
-	Kprintf("[genet] %s: Closing unit %lu with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
+	KprintfH("[genet] %s: Closing unit %lu with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
 
 	unit->unit.unit_OpenCnt--;
 	if (unit->unit.unit_OpenCnt == 0)

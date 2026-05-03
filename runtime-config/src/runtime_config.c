@@ -32,7 +32,7 @@ static void ApplyDefaults(struct GenetRuntimeConfig *config)
 
 void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
 {
-    Kprintf("[genet] %s: Loading defaults\n", __func__);
+    KprintfH("[genet] %s: Loading defaults\n", __func__);
     ApplyDefaults(config);
 
     struct DosLibrary *DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR) "dos.library", 0);
@@ -45,7 +45,7 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
         CloseLibrary((struct Library *)DOSBase);
         return;
     }
-    Kprintf("[genet] %s: Reading ENV:genet.prefs\n", __func__);
+    KprintfH("[genet] %s: Reading ENV:genet.prefs\n", __func__);
 
     unsigned char linebuf[256];
     while (FGets(fh, (STRPTR)linebuf, sizeof(linebuf)))

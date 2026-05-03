@@ -141,7 +141,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
     KprintfH("[genet] %s: Received packet of length %lu with type 0x%lx\n", __func__, (ULONG)packetLength, (ULONG)packetType);
 
     /* Fast path for common packet types */
-    // TODO get rid of semaphores
     if (likely(packetType == 0x0800 || packetType == 0x0806))
     {
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)

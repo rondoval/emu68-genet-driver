@@ -76,7 +76,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     /* Signal parent that Unit task is up and running now */
     Signal(parent, SIGBREAKF_CTRL_F);
 
-    Kprintf("[genet] %s: Entering main unit task loop\n", __func__);
+    KprintfH("[genet] %s: Entering main unit task loop\n", __func__);
 
     ULONG sigset;
     ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
@@ -212,7 +212,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
         if (unlikely(sigset & SIGBREAKF_CTRL_C))
         {
-            Kprintf("[genet] %s: Received SIGBREAKF_CTRL_C, stopping genet task\n", __func__);
+            KprintfH("[genet] %s: Received SIGBREAKF_CTRL_C, stopping genet task\n", __func__);
             AbortIO(&packetTimerReq->tr_node);
             WaitIO(&packetTimerReq->tr_node);
         }
@@ -234,7 +234,7 @@ free_signals:
 
 u32 UnitTaskStart(struct GenetUnit *unit)
 {
-    Kprintf("[genet] %s: genet task starting\n", __func__);
+    KprintfH("[genet] %s: genet task starting\n", __func__);
 	const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
 
     // Get all memory we need for the receiver task
@@ -291,13 +291,13 @@ u32 UnitTaskStart(struct GenetUnit *unit)
     }
 
     Wait(SIGBREAKF_CTRL_F);
-    Kprintf("[genet] %s: genet task started\n", __func__);
+    KprintfH("[genet] %s: genet task started\n", __func__);
     return S2ERR_NO_ERROR;
 }
 
 void UnitTaskStop(struct GenetUnit *unit)
 {
-    Kprintf("[genet] %s: genet task stopping\n", __func__);
+    KprintfH("[genet] %s: genet task stopping\n", __func__);
 
     struct MsgPort *timerPort = CreateMsgPort();
     struct timerequest *timerReq = CreateIORequest(timerPort, sizeof(struct timerequest));
@@ -327,5 +327,5 @@ void UnitTaskStop(struct GenetUnit *unit)
     DeleteIORequest(&timerReq->tr_node);
     DeleteMsgPort(timerPort);
 
-    Kprintf("[genet] %s: genet task stopped\n", __func__);
+    KprintfH("[genet] %s: genet task stopped\n", __func__);
 }

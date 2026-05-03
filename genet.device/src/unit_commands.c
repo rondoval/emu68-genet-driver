@@ -288,7 +288,7 @@ static u32 Do_S2_DEVICEQUERY(struct IOSana2Req *io)
 static u32 Do_S2_ONLINE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    Kprintf("[genet] %s: S2_ONLINE\n", __func__);
+    KprintfH("[genet] %s: S2_ONLINE\n", __func__);
 
     if(unit->state == STATE_UNCONFIGURED)
     {
@@ -325,7 +325,7 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
         }
         else
         {
-            Kprintf("[genet] %s: Unit online, about to report events\n", __func__);
+            KprintfH("[genet] %s: Unit online, about to report events\n", __func__);
             ReportEvents(unit, S2EVENT_ONLINE);
         }
     }
@@ -336,12 +336,12 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
 static u32 Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    Kprintf("[genet] %s: S2_CONFIGINTERFACE\n", __func__);
+    KprintfH("[genet] %s: S2_CONFIGINTERFACE\n", __func__);
 
     if (unit->state == STATE_UNCONFIGURED)
     {
         CopyMem(io->ios2_SrcAddr, unit->currentMacAddress, sizeof(unit->currentMacAddress));
-        Kprintf("[genet] %s: Setting current MAC address to %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
+        KprintfH("[genet] %s: Setting current MAC address to %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
                 __func__,
                 unit->currentMacAddress[0], unit->currentMacAddress[1],
                 unit->currentMacAddress[2], unit->currentMacAddress[3],

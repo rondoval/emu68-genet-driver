@@ -47,7 +47,7 @@
 
 static void bcmgenet_umac_reset(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Resetting UMAC\n", __func__);
+	KprintfH("[genet] %s: Resetting UMAC\n", __func__);
 
 	mmio_set32(BCMGENET_REG(unit, SYS_RBUF_FLUSH_CTRL), BIT(1));
 	delay_us(10);
@@ -97,7 +97,7 @@ static void bcmgenet_gmac_write_hwaddr(struct GenetUnit *unit, const u8 *addr)
 
 static void bcmgenet_disable_dma(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Disabling DMA\n", __func__);
+	KprintfH("[genet] %s: Disabling DMA\n", __func__);
 	mmio_clear32(BCMGENET_REG(unit, TDMA_REG_BASE + DMA_CTRL), DMA_EN);
 	for (u32 timeout = 0; timeout < DMA_TIMEOUT_VAL; timeout++)
 	{
@@ -123,7 +123,7 @@ static void bcmgenet_disable_dma(struct GenetUnit *unit)
 		}
 		delay_us(1);
 	}
-	Kprintf("[genet] %s: DMA disabled\n", __func__);
+	KprintfH("[genet] %s: DMA disabled\n", __func__);
 
 	/* Flush TX queues */
 	mmio_write32(1, BCMGENET_REG(unit, UMAC_TX_FLUSH));
@@ -133,7 +133,7 @@ static void bcmgenet_disable_dma(struct GenetUnit *unit)
 
 static void bcmgenet_enable_dma(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Enabling DMA\n", __func__);
+	KprintfH("[genet] %s: Enabling DMA\n", __func__);
 	mmio_set32(BCMGENET_REG(unit, RDMA_REG_BASE + DMA_CTRL), DMA_EN);
 	mmio_set32(BCMGENET_REG(unit, TDMA_REG_BASE + DMA_CTRL), DMA_EN);
 }
@@ -275,7 +275,7 @@ u32 bcmgenet_set_coalesce(struct GenetUnit *unit, u32 tx_max_coalesced_frames, u
 
 static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Initializing RX ring\n", __func__);
+	KprintfH("[genet] %s: Initializing RX ring\n", __func__);
 	struct bcmgenet_rx_ring *ring = &unit->rx_ring;
 
 	/* Initialize common Rx ring structures */
@@ -340,7 +340,7 @@ static u32 bcmgenet_init_rx_queues(struct GenetUnit *unit)
 
 static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Initializing TX ring\n", __func__);
+	KprintfH("[genet] %s: Initializing TX ring\n", __func__);
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
 	InitSemaphore(&ring->tx_ring_sem);
@@ -413,7 +413,7 @@ static u32 bcmgenet_init_tx_queues(struct GenetUnit *unit)
 
 static u32 bcmgenet_adjust_link(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Adjusting link for PHY interface %s\n", __func__, phy_string_for_interface(unit->phy_interface));
+	KprintfH("[genet] %s: Adjusting link for PHY interface %s\n", __func__, phy_string_for_interface(unit->phy_interface));
 	struct phy_device *phy_dev = unit->phydev;
 	u32 speed;
 
@@ -459,7 +459,7 @@ static u32 bcmgenet_init_dma(struct GenetUnit *unit)
 	/* Disable RX/TX DMA and flush TX queues */
 	bcmgenet_disable_dma(unit);
 
-	Kprintf("[genet] %s: Initializing DMA\n", __func__);
+	KprintfH("[genet] %s: Initializing DMA\n", __func__);
 
 	/* Flush RX */
 	mmio_set32(BCMGENET_REG(unit, GENET_SYS_OFF + SYS_RBUF_FLUSH_CTRL), BIT(0));
@@ -555,7 +555,7 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit)
 
 u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Starting GENET\n", __func__);
+	KprintfH("[genet] %s: Starting GENET\n", __func__);
 	u32 ret;
 
 	unit->rxbuffer_not_aligned = AllocMem(RX_TOTAL_BUFSIZE + DMA_ALIGN_MIN, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
@@ -658,7 +658,7 @@ rx_buf_allocated:
 
 static u32 bcmgenet_phy_init(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Initializing PHY interface %s\n", __func__, phy_string_for_interface(unit->phy_interface));
+	KprintfH("[genet] %s: Initializing PHY interface %s\n", __func__, phy_string_for_interface(unit->phy_interface));
 	struct phy_device *phydev;
 
 	phydev = phy_create(unit, unit->phy_interface);
@@ -689,7 +689,7 @@ static u32 bcmgenet_interface_set(struct GenetUnit *unit)
 	{
 	case PHY_INTERFACE_MODE_RGMII:
 	case PHY_INTERFACE_MODE_RGMII_RXID:
-		Kprintf("[genet] %s: Setting PHY mode to RGMII\n", __func__);
+		KprintfH("[genet] %s: Setting PHY mode to RGMII\n", __func__);
 		mmio_write32(PORT_MODE_EXT_GPHY, BCMGENET_REG(unit, SYS_PORT_CTRL));
 		break;
 	default:
@@ -735,7 +735,7 @@ u32 bcmgenet_eth_probe(struct GenetUnit *unit)
 
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
-	Kprintf("[genet] %s: Stopping GENET\n", __func__);
+	KprintfH("[genet] %s: Stopping GENET\n", __func__);
 
 	/* Disable MAC receive */
 	mmio_clear32(BCMGENET_REG(unit, UMAC_CMD), CMD_RX_EN);
@@ -771,5 +771,5 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 		phy_destroy(unit->phydev);
 		unit->phydev = NULL;
 	}
-	Kprintf("[genet] %s: PHY destroyed. GENET stopped.\n", __func__);
+	KprintfH("[genet] %s: PHY destroyed. GENET stopped.\n", __func__);
 }
