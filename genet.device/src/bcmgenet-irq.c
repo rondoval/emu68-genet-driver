@@ -72,6 +72,9 @@ void bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit a
 	status &= ~UMAC_IRQ_TXDMA_DONE;
 	if (status)
 	{
+		unit->internalStats.irq0_count++;
+		if ((status & (UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE)) == 0)
+			unit->internalStats.irq0_other_count++;
 		/* Save irq status for bottom-half processing. */
 		unit->irq0_status |= status;
 		Signal(unit->task, 1UL << unit->irq0_signal);

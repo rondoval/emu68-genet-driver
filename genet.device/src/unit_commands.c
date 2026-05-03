@@ -39,6 +39,7 @@ static const u16 GENET_SupportedCommands[] = {
     // S2_GETTYPESTATS,
     S2_GETSPECIALSTATS,
     S2_GETGLOBALSTATS,
+    S2_GETEXTENDEDGLOBALSTATS,
     S2_ONEVENT,
     S2_READORPHAN,
     S2_ONLINE,
@@ -83,6 +84,64 @@ void ReportEvents(struct GenetUnit *unit, u32 eventSet)
         ReleaseSemaphore(&opener->openerSemaphore);
     }
     KprintfH("[genet] %s: Reporting done\n", __func__);
+}
+
+static u32 Do_S2_GETGLOBALSTATS(struct IOSana2Req *io)
+{
+    struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    KprintfH("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
+    struct Sana2DeviceStats *stats = (struct Sana2DeviceStats *)io->ios2_StatData;
+    stats->PacketsReceived      = (ULONG)unit->internalStats.rx_packets;
+    stats->PacketsSent          = (ULONG)unit->internalStats.tx_packets;
+    stats->UnknownTypesReceived = (ULONG)unit->internalStats.rx_orphan;
+    stats->Overruns             = unit->internalStats.rx_overruns;
+    stats->BadData              = unit->internalStats.rx_other_errors
+                                + unit->internalStats.rx_crc_errors
+                                + unit->internalStats.rx_over_errors
+                                + unit->internalStats.rx_frame_errors
+                                + unit->internalStats.rx_length_errors
+                                + unit->internalStats.rx_fragmented_errors;
+    stats->LastStart            = unit->internalStats.last_start;
+    io->ios2_Req.io_Error = S2ERR_NO_ERROR;
+    return COMMAND_PROCESSED;
+}
+
+static u32 Do_S2_GETEXTENDEDGLOBALSTATS(struct IOSana2Req *io)
+{
+    struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    KprintfH("[genet] %s: S2_GETEXTENDEDGLOBALSTATS\n", __func__);
+    struct Sana2ExtDeviceStats *xs = (struct Sana2ExtDeviceStats *)io->ios2_StatData;
+    if (xs == NULL)
+    {
+        io->ios2_Req.io_Error = S2ERR_BAD_ARGUMENT;
+        return COMMAND_PROCESSED;
+    }
+
+    if (xs->s2xds_Length < (ULONG)sizeof(struct Sana2ExtDeviceStats))
+    {
+        io->ios2_Req.io_Error = IOERR_BADLENGTH;
+        return COMMAND_PROCESSED;
+    }
+
+    xs->s2xds_Actual = (ULONG)sizeof(struct Sana2ExtDeviceStats);
+
+#define SPLIT64(f, v) do { (f).s2q_High = (ULONG)((v) >> 32); (f).s2q_Low = (ULONG)((v) & 0xFFFFFFFFUL); } while(0)
+    SPLIT64(xs->s2xds_PacketsReceived,      unit->internalStats.rx_packets);
+    SPLIT64(xs->s2xds_PacketsSent,          unit->internalStats.tx_packets);
+    SPLIT64(xs->s2xds_UnknownTypesReceived, unit->internalStats.rx_orphan);
+    SPLIT64(xs->s2xds_Overruns, (u64)unit->internalStats.rx_overruns);
+    u64 baddata = (u64)unit->internalStats.rx_other_errors
+                + unit->internalStats.rx_crc_errors
+                + unit->internalStats.rx_over_errors
+                + unit->internalStats.rx_frame_errors
+                + unit->internalStats.rx_length_errors
+                + unit->internalStats.rx_fragmented_errors;
+    SPLIT64(xs->s2xds_BadData, baddata);
+    SPLIT64(xs->s2xds_Reconfigurations, (u64)unit->reconfigurations);
+#undef SPLIT64
+    xs->s2xds_LastStart = unit->internalStats.last_start;
+    io->ios2_Req.io_Error = S2ERR_NO_ERROR;
+    return COMMAND_PROCESSED;
 }
 
 static inline ULONG sat_u64_to_ulong(u64 v)
@@ -182,6 +241,10 @@ static u32 Do_S2_GETSPECIALSTATS(struct IOSana2Req *io)
     return COMMAND_PROCESSED;
 }
 
+static u32 Do_S2_SAMPLE_THROUGHPUT(struct IOSana2Req *io)
+{
+    return COMMAND_SCHEDULED;
+}
 
 static u32 Do_S2_ONEVENT(struct IOSana2Req *io)
 {
@@ -404,6 +467,10 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
     if (unit->state != STATE_ONLINE)
     {
         Kprintf("[genet] %s: Bringing unit online\n", __func__);
+        /* Count this as a reconfiguration if we've been online before */
+        if (unit->state == STATE_OFFLINE)
+            unit->reconfigurations++;
+
         mem_zero(&unit->internalStats, sizeof(unit->internalStats));
         bcmgenet_reset_mib_counters(unit);
 
@@ -411,7 +478,7 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
         if (unitTimerBase != NULL)
         {
             GetSysTime(&unit->internalStats.last_start);
-            Kprintf("[genet] %s: statistics zeroed, LastStart: %ld\n", __func__, unit->internalStats.last_start.tv_secs);
+            KprintfH("[genet] %s: statistics zeroed, LastStart: %ld\n", __func__, unit->internalStats.last_start.tv_secs);
         }
         else
         {
@@ -552,16 +619,16 @@ void ProcessCommand(struct IOSana2Req *io)
             break;
 
         case S2_GETGLOBALSTATS:
-            KprintfH("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
-            struct Sana2DeviceStats *stats = (struct Sana2DeviceStats *)io->ios2_StatData;
-            stats->PacketsReceived = unit->internalStats.rx_packets;
-            stats->PacketsSent = unit->internalStats.tx_packets;
-            stats->UnknownTypesReceived = unit->internalStats.rx_dropped;
-            stats->Overruns = unit->internalStats.rx_overruns + unit->internalStats.tx_dropped;
-            stats->BadData = unit->internalStats.rx_other_errors + unit->internalStats.rx_crc_errors +
-                             unit->internalStats.rx_frame_errors + unit->internalStats.rx_length_errors +
-                             unit->internalStats.rx_fragmented_errors;
-            stats->LastStart = unit->internalStats.last_start;
+            complete = Do_S2_GETGLOBALSTATS(io);
+            break;
+
+        case S2_GETEXTENDEDGLOBALSTATS:
+            complete = Do_S2_GETEXTENDEDGLOBALSTATS(io);
+            break;
+
+        case S2_SAMPLE_THROUGHPUT:
+            complete = Do_S2_SAMPLE_THROUGHPUT(io);
+            break;
 
         case S2_GETSPECIALSTATS:
             complete = Do_S2_GETSPECIALSTATS(io);

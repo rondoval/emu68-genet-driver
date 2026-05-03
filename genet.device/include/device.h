@@ -120,23 +120,29 @@ struct enet_cb
 
 struct internal_stats
 {
-	u32 rx_packets;		   // Sana2 PacketsReceived
-	u32 rx_bytes;		   // total bytes received
-	u32 rx_dropped;		   // Sana2 UnknownTypesReceived
-	u32 rx_arp_ip_dropped; // included in rx_dropped
-	u32 rx_overruns;	   // Sana2 Overruns
-	u32 rx_other_errors;
-	u32 rx_crc_errors;
-	u32 rx_over_errors;
-	u32 rx_frame_errors;
-	u32 rx_length_errors;
-	u32 rx_fragmented_errors;
+	u64 rx_packets;			 // Sana2 PacketsReceived
+	u64 rx_bytes;			 // total bytes received
+	u64 rx_orphan;			 // Sana2 UnknownTypesReceived (no opener for packet)
+	u32 rx_buffer_errors;	 // CopyToBuff failures (host buffer not accepted)
+	u32 rx_arp_ip_dropped;	 // ARP/IP fast-path: opener queue empty
+	u32 rx_overruns;		 // Sana2 Overruns (RX HW miss)
+	u32 rx_other_errors;	 // contributes to Sana2 BadData
+	u32 rx_crc_errors;		 // contributes to Sana2 BadData
+	u32 rx_over_errors;		 // contributes to Sana2 BadData
+	u32 rx_frame_errors;	 // contributes to Sana2 BadData
+	u32 rx_length_errors;	 // contributes to Sana2 BadData
+	u32 rx_fragmented_errors;// contributes to Sana2 BadData
 
-	u32 tx_packets; // Sana2 PacketsSent
-	u32 tx_bytes;	// total bytes transmitted
-	u32 tx_dma;		// tx_dma + tx_copy = tx_packets
+	u64 tx_packets;			 // Sana2 PacketsSent
+	u64 tx_bytes;			 // total bytes transmitted
+	u32 tx_dma;				 // tx_dma + tx_copy = tx_packets
 	u32 tx_copy;
-	u32 tx_dropped; // Sana2 Overruns
+	u32 tx_dropped;			 // TX failed to enqueue (no BDs / no data / copy fail)
+
+	u32 irq0_count;			 // IRQ0 fires (RX/TX/error)
+	u32 irq0_tx_count;		 // IRQ0 fires that included TXDMA_DONE
+	u32 irq0_rx_count;		 // IRQ0 fires that included RXDMA_DONE
+	u32 irq0_other_count;	 // IRQ0 fires with neither TX nor RX DONE (link/PHY/etc.)
 
 	TimeVal_Type last_start;
 };
@@ -159,6 +165,8 @@ struct GenetUnit
 	struct Task *task;
 	struct Device *timerBase;
 	struct internal_stats internalStats;
+	u32 reconfigurations;	   /* count of S2_ONLINE after the first; persists across (re)online */
+
 	struct MinList openers;
 	struct MinList multicastRanges;
 	u32 multicastCount;

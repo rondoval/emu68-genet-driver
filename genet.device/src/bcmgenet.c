@@ -307,7 +307,7 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 	/* cannot init RDMA_PROD_INDEX to 0, so align RDMA_CONS_INDEX on it instead */
 	ring->rx_cons_index = mmio_read32(BCMGENET_REG(unit, RDMA_PROD_INDEX)) & DMA_P_INDEX_MASK;
 	mmio_write32(ring->rx_cons_index, BCMGENET_REG(unit, RDMA_CONS_INDEX));
-	Kprintf("[genet] %s: rx_cons_index=%lu\n", __func__, (ULONG)unit->rx_ring.rx_cons_index);
+	KprintfH("[genet] %s: rx_cons_index=%lu\n", __func__, (ULONG)unit->rx_ring.rx_cons_index);
 
 	mmio_write32((RX_DESCS << DMA_RING_SIZE_SHIFT) | RX_BUF_LENGTH, unit->genetBase + RDMA_RING_REG_BASE + DMA_RING_BUF_SIZE);
 	mmio_write32((DMA_FC_THRESH_LO << DMA_XOFF_THRESHOLD_SHIFT) | DMA_FC_THRESH_HI, unit->genetBase + RDMA_XON_XOFF_THRESH);
@@ -630,7 +630,7 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	/* Monitor link interrupts now */
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R);
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE | UMAC_IRQ_TXDMA_DONE);
-	Kprintf("[genet] %s: Enabled link and RX/TX DMA interrupts\n", __func__);
+	KprintfH("[genet] %s: Enabled link and RX DMA interrupts (TX reclaimed in xmit/watchdog)\n", __func__);
 
 	/* Enable Rx/Tx */
 	mmio_set32(BCMGENET_REG(unit, UMAC_CMD), CMD_TX_EN | CMD_RX_EN);
