@@ -58,6 +58,9 @@ typedef enum
 struct Opener
 {
 	struct MinNode node;
+
+	/* Per-type read queues. Touched only by the device task after
+	 * DrainReadRing fans entries from the SPSC ring. No locking. */
 	struct MinList readQueue;
 	struct MinList orphanQueue;
 	struct MinList eventQueue;

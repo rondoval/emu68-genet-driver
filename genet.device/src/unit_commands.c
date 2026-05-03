@@ -507,23 +507,6 @@ static inline u32 Do_S2_READORPHAN(struct IOSana2Req *io)
     return COMMAND_SCHEDULED;
 }
 
-static inline u32 Do_CMD_WRITE(struct IOSana2Req *io)
-{
-    struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: CMD_WRITE\n", __func__);
-
-    if (unlikely(unit->state != STATE_ONLINE))
-    {
-        Kprintf("[genet] %s: Unit is offline, cannot write\n", __func__);
-        io->ios2_WireError = S2WERR_UNIT_OFFLINE;
-        io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
-        return COMMAND_PROCESSED;
-    }
-
-    io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
-    return bcmgenet_xmit(io, unit);
-}
-
 static u32 Do_S2_DEVICEQUERY(struct IOSana2Req *io)
 {
     KprintfH("[genet] %s: S2_DEVICEQUERY\n", __func__);
@@ -680,17 +663,6 @@ void ProcessCommand(struct IOSana2Req *io)
 
         switch (io->ios2_Req.io_Command)
         {
-        case S2_BROADCAST: /* Fallthrough */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-            *(ULONG *)&io->ios2_DstAddr[0] = 0xFFFFFFFF;
-            *(UWORD *)&io->ios2_DstAddr[4] = 0xFFFF;
-#pragma GCC diagnostic pop
-        case S2_MULTICAST: /* Fallthrough */
-        case CMD_WRITE:
-            complete = Do_CMD_WRITE(io);
-            break;
-
         case CMD_READ:
             complete = Do_CMD_READ(io);
             break;
