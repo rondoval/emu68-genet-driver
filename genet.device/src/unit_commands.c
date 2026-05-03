@@ -66,7 +66,6 @@ void ReportEvents(struct GenetUnit *unit, u32 eventSet)
     {
         struct Opener *opener = (struct Opener *)node;
         struct MinNode *ioNode, *nextIoNode;
-        ObtainSemaphore(&opener->openerSemaphore);
         for (ioNode = opener->eventQueue.mlh_Head; (nextIoNode = ioNode->mln_Succ) != NULL; ioNode = nextIoNode)
         {
             struct IOSana2Req *io = (struct IOSana2Req *)ioNode;
@@ -82,32 +81,43 @@ void ReportEvents(struct GenetUnit *unit, u32 eventSet)
                 break; /* Only one event per opener */
             }
         }
-        ReleaseSemaphore(&opener->openerSemaphore);
     }
     KprintfH("[genet] %s: Reporting done\n", __func__);
+}
+
+void UnitCancelEvent(struct IOSana2Req *io)
+{
+    Remove((struct Node *)io);
+    io->ios2_Req.io_Error = IOERR_ABORTED;
+    io->ios2_WireError = S2WERR_GENERIC_ERROR;
+    ReplyMsg((struct Message *)io);
 }
 
 void UpdateThroughputStats(struct GenetUnit *unit)
 {
     struct throughput_stats *throughput = &unit->throughputStats;
     struct IOSana2Req *io = throughput->req;
-    if (io == NULL) return;
+    if (io == NULL)
+        return;
 
     struct Sana2ThroughputStats *ts = (struct Sana2ThroughputStats *)io->ios2_StatData;
     struct Device *unitTimerBase = unit->timerBase;
     struct timeval now;
-    now.tv_secs = 0; now.tv_micro = 0;
-    if (unitTimerBase) GetSysTime(&now);
+    now.tv_secs = 0;
+    now.tv_micro = 0;
+    if (unitTimerBase)
+        GetSysTime(&now);
 
-    if (now.tv_secs <= ts->s2ts_EndTime.tv_secs) return;
+    if (now.tv_secs <= ts->s2ts_EndTime.tv_secs)
+        return;
 
     ts->s2ts_EndTime = now;
     u64 sent = unit->internalStats.tx_bytes - throughput->base_tx_bytes;
-    u64 recv = unit->internalStats.rx_bytes  - throughput->base_rx_bytes;
-    ts->s2ts_BytesSent.s2q_High     = (ULONG)(sent >> 32);
-    ts->s2ts_BytesSent.s2q_Low      = (ULONG)(sent & 0xFFFFFFFFUL);
+    u64 recv = unit->internalStats.rx_bytes - throughput->base_rx_bytes;
+    ts->s2ts_BytesSent.s2q_High = (ULONG)(sent >> 32);
+    ts->s2ts_BytesSent.s2q_Low = (ULONG)(sent & 0xFFFFFFFFUL);
     ts->s2ts_BytesReceived.s2q_High = (ULONG)(recv >> 32);
-    ts->s2ts_BytesReceived.s2q_Low  = (ULONG)(recv & 0xFFFFFFFFUL);
+    ts->s2ts_BytesReceived.s2q_Low = (ULONG)(recv & 0xFFFFFFFFUL);
     throughput->sync_updates++;
     ts->s2ts_Updates.s2q_Low = (ULONG)(throughput->sync_updates & 0xFFFFFFFFUL);
     ts->s2ts_Updates.s2q_High = (ULONG)(throughput->sync_updates >> 32);
@@ -170,9 +180,14 @@ static u32 Do_S2_GETEXTENDEDGLOBALSTATS(struct IOSana2Req *io)
 
     xs->s2xds_Actual = (ULONG)sizeof(struct Sana2ExtDeviceStats);
 
-#define SPLIT64(f, v) do { (f).s2q_High = (ULONG)((v) >> 32); (f).s2q_Low = (ULONG)((v) & 0xFFFFFFFFUL); } while(0)
-    SPLIT64(xs->s2xds_PacketsReceived,      unit->internalStats.rx_packets);
-    SPLIT64(xs->s2xds_PacketsSent,          unit->internalStats.tx_packets);
+#define SPLIT64(f, v)                              \
+    do                                             \
+    {                                              \
+        (f).s2q_High = (ULONG)((v) >> 32);         \
+        (f).s2q_Low = (ULONG)((v) & 0xFFFFFFFFUL); \
+    } while (0)
+    SPLIT64(xs->s2xds_PacketsReceived, unit->internalStats.rx_packets);
+    SPLIT64(xs->s2xds_PacketsSent, unit->internalStats.tx_packets);
     SPLIT64(xs->s2xds_UnknownTypesReceived, unit->internalStats.rx_orphan);
     SPLIT64(xs->s2xds_Overruns, (u64)unit->internalStats.rx_overruns);
     u64 baddata = (u64)unit->internalStats.rx_other_errors
@@ -197,9 +212,10 @@ static inline ULONG sat_u64_to_ulong(u64 v)
 static ULONG emit_ss(struct Sana2SpecialStatRecord *rec, ULONG max, ULONG idx,
                      ULONG type, const char *name, u64 value)
 {
-    if (idx >= max) return idx;
-    rec[idx].Type   = type;
-    rec[idx].Count  = sat_u64_to_ulong(value);
+    if (idx >= max)
+        return idx;
+    rec[idx].Type = type;
+    rec[idx].Count = sat_u64_to_ulong(value);
     rec[idx].String = (STRPTR)name;
     return idx + 1;
 }
@@ -210,7 +226,8 @@ static u32 Do_S2_GETSPECIALSTATS(struct IOSana2Req *io)
     KprintfH("[genet] %s: S2_GETSPECIALSTATS\n", __func__);
 
     struct Sana2SpecialStatHeader *hdr = (struct Sana2SpecialStatHeader *)io->ios2_StatData;
-    if (hdr == NULL) {
+    if (hdr == NULL)
+    {
         io->ios2_Req.io_Error = S2ERR_BAD_ARGUMENT;
         return COMMAND_PROCESSED;
     }
@@ -292,7 +309,8 @@ static u32 Do_S2_SAMPLE_THROUGHPUT(struct IOSana2Req *io)
     struct throughput_stats *throughput = &unit->throughputStats;
     KprintfH("[genet] %s: S2_SAMPLE_THROUGHPUT\n", __func__);
 
-    if (io->ios2_StatData == NULL) {
+    if (io->ios2_StatData == NULL)
+    {
         io->ios2_Req.io_Error = S2ERR_BAD_ARGUMENT;
         return COMMAND_PROCESSED;
     }
@@ -301,39 +319,46 @@ static u32 Do_S2_SAMPLE_THROUGHPUT(struct IOSana2Req *io)
     struct Device *unitTimerBase = unit->timerBase;
 
     ts->s2ts_Actual = (ULONG)sizeof(struct Sana2ThroughputStats);
-    ts->s2ts_BytesSent.s2q_High     = 0; ts->s2ts_BytesSent.s2q_Low     = 0;
-    ts->s2ts_BytesReceived.s2q_High = 0; ts->s2ts_BytesReceived.s2q_Low = 0;
-    ts->s2ts_Updates.s2q_High       = 0; ts->s2ts_Updates.s2q_Low       = 0;
+    ts->s2ts_BytesSent.s2q_High = 0;
+    ts->s2ts_BytesSent.s2q_Low = 0;
+    ts->s2ts_BytesReceived.s2q_High = 0;
+    ts->s2ts_BytesReceived.s2q_Low = 0;
+    ts->s2ts_Updates.s2q_High = 0;
+    ts->s2ts_Updates.s2q_Low = 0;
     struct timeval now;
-    now.tv_secs = 0; now.tv_micro = 0;
-    if (unitTimerBase) GetSysTime(&now);
+    now.tv_secs = 0;
+    now.tv_micro = 0;
+    if (unitTimerBase)
+        GetSysTime(&now);
 
-    if (ts->s2ts_NotifyTask == NULL) {
+    if (ts->s2ts_NotifyTask == NULL)
+    {
         ts->s2ts_StartTime = throughput->window_start;
-        ts->s2ts_EndTime   = now;
+        ts->s2ts_EndTime = now;
         u64 sent = unit->internalStats.tx_bytes - throughput->base_tx_bytes;
-        u64 recv = unit->internalStats.rx_bytes  - throughput->base_rx_bytes;
-        ts->s2ts_BytesSent.s2q_High     = (ULONG)(sent >> 32);
-        ts->s2ts_BytesSent.s2q_Low      = (ULONG)(sent & 0xFFFFFFFFUL);
+        u64 recv = unit->internalStats.rx_bytes - throughput->base_rx_bytes;
+        ts->s2ts_BytesSent.s2q_High = (ULONG)(sent >> 32);
+        ts->s2ts_BytesSent.s2q_Low = (ULONG)(sent & 0xFFFFFFFFUL);
         ts->s2ts_BytesReceived.s2q_High = (ULONG)(recv >> 32);
-        ts->s2ts_BytesReceived.s2q_Low  = (ULONG)(recv & 0xFFFFFFFFUL);
+        ts->s2ts_BytesReceived.s2q_Low = (ULONG)(recv & 0xFFFFFFFFUL);
         throughput->sync_updates++;
         ts->s2ts_Updates.s2q_Low = (ULONG)(throughput->sync_updates & 0xFFFFFFFFUL);
         ts->s2ts_Updates.s2q_High = (ULONG)(throughput->sync_updates >> 32);
         throughput->base_tx_bytes = unit->internalStats.tx_bytes;
         throughput->base_rx_bytes = unit->internalStats.rx_bytes;
-        throughput->window_start  = now;
+        throughput->window_start = now;
         io->ios2_Req.io_Error = S2ERR_NO_ERROR;
         return COMMAND_PROCESSED;
     }
 
-    if (throughput->req != NULL) {
+    if (throughput->req != NULL)
+    {
         io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
         return COMMAND_PROCESSED;
     }
 
     ts->s2ts_StartTime = now;
-    ts->s2ts_EndTime   = now;
+    ts->s2ts_EndTime = now;
     throughput->base_tx_bytes = unit->internalStats.tx_bytes;
     throughput->base_rx_bytes = unit->internalStats.rx_bytes;
     throughput->sync_updates = 0;
@@ -370,10 +395,7 @@ static u32 Do_S2_ONEVENT(struct IOSana2Req *io)
         KprintfH("[genet] %s: Adding to event listener list, preset %08lx\n", __func__, preset);
         /* Remove QUICK flag and put message on event listener list */
         struct Opener *opener = io->ios2_BufferManagement;
-        // io->ios2_Req.io_Flags &= ~IOF_QUICK;
-        ObtainSemaphore(&opener->openerSemaphore);
         AddTailMinList(&opener->eventQueue, (struct MinNode *)io);
-        ReleaseSemaphore(&opener->openerSemaphore);
         return COMMAND_SCHEDULED;
     }
 }
@@ -396,15 +418,9 @@ static u32 Do_CMD_FLUSH(struct IOSana2Req *io)
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
         struct Opener *opener = (struct Opener *)node;
-        ObtainSemaphore(&opener->openerSemaphore);
-        while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue)))
-        {
-            req->ios2_Req.io_Error = IOERR_ABORTED;
-            req->ios2_WireError = 0;
-            ReplyMsg((struct Message *)req);
-        }
 
-        while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->eventQueue)))
+
+        while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue)))
         {
             req->ios2_Req.io_Error = IOERR_ABORTED;
             req->ios2_WireError = 0;
@@ -431,7 +447,13 @@ static u32 Do_CMD_FLUSH(struct IOSana2Req *io)
             req->ios2_WireError = 0;
             ReplyMsg((struct Message *)req);
         }
-        ReleaseSemaphore(&opener->openerSemaphore);
+
+        while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->eventQueue)))
+        {
+            req->ios2_Req.io_Error = IOERR_ABORTED;
+            req->ios2_WireError = 0;
+            ReplyMsg((struct Message *)req);
+        }
     }
     KprintfH("[genet] %s: Flush completed\n", __func__);
 
@@ -533,7 +555,7 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfH("[genet] %s: S2_ONLINE\n", __func__);
 
-    if(unit->state == STATE_UNCONFIGURED)
+    if (unit->state == STATE_UNCONFIGURED)
     {
         Kprintf("[genet] %s: Unit is unconfigured, cannot go online\n", __func__);
         io->ios2_Req.io_Error = S2ERR_BAD_STATE;
@@ -592,10 +614,10 @@ static u32 Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
     {
         CopyMem(io->ios2_SrcAddr, unit->currentMacAddress, sizeof(unit->currentMacAddress));
         KprintfH("[genet] %s: Setting current MAC address to %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
-                __func__,
-                unit->currentMacAddress[0], unit->currentMacAddress[1],
-                unit->currentMacAddress[2], unit->currentMacAddress[3],
-                unit->currentMacAddress[4], unit->currentMacAddress[5]);
+                 __func__,
+                 unit->currentMacAddress[0], unit->currentMacAddress[1],
+                 unit->currentMacAddress[2], unit->currentMacAddress[3],
+                 unit->currentMacAddress[4], unit->currentMacAddress[5]);
 
         u32 result = UnitConfigure(unit);
         if (result != S2ERR_NO_ERROR)

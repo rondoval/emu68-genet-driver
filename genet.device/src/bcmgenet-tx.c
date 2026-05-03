@@ -217,7 +217,6 @@ ret_error:
 	unit->internalStats.tx_dropped++;
 	io->ios2_WireError = S2WERR_BUFF_ERROR;
 	io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
-	ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
-	ReleaseSemaphore(&ring->tx_ring_sem);
+	UnitSubmitControlAsync(unit, UNIT_CTRL_EVENT_REPORT, (union UnitControlPayload){.eventSet = S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR});
 	return COMMAND_PROCESSED;
 }

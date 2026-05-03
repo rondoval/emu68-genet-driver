@@ -174,6 +174,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 case UNIT_CTRL_OPENER_REM:
                     RemoveMinNode((struct MinNode *)cmsg->payload.opener);
                     break;
+                case UNIT_CTRL_EVENT_REPORT:
+                    ReportEvents(unit, cmsg->payload.eventSet);
+                    break;
+                case UNIT_CTRL_EVENT_ABORT:
+                    UnitCancelEvent(cmsg->payload.io);
                     break;
                 case UNIT_CTRL_THROUGHPUT_ABORT:
                     cmsg->result = UnitCancelThroughput(unit, cmsg->payload.io);

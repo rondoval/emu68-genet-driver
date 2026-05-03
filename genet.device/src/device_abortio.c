@@ -28,6 +28,12 @@ LONG abortIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6")
             return 0;
         }
 
+        if (io->ios2_Req.io_Command == S2_ONEVENT)
+        {
+            UnitSubmitControlAsync(unit, UNIT_CTRL_EVENT_ABORT, (union UnitControlPayload){ .io = io });
+            return 0;
+        }
+
         Forbid();
         /* If the IO was not quick and is of type message (not handled yet or in process), abord it and remove from queue. 
          * The TX task clears ln_Pred to indicate the request is already on TX ring and can't be cancelled. */

@@ -289,7 +289,7 @@ static inline struct MinList *GetPacketTypeQueue(struct Opener *opener, u16 pack
 u32 Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io);
 u32 Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io);
 
-BOOL UnitCancelEvent(struct IOSana2Req *io);
+void UnitCancelEvent(struct IOSana2Req *io);
 BOOL UnitCancelThroughput(struct GenetUnit *unit, struct IOSana2Req *io);
 
 void ReportEvents(struct GenetUnit *unit, u32 eventSet);
