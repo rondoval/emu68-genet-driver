@@ -40,6 +40,7 @@ static const u16 GENET_SupportedCommands[] = {
     S2_GETSPECIALSTATS,
     S2_GETGLOBALSTATS,
     S2_GETEXTENDEDGLOBALSTATS,
+    S2_SAMPLE_THROUGHPUT,
     S2_ONEVENT,
     S2_READORPHAN,
     S2_ONLINE,
@@ -84,6 +85,50 @@ void ReportEvents(struct GenetUnit *unit, u32 eventSet)
         ReleaseSemaphore(&opener->openerSemaphore);
     }
     KprintfH("[genet] %s: Reporting done\n", __func__);
+}
+
+void UpdateThroughputStats(struct GenetUnit *unit)
+{
+    struct throughput_stats *throughput = &unit->throughputStats;
+    struct IOSana2Req *io = throughput->req;
+    if (io == NULL) return;
+
+    struct Sana2ThroughputStats *ts = (struct Sana2ThroughputStats *)io->ios2_StatData;
+    struct Device *unitTimerBase = unit->timerBase;
+    struct timeval now;
+    now.tv_secs = 0; now.tv_micro = 0;
+    if (unitTimerBase) GetSysTime(&now);
+
+    if (now.tv_secs <= ts->s2ts_EndTime.tv_secs) return;
+
+    ts->s2ts_EndTime = now;
+    u64 sent = unit->internalStats.tx_bytes - throughput->base_tx_bytes;
+    u64 recv = unit->internalStats.rx_bytes  - throughput->base_rx_bytes;
+    ts->s2ts_BytesSent.s2q_High     = (ULONG)(sent >> 32);
+    ts->s2ts_BytesSent.s2q_Low      = (ULONG)(sent & 0xFFFFFFFFUL);
+    ts->s2ts_BytesReceived.s2q_High = (ULONG)(recv >> 32);
+    ts->s2ts_BytesReceived.s2q_Low  = (ULONG)(recv & 0xFFFFFFFFUL);
+    throughput->sync_updates++;
+    ts->s2ts_Updates.s2q_Low = (ULONG)(throughput->sync_updates & 0xFFFFFFFFUL);
+    ts->s2ts_Updates.s2q_High = (ULONG)(throughput->sync_updates >> 32);
+
+    Signal(ts->s2ts_NotifyTask, ts->s2ts_NotifyMask);
+}
+
+BOOL UnitCancelThroughput(struct GenetUnit *unit, struct IOSana2Req *io)
+{
+    struct throughput_stats *throughput = &unit->throughputStats;
+
+    if (throughput->req != io)
+    {
+        return FALSE;
+    }
+
+    throughput->req = NULL;
+    io->ios2_Req.io_Error = IOERR_ABORTED;
+    io->ios2_WireError = S2WERR_GENERIC_ERROR;
+    ReplyMsg((struct Message *)io);
+    return TRUE;
 }
 
 static u32 Do_S2_GETGLOBALSTATS(struct IOSana2Req *io)
@@ -243,6 +288,57 @@ static u32 Do_S2_GETSPECIALSTATS(struct IOSana2Req *io)
 
 static u32 Do_S2_SAMPLE_THROUGHPUT(struct IOSana2Req *io)
 {
+    struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct throughput_stats *throughput = &unit->throughputStats;
+    KprintfH("[genet] %s: S2_SAMPLE_THROUGHPUT\n", __func__);
+
+    if (io->ios2_StatData == NULL) {
+        io->ios2_Req.io_Error = S2ERR_BAD_ARGUMENT;
+        return COMMAND_PROCESSED;
+    }
+
+    struct Sana2ThroughputStats *ts = (struct Sana2ThroughputStats *)io->ios2_StatData;
+    struct Device *unitTimerBase = unit->timerBase;
+
+    ts->s2ts_Actual = (ULONG)sizeof(struct Sana2ThroughputStats);
+    ts->s2ts_BytesSent.s2q_High     = 0; ts->s2ts_BytesSent.s2q_Low     = 0;
+    ts->s2ts_BytesReceived.s2q_High = 0; ts->s2ts_BytesReceived.s2q_Low = 0;
+    ts->s2ts_Updates.s2q_High       = 0; ts->s2ts_Updates.s2q_Low       = 0;
+    struct timeval now;
+    now.tv_secs = 0; now.tv_micro = 0;
+    if (unitTimerBase) GetSysTime(&now);
+
+    if (ts->s2ts_NotifyTask == NULL) {
+        ts->s2ts_StartTime = throughput->window_start;
+        ts->s2ts_EndTime   = now;
+        u64 sent = unit->internalStats.tx_bytes - throughput->base_tx_bytes;
+        u64 recv = unit->internalStats.rx_bytes  - throughput->base_rx_bytes;
+        ts->s2ts_BytesSent.s2q_High     = (ULONG)(sent >> 32);
+        ts->s2ts_BytesSent.s2q_Low      = (ULONG)(sent & 0xFFFFFFFFUL);
+        ts->s2ts_BytesReceived.s2q_High = (ULONG)(recv >> 32);
+        ts->s2ts_BytesReceived.s2q_Low  = (ULONG)(recv & 0xFFFFFFFFUL);
+        throughput->sync_updates++;
+        ts->s2ts_Updates.s2q_Low = (ULONG)(throughput->sync_updates & 0xFFFFFFFFUL);
+        ts->s2ts_Updates.s2q_High = (ULONG)(throughput->sync_updates >> 32);
+        throughput->base_tx_bytes = unit->internalStats.tx_bytes;
+        throughput->base_rx_bytes = unit->internalStats.rx_bytes;
+        throughput->window_start  = now;
+        io->ios2_Req.io_Error = S2ERR_NO_ERROR;
+        return COMMAND_PROCESSED;
+    }
+
+    if (throughput->req != NULL) {
+        io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
+        return COMMAND_PROCESSED;
+    }
+
+    ts->s2ts_StartTime = now;
+    ts->s2ts_EndTime   = now;
+    throughput->base_tx_bytes = unit->internalStats.tx_bytes;
+    throughput->base_rx_bytes = unit->internalStats.rx_bytes;
+    throughput->sync_updates = 0;
+    throughput->req = io;
+    io->ios2_Req.io_Error = S2ERR_NO_ERROR;
     return COMMAND_SCHEDULED;
 }
 
@@ -472,6 +568,7 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
             unit->reconfigurations++;
 
         mem_zero(&unit->internalStats, sizeof(unit->internalStats));
+        mem_zero(&unit->throughputStats, sizeof(unit->throughputStats));
         bcmgenet_reset_mib_counters(unit);
 
         struct Device *unitTimerBase = unit->timerBase;

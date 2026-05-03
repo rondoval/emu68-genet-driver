@@ -19,6 +19,15 @@ LONG abortIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6")
 
     if (io->ios2_Req.io_Unit != NULL)
     {
+        struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+
+        /* S2_SAMPLE_THROUGHPUT is owned by the unit task. */
+        if (io->ios2_Req.io_Command == S2_SAMPLE_THROUGHPUT)
+        {
+            UnitSubmitControlAsync(unit, UNIT_CTRL_THROUGHPUT_ABORT, (union UnitControlPayload){ .io = io });
+            return 0;
+        }
+
         Forbid();
         /* If the IO was not quick and is of type message (not handled yet or in process), abord it and remove from queue. 
          * The TX task clears ln_Pred to indicate the request is already on TX ring and can't be cancelled. */

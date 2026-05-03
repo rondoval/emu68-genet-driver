@@ -147,6 +147,15 @@ struct internal_stats
 	TimeVal_Type last_start;
 };
 
+struct throughput_stats
+{
+	struct IOSana2Req *req;
+	u64 base_tx_bytes;
+	u64 base_rx_bytes;
+	struct timeval window_start;
+	u64 sync_updates;
+};
+
 struct GenetUnit
 {
 	struct Unit unit;
@@ -164,16 +173,19 @@ struct GenetUnit
 	UnitState state;
 	struct Task *task;
 	struct Device *timerBase;
-	struct internal_stats internalStats;
-	u32 reconfigurations;	   /* count of S2_ONLINE after the first; persists across (re)online */
 
 	struct MinList openers;
 	struct MinList multicastRanges;
 	u32 multicastCount;
 	BOOL mdfEnabled; /* Multicast filter enabled */
 
-	/* Opener management (message-based modifications) */
-	struct MsgPort *openerPort; /* created in unit task */
+	/* stats */
+	struct internal_stats internalStats;
+	struct throughput_stats throughputStats; /* throughput sampling state (S2_SAMPLE_THROUGHPUT) */
+	u32 reconfigurations;	   /* count of S2_ONLINE after the first; persists across (re)online */
+
+	/* Unit-control requests from foreign tasks. */
+	struct MsgPort *controlPort; /* created in unit task */
 
 	/* Device tree */
 	CONST_STRPTR compatible;
@@ -204,15 +216,26 @@ struct GenetUnit
 	dma_addr_t txbuffer;
 };
 
-/* Opener management commands */
-#define OPENER_CMD_ADD 1
-#define OPENER_CMD_REM 2
+/* Unit-control commands submitted from foreign tasks. */
+#define UNIT_CTRL_OPENER_ADD 1
+#define UNIT_CTRL_OPENER_REM 2
+#define UNIT_CTRL_EVENT_REPORT 3
+#define UNIT_CTRL_EVENT_ABORT 4
+#define UNIT_CTRL_THROUGHPUT_ABORT 5
 
-struct OpenerControlMsg
+union UnitControlPayload
+{
+	struct Opener *opener;
+	struct IOSana2Req *io;
+	u32 eventSet;
+};
+
+struct UnitControlMsg
 {
 	struct Message msg;
-	UWORD command; /* OPENER_CMD_* */
-	struct Opener *opener;
+	UWORD command; /* UNIT_CTRL_* */
+	LONG result;
+	union UnitControlPayload payload;
 };
 
 struct GenetDevice
@@ -240,6 +263,8 @@ u32 UnitConfigure(struct GenetUnit *unit);
 u32 UnitOnline(struct GenetUnit *unit);
 void UnitOffline(struct GenetUnit *unit);
 u32 UnitClose(struct GenetUnit *unit, struct Opener *opener);
+LONG UnitSubmitControl(struct GenetUnit *unit, UWORD command, union UnitControlPayload payload);
+void UnitSubmitControlAsync(struct GenetUnit *unit, UWORD command, union UnitControlPayload payload);
 
 BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_flags);
 void ProcessCommand(struct IOSana2Req *io);
@@ -260,6 +285,11 @@ static inline struct MinList *GetPacketTypeQueue(struct Opener *opener, u16 pack
 
 u32 Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io);
 u32 Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io);
+
+BOOL UnitCancelEvent(struct IOSana2Req *io);
+BOOL UnitCancelThroughput(struct GenetUnit *unit, struct IOSana2Req *io);
+
 void ReportEvents(struct GenetUnit *unit, u32 eventSet);
+void UpdateThroughputStats(struct GenetUnit *unit);
 
 #endif

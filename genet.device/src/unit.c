@@ -51,16 +51,7 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 		unit->unit.unit_OpenCnt++;
 		if (opener)
 		{
-			struct OpenerControlMsg msg;
-			struct MsgPort *replyPort = CreateMsgPort();
-			msg.msg.mn_Node.ln_Type = NT_MESSAGE;
-			msg.msg.mn_ReplyPort = replyPort;
-			msg.command = OPENER_CMD_ADD;
-			msg.opener = opener;
-			PutMsg(unit->openerPort, &msg.msg);
-			WaitPort(replyPort);
-			GetMsg(replyPort);
-			DeleteMsgPort(replyPort);
+			UnitSubmitControl(unit, UNIT_CTRL_OPENER_ADD, (union UnitControlPayload){ .opener = opener });
 		}
 		KprintfH("[genet] %s: Unit opened successfully, current open count: %ld\n", __func__, unit->unit.unit_OpenCnt);
 		return S2ERR_NO_ERROR;
@@ -106,7 +97,7 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 
 	if (opener != NULL)
 	{
-		AddTailMinList(&unit->openers, (struct MinNode *)opener);
+		UnitSubmitControl(unit, UNIT_CTRL_OPENER_ADD, (union UnitControlPayload){ .opener = opener });
 	}
 
 	return S2ERR_NO_ERROR;
@@ -170,17 +161,7 @@ u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 	}
 	else if (opener != NULL)
 	{
-		/* Use message to remove opener */
-		struct OpenerControlMsg msg;
-		struct MsgPort *replyPort = CreateMsgPort();
-		msg.msg.mn_Node.ln_Type = NT_MESSAGE;
-		msg.msg.mn_ReplyPort = replyPort;
-		msg.command = OPENER_CMD_REM;
-		msg.opener = opener;
-		PutMsg(unit->openerPort, &msg.msg);
-		WaitPort(replyPort);
-		GetMsg(replyPort);
-		DeleteMsgPort(replyPort);
+		UnitSubmitControlAsync(unit, UNIT_CTRL_OPENER_REM, (union UnitControlPayload){ .opener = opener });
 	}
 
 	return (u32)unit->unit.unit_OpenCnt;

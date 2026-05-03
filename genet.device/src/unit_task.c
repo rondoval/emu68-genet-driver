@@ -22,6 +22,57 @@
 #include <types.h>
 #include <runtime_config.h>
 
+/*
+ * Unit-control command submission from foreign tasks. Returns the result of the command, or 0 if the command was not processed.
+ */
+LONG UnitSubmitControl(struct GenetUnit *unit, UWORD command, union UnitControlPayload payload)
+{
+    if (unit == NULL || unit->controlPort == NULL)
+        return 0;
+
+    struct MsgPort *replyPort = CreateMsgPort();
+    if (replyPort == NULL)
+    {
+        Kprintf("[genet] %s: Failed to create reply port for unit control\n", __func__);
+        return 0;
+    }
+
+    struct UnitControlMsg msg;
+    msg.msg.mn_Node.ln_Type = NT_MESSAGE;
+    msg.msg.mn_ReplyPort = replyPort;
+    msg.command = command;
+    msg.result = 0;
+    msg.payload = payload;
+    PutMsg(unit->controlPort, &msg.msg);
+    WaitPort(replyPort);
+    GetMsg(replyPort);
+    DeleteMsgPort(replyPort);
+    return msg.result;
+}
+
+/*
+ * Unit-control command submission from foreign tasks. Asynchronous version, does not wait for a reply.
+ * Memory for the message is allocated from the unit's memory pool and freed by the unit task after processing.
+ */
+void UnitSubmitControlAsync(struct GenetUnit *unit, UWORD command, union UnitControlPayload payload)
+{
+    if (unit == NULL || unit->controlPort == NULL)
+        return;
+
+    struct UnitControlMsg *msg = pool_alloc(&unit->memoryPool, sizeof(struct UnitControlMsg));
+    if (msg == NULL)
+    {
+        Kprintf("[genet] %s: Failed to allocate message for async unit control\n", __func__);
+        return;
+    }
+
+    msg->msg.mn_Node.ln_Type = NT_MESSAGE;
+    msg->msg.mn_ReplyPort = NULL; // No reply expected for async
+    msg->command = command;
+    msg->payload = payload;
+    PutMsg(unit->controlPort, &msg->msg);
+}
+
 static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 {
 	const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
@@ -49,9 +100,9 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
     // Create a timer, we'll use it to poll the PHY and do housekeeping
     struct MsgPort *microHZTimerPort = CreateMsgPort();
-    unit->openerPort = CreateMsgPort();
+    unit->controlPort = CreateMsgPort();
     struct timerequest *packetTimerReq = CreateIORequest(microHZTimerPort, sizeof(struct timerequest));
-    if (microHZTimerPort == NULL || unit->openerPort == NULL || packetTimerReq == NULL)
+    if (microHZTimerPort == NULL || unit->controlPort == NULL || packetTimerReq == NULL)
     {
         Kprintf("[genet] %s: Failed to create timer msg port or request\n", __func__);
         goto free_ports;
@@ -80,7 +131,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
     ULONG sigset;
     ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
-                     (1UL << unit->openerPort->mp_SigBit) |
+                     (1UL << unit->controlPort->mp_SigBit) |
                      (1UL << microHZTimerPort->mp_SigBit) |
                      (1UL << unit->irq0_signal) |
                      SIGBREAKF_CTRL_C;
@@ -108,29 +159,35 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
         }
 
-        // Opener management messages
-        if (unlikely(sigset & (1UL << unit->openerPort->mp_SigBit)))
+        // Unit-control messages from foreign tasks
+        if (unlikely(sigset & (1UL << unit->controlPort->mp_SigBit)))
         {
             budget = unit->budget;
-            struct OpenerControlMsg *omsg;
-            while ((omsg = (struct OpenerControlMsg *)GetMsg(unit->openerPort)) && --budget)
+            struct UnitControlMsg *cmsg;
+            while ((cmsg = (struct UnitControlMsg *)GetMsg(unit->controlPort)) && --budget)
             {
-                switch (omsg->command)
+                switch (cmsg->command)
                 {
-                case OPENER_CMD_ADD:
-                    AddTailMinList(&unit->openers, (struct MinNode *)omsg->opener);
+                case UNIT_CTRL_OPENER_ADD:
+                    AddTailMinList(&unit->openers, (struct MinNode *)cmsg->payload.opener);
                     break;
-                case OPENER_CMD_REM:
-                    if (omsg->opener)
-                        RemoveMinNode((struct MinNode *)omsg->opener);
+                case UNIT_CTRL_OPENER_REM:
+                    RemoveMinNode((struct MinNode *)cmsg->payload.opener);
+                    break;
+                    break;
+                case UNIT_CTRL_THROUGHPUT_ABORT:
+                    cmsg->result = UnitCancelThroughput(unit, cmsg->payload.io);
                     break;
                 }
-                ReplyMsg(&omsg->msg);
+                if(cmsg->msg.mn_ReplyPort != NULL)
+                    ReplyMsg(&cmsg->msg);
+                else
+                    pool_free(&unit->memoryPool, cmsg);
             }
             if (budget == 0)
             {
                 // Still more to process, signal ourselves again
-                Signal(unit->task, 1UL << unit->openerPort->mp_SigBit);
+                Signal(unit->task, 1UL << unit->controlPort->mp_SigBit);
             }
         }
 
@@ -208,6 +265,8 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             packetTimerReq->tr_time.tv_secs = 0;
             packetTimerReq->tr_time.tv_micro = config->periodic_task_ms * 1000;
             SendIO(&packetTimerReq->tr_node);
+
+            UpdateThroughputStats(unit);
         }
 
         if (unlikely(sigset & SIGBREAKF_CTRL_C))
@@ -223,7 +282,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 free_ports:
     DeleteIORequest(&packetTimerReq->tr_node);
     DeleteMsgPort(microHZTimerPort);
-    DeleteMsgPort(unit->openerPort);
+    DeleteMsgPort(unit->controlPort);
 free_signals:
     FreeSignal(unit->irq0_signal);
     FreeSignal((BYTE)unit->unit.unit_MsgPort.mp_SigBit);
