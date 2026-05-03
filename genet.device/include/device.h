@@ -32,6 +32,10 @@
 #define COMMAND_PROCESSED 1u
 #define COMMAND_SCHEDULED 0u
 
+/* Lazy-reclaim watermark: only read TDMA_CONS_INDEX when free slots fall
+ * below this. Must exceed max descriptors per packet (2 for DMA path). */
+#define TX_RECLAIM_THRESHOLD 16U
+
 /* Generic TODOs
 cleanup mcast handling
 PHY link state updates at runtime

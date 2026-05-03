@@ -53,23 +53,24 @@ void bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit a
 	u32 status = mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_STAT)) &
 				   ~mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_STATUS));
 
-	if (status & UMAC_IRQ_TXDMA_DONE)
-	{
-		bcmgenet_tx_reclaim(unit, unit->budget);
-	}
-
-	/* Disable interrupts so that we're not flooded until bottom-half catches up */
-	if (status & UMAC_IRQ_RXDMA_DONE)
-		bcmgenet_irq0_disable(unit, UMAC_IRQ_RXDMA_DONE);
-
-	/* clear interrupts */
+	/* Clear before handling so any new events after this point re-assert cleanly */
 	mmio_write32(status, BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
 
-	// if (bcmgenet_has_mdio_intr(priv) && status & UMAC_IRQ_MDIO_EVENT)
-	// 	wake_up(&priv->wq);
 	KprintfH("[genet] %s: IRQ0 status: 0x%08lX unit: 0x%08lx\n", __func__, (ULONG)status, (ULONG)unit);
 
-	status &= ~UMAC_IRQ_TXDMA_DONE;
+	/* Disable both TX and RX until the bottom-half catches up */
+	if (status & UMAC_IRQ_TXDMA_DONE)
+	{
+		bcmgenet_irq0_disable(unit, UMAC_IRQ_TXDMA_DONE);
+		unit->internalStats.irq0_tx_count++;
+	}
+
+	if (status & UMAC_IRQ_RXDMA_DONE)
+	{
+		bcmgenet_irq0_disable(unit, UMAC_IRQ_RXDMA_DONE);
+		unit->internalStats.irq0_rx_count++;
+	}
+
 	if (status)
 	{
 		unit->internalStats.irq0_count++;

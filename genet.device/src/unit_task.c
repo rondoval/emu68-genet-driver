@@ -223,6 +223,15 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 Kprintf("[genet] %s: PHY link up event\n", __func__);
             }
             
+            /* TX completion processing */
+            if (likely((status & UMAC_IRQ_TXDMA_DONE) && unit->state == STATE_ONLINE))
+            {
+                bcmgenet_tx_reclaim(unit, unit->budget);
+                mmio_write32(UMAC_IRQ_TXDMA_DONE,
+                        BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
+                bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
+            }
+
             /* Receive processing */
             if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {
@@ -259,9 +268,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
             /* Just in case we got stuck */
             if (unit->state == STATE_ONLINE)
-            {
-                bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE);
-            }
+                bcmgenet_irq0_enable(unit, /* UMAC_IRQ_TXDMA_DONE | */ UMAC_IRQ_RXDMA_DONE);
 
             // TODO pool PHY for state, BCM2711 genet has a bug where PHY interrupts don't work properly
 
