@@ -14,6 +14,7 @@
 
 #include <types.h>
 #include <bcm_gpio.h>
+#include <slab.h>
 
 #include <genet/phy.h>
 #include <genet/bcmgenet.h>
@@ -118,8 +119,6 @@ struct bcmgenet_tx_ring
 	u16 tx_cons_index;				  /* last consumer index of each ring*/
 	u8 write_ptr;					  /* Tx ring write pointer SW copy */
 	u16 tx_prod_index;				  /* Tx ring producer index SW copy */
-
-	struct SignalSemaphore tx_ring_sem;
 };
 
 struct bcmgenet_rx_ring
@@ -133,10 +132,9 @@ struct bcmgenet_rx_ring
 
 struct enet_cb
 {
-	struct IOSana2Req *ioReq;
 	APTR descriptor_address;
-	dma_addr_t internal_buffer; /* Used when data needs to be copied from IP stack */
-	dma_addr_t data_buffer;
+	APTR staging_buffer;        /* slab-allocated buffer to free on reclaim, or NULL */
+	dma_addr_t data_buffer;     /* DMA address fed to hardware */
 };
 
 struct internal_stats
@@ -228,13 +226,11 @@ struct GenetUnit
 	/* MAC layer */
 	/* RX */
 	struct bcmgenet_rx_ring rx_ring;
-	u8 *rxbuffer_not_aligned;
 	dma_addr_t rxbuffer;
 
 	/* TX */
 	struct bcmgenet_tx_ring tx_ring;
-	u8 *txbuffer_not_aligned;
-	dma_addr_t txbuffer;
+	struct slab_cache tx_buffer_cache; /* RX_BUF_LENGTH-sized DMA-aligned staging buffers */
 };
 
 /* Unit-control commands submitted from foreign tasks. */

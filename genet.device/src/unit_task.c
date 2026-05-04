@@ -224,6 +224,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
             
             /* TX completion processing */
+/*            
             if (likely((status & UMAC_IRQ_TXDMA_DONE) && unit->state == STATE_ONLINE))
             {
                 bcmgenet_tx_reclaim(unit, unit->budget);
@@ -231,7 +232,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                         BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
                 bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
             }
-
+*/
             /* Receive processing */
             if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {

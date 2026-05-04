@@ -175,7 +175,7 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 		u32 length = mmio_read32(desc_base + DMA_DESC_LENGTH_STATUS);
 		u16 dma_flags = length & 0xffffu;
 		length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
-		u8 *addr = (u8 *)rx_cb->internal_buffer;
+		u8 *addr = (u8 *)rx_cb->data_buffer;
 
 		CachePostDMA(addr, &length, 0);
 		KprintfH("[genet] %s: packet=%08lx length=%lu\n", __func__, addr + RX_BUF_OFFSET, (ULONG)(length - RX_BUF_OFFSET));
@@ -296,7 +296,7 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 		APTR descriptor_address = desc_base + i * DMA_DESC_SIZE;
 
 		ring->rx_control_block[i].descriptor_address = descriptor_address;
-		ring->rx_control_block[i].internal_buffer = buffer;
+		ring->rx_control_block[i].data_buffer = buffer;
 
 		mmio_write32((dma_addr_t)buffer, descriptor_address + DMA_DESC_ADDRESS_LO);
 		mmio_write32(len_stat, descriptor_address + DMA_DESC_LENGTH_STATUS);
@@ -343,8 +343,6 @@ static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 	KprintfH("[genet] %s: Initializing TX ring\n", __func__);
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
-	InitSemaphore(&ring->tx_ring_sem);
-
 	/* Initialize common TX ring structures */
 	APTR desc_base = unit->genetBase + GENET_TX_OFF;
 	ring->tx_control_block = AllocPooled(unit->memoryPool, TX_DESCS * sizeof(struct enet_cb));
@@ -357,8 +355,10 @@ static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 	for (u32 i = 0; i < TX_DESCS; i++)
 	{
 		ring->tx_control_block[i].descriptor_address = desc_base + i * DMA_DESC_SIZE;
-		ring->tx_control_block[i].internal_buffer = unit->txbuffer + (dma_addr_t)(i * RX_BUF_LENGTH);
 	}
+
+	slab_cache_init(&unit->tx_buffer_cache, unit->memoryPool,
+	                RX_BUF_LENGTH, DMA_ALIGN_MIN, TX_DESCS);
 
 	/* Cannot init TDMA_CONS_INDEX to 0, so align TDMA_PROD_INDEX on it instead */
 	ring->tx_cons_index = mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK;
@@ -558,25 +558,13 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	KprintfH("[genet] %s: Starting GENET\n", __func__);
 	u32 ret;
 
-	unit->rxbuffer_not_aligned = AllocMem(RX_TOTAL_BUFSIZE + DMA_ALIGN_MIN, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
-	if (!unit->rxbuffer_not_aligned)
+	unit->rxbuffer = (dma_addr_t)dma_zalloc(unit->memoryPool, DMA_ALIGN_MIN, RX_TOTAL_BUFSIZE);
+	if (!unit->rxbuffer)
 	{
 		Kprintf("[genet] %s: Failed to allocate RX buffer\n", __func__);
 		ret = S2ERR_NO_RESOURCES;
 		goto rx_buf_allocated;
 	}
-
-	unit->txbuffer_not_aligned = AllocMem(TX_TOTAL_BUFSIZE + DMA_ALIGN_MIN, MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
-	if (!unit->txbuffer_not_aligned)
-	{
-		Kprintf("[genet] %s: Failed to allocate TX buffer\n", __func__);
-		ret = S2ERR_NO_RESOURCES;
-		goto tx_buf_allocated;
-	}
-
-	/* These buffers are used for DMA transfers where buffers from IP stack cannot be used */
-	unit->rxbuffer = roundup((dma_addr_t)unit->rxbuffer_not_aligned, DMA_ALIGN_MIN);
-	unit->txbuffer = roundup((dma_addr_t)unit->txbuffer_not_aligned, DMA_ALIGN_MIN);
 
 	bcmgenet_umac_reset(unit);
 
@@ -627,9 +615,17 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 		goto err_irq;
 	}
 
-	/* Monitor link interrupts now */
+	/* Monitor link interrupts now.
+	 *
+	 * TXDMA_DONE is intentionally NOT enabled: the SANA-II stack 
+	 * is too slow to keep up with the DMA, and we would get an interrupt for every packet, which
+	 * would cause excessive CPU overhead.
+	 * Coalescing cannot batch anything and a per-completion interrupt is
+	 * pure overhead. We reclaim TX descriptors at the top of bcmgenet_xmit
+	 * instead.
+	 */
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R);
-	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE | UMAC_IRQ_TXDMA_DONE);
+	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE /* | UMAC_IRQ_TXDMA_DONE */);
 	KprintfH("[genet] %s: Enabled link and RX DMA interrupts (TX reclaimed in xmit/watchdog)\n", __func__);
 
 	/* Enable Rx/Tx */
@@ -642,16 +638,11 @@ err_irq:
 	RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
 
 init_dma:
-	unit->rxbuffer = 0;
-	unit->txbuffer = 0;
-
-tx_buf_allocated:
-	FreeMem(unit->txbuffer_not_aligned, TX_TOTAL_BUFSIZE + DMA_ALIGN_MIN);
-	unit->txbuffer_not_aligned = NULL;
+	slab_cache_destroy(&unit->tx_buffer_cache);
 
 rx_buf_allocated:
-	FreeMem(unit->rxbuffer_not_aligned, RX_TOTAL_BUFSIZE + DMA_ALIGN_MIN);
-	unit->rxbuffer_not_aligned = NULL;
+	dma_free(unit->memoryPool, (APTR)unit->rxbuffer);
+	unit->rxbuffer = 0;
 
 	return ret;
 }
@@ -753,18 +744,12 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 	// /* Really kill the PHY state machine and disconnect from it */
 	// phy_disconnect(dev->phydev);
 
-	unit->rxbuffer = 0;
-	if (unit->rxbuffer_not_aligned)
+	if (unit->rxbuffer)
 	{
-		FreeMem(unit->rxbuffer_not_aligned, RX_TOTAL_BUFSIZE + DMA_ALIGN_MIN);
-		unit->rxbuffer_not_aligned = NULL;
+		dma_free(unit->memoryPool, (APTR)unit->rxbuffer);
+		unit->rxbuffer = 0;
 	}
-	unit->txbuffer = 0;
-	if (unit->txbuffer_not_aligned)
-	{
-		FreeMem(unit->txbuffer_not_aligned, TX_TOTAL_BUFSIZE + DMA_ALIGN_MIN);
-		unit->txbuffer_not_aligned = NULL;
-	}
+	slab_cache_destroy(&unit->tx_buffer_cache);
 
 	if (unit->phydev)
 	{

@@ -24,6 +24,6 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget);
 
 /* TX functions */
 u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit);
-u16 bcmgenet_tx_reclaim(struct GenetUnit *unit, u16 budget);
+void bcmgenet_tx_reclaim(struct GenetUnit *unit, u16 budget);
 
 #endif
