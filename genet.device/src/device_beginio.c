@@ -40,9 +40,7 @@ static inline void Do_CMD_WRITE(struct IOSana2Req *io)
     }
 
     if (!(io->ios2_Req.io_Flags & IOF_QUICK))
-    {
         ReplyMsg((struct Message *)io);
-    }
 }
 
 void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6") __attribute__((unused)))
@@ -57,6 +55,39 @@ void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6")
         return;
     }
 
+    /* CMD_READ / S2_READORPHAN go through the per-opener SPSC ring.
+     * Single producer (this beginIO), single consumer (device task drain).
+     */
+    if (cmd == CMD_READ || cmd == S2_READORPHAN)
+    {
+        struct Opener *opener = (struct Opener *)io->ios2_BufferManagement;
+
+        /* Offline check is racy with state changes. */
+        if (unlikely(unit->state != STATE_ONLINE))
+        {
+            io->ios2_WireError = S2WERR_UNIT_OFFLINE;
+            io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
+            if (!(io->ios2_Req.io_Flags & IOF_QUICK))
+                ReplyMsg((struct Message *)io);
+            return;
+        }
+
+        ULONG p = opener->readRing.producer;
+        ULONG c = opener->readRing.consumer;
+        if (likely((p - c) <= OPENER_READ_RING_MASK))
+        {
+            io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
+            opener->readRing.entries[p & OPENER_READ_RING_MASK] = io;
+            asm volatile("nop");
+            opener->readRing.producer = p + 1u;
+            KprintfH("[genet] %s: SPSC push cmd=%04lx\n", __func__, (ULONG)cmd);
+            return;
+        }
+
+        /* Ring full — fall back to MsgPort. The task's Do_CMD_READ /
+         * Do_S2_READORPHAN drain the ring before AddTail to preserve FIFO. */
+        KprintfH("[genet] %s: SPSC ring full, falling back to MsgPort\n", __func__);
+    }
 
     KprintfH("[genet] %s: Queuing %04lx\n", __func__, (ULONG)cmd);
     io->ios2_Req.io_Error = S2ERR_NO_ERROR;

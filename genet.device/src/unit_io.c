@@ -100,6 +100,41 @@ static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
     }
 }
 
+/* Drain the per-opener SPSC ring into per-type MinLists.
+ * Consumer side — runs in the device task only.
+ * Aborted entries (marked by abortIO under Forbid) are replied here.
+ * Sets ln_Type = NT_MESSAGE on each entry so abortIO's MinList detection
+ * heuristic (ln_Type == NT_MESSAGE && ln_Pred != NULL) treats it the same
+ * as an IO that came in through PutMsg. */
+void DrainReadRing(struct Opener *opener)
+{
+    ULONG p = opener->readRing.producer;
+    asm volatile("nop");
+    ULONG c = opener->readRing.consumer;
+    while (c != p)
+    {
+        struct IOSana2Req *io = opener->readRing.entries[c & OPENER_READ_RING_MASK];
+        c++;
+        if (unlikely(io->ios2_Req.io_Error == IOERR_ABORTED))
+        {
+            io->ios2_WireError = S2WERR_GENERIC_ERROR;
+            ReplyMsg((struct Message *)io);
+            continue;
+        }
+        io->ios2_Req.io_Message.mn_Node.ln_Type = NT_MESSAGE;
+        if (io->ios2_Req.io_Command == S2_READORPHAN)
+        {
+            AddTailMinList(&opener->orphanQueue, (struct MinNode *)io);
+        }
+        else
+        {
+            AddTailMinList(GetPacketTypeQueue(opener, (u16)io->ios2_PacketType),
+                           (struct MinNode *)io);
+        }
+    }
+    opener->readRing.consumer = c;
+}
+
 static inline BOOL MulticastFilter(struct GenetUnit *unit, u64 destAddr)
 {
     // TODO this looks slow
@@ -140,6 +175,8 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
     BOOL activity = FALSE;
     KprintfH("[genet] %s: Received packet of length %lu with type 0x%lx\n", __func__, (ULONG)packetLength, (ULONG)packetType);
 
+    /* MinLists are pre-drained by UnitTask before bcmgenet_gmac_eth_rx. */
+
     /* Fast path for common packet types */
     if (likely(packetType == 0x0800 || packetType == 0x0806))
     {
@@ -147,9 +184,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
         {
             struct Opener *opener = (struct Opener *)node;
             struct MinList *queue = GetPacketTypeQueue(opener, packetType);
-            ObtainSemaphore(&opener->openerSemaphore);
             struct IOSana2Req *io = (struct IOSana2Req *)RemHeadMinList(queue);
-            ReleaseSemaphore(&opener->openerSemaphore);
 
             if (likely(io != NULL))
             {
@@ -159,7 +194,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
                 /* Continue to deliver to other openers */
             }
         }
-        if(orphan)
+        if (orphan)
         {
             unit->internalStats.rx_arp_ip_dropped++;
         }
@@ -170,7 +205,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
         for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
         {
             struct Opener *opener = (struct Opener *)node;
-            ObtainSemaphore(&opener->openerSemaphore);
             /* Go through all IO read requests pending*/
             for (struct MinNode *ioNode = opener->readQueue.mlh_Head; ioNode->mln_Succ; ioNode = ioNode->mln_Succ)
             {
@@ -190,7 +224,6 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
                     break;
                 }
             }
-            ReleaseSemaphore(&opener->openerSemaphore);
         }
     }
 

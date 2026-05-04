@@ -419,6 +419,8 @@ static u32 Do_CMD_FLUSH(struct IOSana2Req *io)
     {
         struct Opener *opener = (struct Opener *)node;
 
+        /* Drain the SPSC ring first — entries land in the MinLists below. */
+        DrainReadRing(opener);
 
         while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue)))
         {
@@ -481,6 +483,9 @@ static u32 Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
     return COMMAND_PROCESSED;
 }
 
+/* MsgPort fallback path for CMD_READ when the SPSC ring was full in beginIO.
+ * Drain the ring first so this fallback IO ends up after the entries that
+ * beginIO already pushed — preserves FIFO ordering. */
 static inline u32 Do_CMD_READ(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
@@ -497,14 +502,9 @@ static inline u32 Do_CMD_READ(struct IOSana2Req *io)
     struct Opener *opener = io->ios2_BufferManagement;
     u16 packetType = (u16)io->ios2_PacketType;
 
-    /* Get the appropriate queue for this packet type */
-    struct MinList *queue = GetPacketTypeQueue(opener, packetType);
-
-    /* Queue the request */
+    DrainReadRing(opener);
     io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
-    ObtainSemaphore(&opener->openerSemaphore);
-    AddTailMinList(queue, (struct MinNode *)io);
-    ReleaseSemaphore(&opener->openerSemaphore);
+    AddTailMinList(GetPacketTypeQueue(opener, packetType), (struct MinNode *)io);
 
     KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%lx\n", __func__, (ULONG)packetType);
     return COMMAND_SCHEDULED;
@@ -524,7 +524,8 @@ static inline u32 Do_S2_READORPHAN(struct IOSana2Req *io)
     }
 
     struct Opener *opener = io->ios2_BufferManagement;
-    // io->ios2_Req.io_Flags &= ~IOF_QUICK;
+    DrainReadRing(opener);
+    io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
     AddTailMinList(&opener->orphanQueue, (struct MinNode *)io);
     return COMMAND_SCHEDULED;
 }

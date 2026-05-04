@@ -10,7 +10,6 @@
 #include <exec/devices.h>
 #include <exec/interrupts.h>
 #include <exec/types.h>
-#include <exec/semaphores.h>
 #include <devices/sana2.h>
 
 #include <types.h>
@@ -31,6 +30,13 @@
 
 #define COMMAND_PROCESSED 1u
 #define COMMAND_SCHEDULED 0u
+
+/* Per-opener SPSC ring for CMD_READ / S2_READORPHAN.
+ * Producer: beginIO (user task). Consumer: device task (DrainReadRing).
+ * Single-core m68k assumption: a compiler memory barrier is sufficient.
+ * Do NOT port to SMP without revisiting the memory model. */
+#define OPENER_READ_RING_N 512u /* must be power of two */
+#define OPENER_READ_RING_MASK (OPENER_READ_RING_N - 1u)
 
 /* Lazy-reclaim watermark: only read TDMA_CONS_INDEX when free slots fall
  * below this. Must exceed max descriptors per packet (2 for DMA path). */
@@ -67,13 +73,21 @@ struct Opener
 	 * DrainReadRing fans entries from the SPSC ring. No locking. */
 	struct MinList readQueue;
 	struct MinList orphanQueue;
-	struct MinList eventQueue;
-
-	/* Optimized queues for common packet types */
 	struct MinList ipv4Queue; /* For 0x0800 */
 	struct MinList arpQueue;  /* For 0x0806 */
 
-	struct SignalSemaphore openerSemaphore;
+	/* Event waiters are owned by the unit task. Foreign callers must route
+	 * mutations through the unit control port. */
+	struct MinList eventQueue;
+
+	/* SPSC ring for CMD_READ / S2_READORPHAN.
+	 * Producer = beginIO (user task), consumer = device task. */
+	struct
+	{
+		volatile ULONG producer; /* written only by beginIO */
+		volatile ULONG consumer; /* written only by device task */
+		struct IOSana2Req **entries;
+	} readRing;
 
 	/* for CMD_READ,
 	 * BOOL PacketFilter(struct Hook* packetFilter asm("a0"), struct IOSana2Req* asm("a2"), APTR asm("a1"));
@@ -275,6 +289,10 @@ void UnitSubmitControlAsync(struct GenetUnit *unit, UWORD command, union UnitCon
 
 BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_flags);
 void ProcessCommand(struct IOSana2Req *io);
+
+/* Drain the per-opener SPSC read ring into the per-type MinLists.
+ * Called by the device task only. */
+void DrainReadRing(struct Opener *opener);
 
 /* Inline function for fast packet type queue lookup */
 static inline struct MinList *GetPacketTypeQueue(struct Opener *opener, u16 packetType)

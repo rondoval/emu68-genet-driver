@@ -219,7 +219,14 @@ static struct Opener *createOpener(struct TagItem *tags, struct Library *Utility
     _NewMinList(&opener->ipv4Queue);
     _NewMinList(&opener->arpQueue);
 
-    InitSemaphore(&opener->openerSemaphore);
+    opener->readRing.entries = AllocMem(sizeof(struct IOSana2Req *) * OPENER_READ_RING_N,
+                                        MEMF_PUBLIC | MEMF_CLEAR);
+    if (opener->readRing.entries == NULL)
+    {
+        Kprintf("[genet] %s: Failed to allocate SPSC read ring\n", __func__);
+        FreeMem(opener, sizeof(struct Opener));
+        return NULL;
+    }
 
     return opener;
 }
@@ -347,6 +354,11 @@ ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6
     if (opener != NULL)
     {
         KprintfH("[genet] %s: Freeing opener resources\n", __func__);
+        if (opener->readRing.entries != NULL)
+        {
+            FreeMem(opener->readRing.entries,
+                    sizeof(struct IOSana2Req *) * OPENER_READ_RING_N);
+        }
         FreeMem(opener, sizeof(struct Opener));
     }
 

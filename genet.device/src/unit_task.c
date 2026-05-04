@@ -236,6 +236,8 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {
                 KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
+                for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
+                    DrainReadRing((struct Opener *)node);
                 budget = unit->budget;
                 s32 res = bcmgenet_gmac_eth_rx(unit, budget);
                 if (res > 0)
