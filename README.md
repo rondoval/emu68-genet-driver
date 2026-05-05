@@ -1,18 +1,30 @@
 # emu68-genet
 
-**emu68-genet** is an Amiga OS driver for the Broadcom GENET v5 Ethernet controller found on the Raspberry PI 4B, designed for use with the Pistorm32-lite and Emu68 project.
-The driver is based on [Das U-Boot](https://source.denx.de/u-boot/u-boot) bcmgenet driver. It also derives heavily from the [wifipi driver](https://github.com/michalsc/Emu68-tools/tree/master/network/wifipi.device) from Michal Schulz.
+**emu68-genet** is an Amiga OS driver for the Broadcom GENET v5 Ethernet controller found on the Raspberry PI 4B and CM4, designed for use with the Pistorm32-lite and Emu68 project.
+The hardware-facing GENET and PHY implementation is based primarily on [Das U-Boot](https://source.denx.de/u-boot/u-boot) and Linux GENET code. The Amiga SANA-II device scaffolding resembles both generic AmigaOS SANA-II drivers and, in some files, Michal Schulz's [WiFiPi.device](https://github.com/michalsc/WiFiPi.device) more specifically.
 
 **Beware:**
-- The upcoming changes in Emu68 1.1 are likely not compatible with the interrupts implementation in this driver, as the new Arm side handler reads IAR and writes EORI registers.
-- v2.0 **requires** gic400.library and Emu68 build with PR#306 - see below for details
-- The available genet.prefs settings list has changed due to interrupts use
+- 3.x requires `gic400.library` at runtime; interrupt delivery depends on it.
+- The driver requires Emu68 exposing the correct `/scb` memory mapping for the GENET controller, i.e. version 1.1 alpha.1 or newer.
+- Runtime tuning is driven by `ENV:genet.prefs`; unknown keys are ignored and missing keys fall back to built-in defaults.
 
 ## Known bugs
 
-- Amiga will get stuck at boot if you soft reboot while the driver is online. This is likely due to the interrupts remaining enabled.
+- Amiga may get stuck at boot if you soft reboot while the driver is online
 
 ## What's new
+3.8:
+- TX and RX memory handling reworked again: the TX path now uses the common slab allocator, RX ring buffers use `dma_zalloc()`, and TX completion handling no longer depends on TX IRQs.
+- Request flow is more robust under load: `CMD_READ` uses an SPSC ring, `CMD_WRITE` is handled only in user context, and TX reclaim runs in the bottom half.
+- Added `S2_SAMPLE_THROUGHPUT` support and a small `genet-stats` viewer tool.
+- Added richer throughput and internal driver counters.
+- Added hardware MIB counter support.
+- Added `S2_GETSPECIALSTATS` and `S2_GETEXTENDEDGLOBALSTATS` support.
+- Exposed GENET-specific counters such as IRQ activity, RX/TX error buckets, and MAC/MIB statistics.
+- Aligned the driver to the current `emu68-common` support library.
+- Switched to `DT_GetInterrupt()` / improved IRQ decoding and cleaned up several type-safety issues.
+- General internal cleanup across PHY, unit, TX/RX, and command handling paths.
+
 2.2:
 - Fix an issue where the driver will attempt to process an S2_ONLINE request while unconfigured and crash.
 
@@ -32,21 +44,25 @@ The driver is based on [Das U-Boot](https://source.denx.de/u-boot/u-boot) bcmgen
 - Device tree parsing
 - GENET v5 support, with rgmii-rxid PHY
 - Interrupt handling via GIC-400
+- Extended global statistics (`S2_GETEXTENDEDGLOBALSTATS`)
+- Special statistics backed by GENET hardware MIB counters (`S2_GETSPECIALSTATS`)
+- Throughput sampling (`S2_SAMPLE_THROUGHPUT`)
+- Promiscuous mode support
+- Multicast address and range programming
+- `genet-stats` monitoring tool
+- The drivers is ROM-able
 
 ## Unimplemented / Planned Features
 
-- Promiscuous mode (implemented, not tested)
-- Multicast support (implemented, not tested)
 - PHY link state updates at runtime
-- Hardware sourced statistics
-- Packet type statistics
+- Better shutdown / reset handling
 
 ## Requirements
 
 - Kickstart 3.0 (V39) or newer
-- Pistorm32-lite with Raspberry Pi 4B
-- Emu68, version 1.0.6+PR#306 (https://github.com/rondoval/Emu68/releases/tag/v1.0.6-pcie)
-- gic400.library (https://github.com/rondoval/emu68-gic400-library/releases/tag/v1.0)
+- Pistorm32-lite with Raspberry Pi 4B or CM4
+- Emu68 build with correct `/scb` memory mappings for the GENET controller (1.1 alpha.1 or newer)
+- `gic400.library` runtime dependency
 - A network stack
 
 Tested using:
@@ -64,7 +80,7 @@ unit=0
 configure=dhcp
 debug=no
 iprequests=512
-writerequests=2048
+writerequests=64
 arprequests=8
 requiresinitdelay=no
 copymode=fast
@@ -74,17 +90,36 @@ copymode=fast
 
 Use Bebbo's GCC cross compiler and cmake.
 
+This project uses CMake packages from these companion projects:
+
+- `devicetree.resource`
+- `emu68-common`
+- `emu68-gic400-library`
+
+The simplest setup is to install all of them into the same prefix and then point `CMAKE_PREFIX_PATH` at that one location.
+
 ```sh
-mkdir build install
+mkdir build
 cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain.cmake
+cmake .. \
+	-DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain.cmake \
+	-DCMAKE_PREFIX_PATH=/path/to/emu68-driver-stack \
+	-DCMAKE_INSTALL_PREFIX=/path/to/emu68-driver-stack
 make
 make install
 ```
 
+If you keep dependencies in separate install trees instead, set `CMAKE_PREFIX_PATH` to all of them, separated with semicolons.
+
+```sh
+cmake .. \
+	-DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain.cmake \
+	-DCMAKE_PREFIX_PATH="/path/to/emu68-gic400-library/install;/path/to/emu68-common/install;/path/to/devicetree.resource/install"
+```
+
 ## Runtime configuration (genet.prefs)
 
-At startup the driver looks for `ENV:genet.prefs` (plain text). Each line is a `KEY=VALUE` pair. Unknown keys are ignored. Keys are case-insensitive. If the file is missing, built‑in defaults are used.
+At startup the driver looks for `ENV:genet.prefs` (plain text). Each line is a `KEY=VALUE` pair. Unknown keys are ignored. Keys are case-insensitive. If the file or specific lines are missing, built‑in defaults are used.
 
 Default values (current):
 
@@ -93,11 +128,11 @@ UNIT_TASK_PRIORITY=5
 UNIT_STACK_SIZE=65536
 USE_DMA=0
 USE_MIAMI_WORKAROUND=0
-BUDGET=32
+BUDGET=64
 PERIODIC_TASK_MS=200
 RX_COALESCE_USECS=500
-RX_COALESCE_FRAMES=10
-TX_COALESCE_FRAMES=10
+RX_COALESCE_FRAMES=64
+TX_COALESCE_FRAMES=32
 ```
 
 Setting descriptions:
@@ -110,7 +145,13 @@ Setting descriptions:
 - `PERIODIC_TASK_MS`  Interval in milliseconds for the housekeeping timer (PHY polling, interrupt watchdog).
 - `RX_COALESCE_USECS`  Target latency in microseconds before the hardware raises an RX interrupt if the frame threshold is not met.
 - `RX_COALESCE_FRAMES`  Number of received frames that trigger an RX interrupt when reached.
-- `TX_COALESCE_FRAMES`  Number of transmitted frames that trigger a TX interrupt when reached.
+- `TX_COALESCE_FRAMES`  Number of transmitted frames that trigger a TX interrupt when reached (not used in 3.x).
 
 You can omit any line to keep its default.
 In order for the changes to be applied, the device must be closed (e.g. shutdown your IP stack).
+
+## Utility: genet-stats
+
+`genet-stats` is a simple Intuition/ListBrowser-based statistics viewer. It opens `genet.device`, samples extended stats, special stats, and throughput once per second, and presents them in a live-updating list.
+
+It is intended mainly as an example of how to use the driver's API. I'm not planning to fruther develop the tool - contributions are welcome.

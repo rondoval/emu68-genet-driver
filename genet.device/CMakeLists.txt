@@ -1,12 +1,31 @@
 cmake_minimum_required(VERSION 3.14.0)
 project(genet.device VERSION ${CMAKE_PROJECT_VERSION})
 
-get_verstring(VERSTRING)
+# Toolchain and compile options
+add_link_options(
+    -ffreestanding
+    -nostdlib
+    -nostartfiles
+    -s
+    -Wl,-e,_doNotExecute
+)
 
-add_link_options(-ffreestanding -nostdlib -nostartfiles -s -Wl,-e,_doNotExecute)
-add_compile_options(-Os -m68040 -Wall -Wextra -DDEBUG -fomit-frame-pointer)
-add_compile_definitions(PRIVATE DEVICE_IDSTRING="${VERSTRING}" DEVICE_VERSION=${PROJECT_VERSION_MAJOR} DEVICE_REVISION=${PROJECT_VERSION_MINOR} DEVICE_NAME="${PROJECT_NAME}")
+add_compile_options(
+    -O3
+    -m68040
+    -Wall
+    -Wextra
+    -Wconversion
+    -Wsign-conversion
+    -Wshadow
+    -Wmissing-prototypes
+    -Wstrict-prototypes
+    -DDEBUG
+    -fomit-frame-pointer
+    -fno-tree-loop-distribute-patterns
+)
 
+# Sources
 add_executable(genet.device
     src/device.c
     src/device_beginio.c
@@ -20,15 +39,45 @@ add_executable(genet.device
     src/bcmgenet.c
     src/bcmgenet-tx.c
     src/bcmgenet-irq.c
+    src/bcmgenet_mib.c
     src/phy.c
     src/phy_interface.c
     src/device_end.c
 )
 
-target_include_directories(genet.device PRIVATE
-    include
-    "${CMAKE_SOURCE_DIR}/gic400.library/include"
+target_compile_definitions(genet.device
+    PRIVATE
+        DEVICE_IDSTRING="${VERSTRING}"
+        DEVICE_VERSION=${PROJECT_VERSION_MAJOR}
+        DEVICE_REVISION=${PROJECT_VERSION_MINOR}
+        DEVICE_NAME="${PROJECT_NAME}"
 )
-target_link_libraries(genet.device common runtime-config)
 
-install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/genet.device DESTINATION .)
+# Add shared include path for SANA-II headers
+target_include_directories(genet.device
+    PRIVATE
+	    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+
+option(GENET_QUICK_READ  "Enable inline quick path for CMD_READ" ON)
+
+if(GENET_QUICK_READ)
+    target_compile_definitions(genet.device PRIVATE GENET_QUICK_READ)
+endif()
+
+target_include_directories(genet.device
+    PRIVATE
+        include
+)
+
+target_link_libraries(genet.device
+    PRIVATE
+        runtime-config
+        Emu68Common::common
+        GIC400::gic400_headers
+)
+
+install(
+    PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/genet.device
+    DESTINATION DEVS/Networks
+)

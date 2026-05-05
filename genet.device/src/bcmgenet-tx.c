@@ -7,10 +7,13 @@
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
 #else
+#define __NOLIBBASE__
+#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
 #include <proto/exec.h>
 #endif
 
-#include <compat.h>
+#include <iomem.h>
+#include <types.h>
 #include <debug.h>
 #include <device.h>
 #include <runtime_config.h>
@@ -20,10 +23,37 @@
 #include <genet/bcmgenet-irq.h>
 
 /* Combined address + length/status setter */
-static inline void dmadesc_set(APTR descriptor_address, APTR addr, ULONG val)
+static inline void dmadesc_set(APTR descriptor_address, dma_addr_t addr, u32 val)
 {
-	writel((ULONG)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
-	writel(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
+	mmio_write32((u32)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
+	mmio_write32(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
+}
+
+/* Slab cache wrappers — Forbid is brief and recursion-safe, so callers may
+ * be either inside or outside the ring lock. */
+static inline APTR tx_staging_alloc(struct GenetUnit *unit)
+{
+	Forbid();
+	APTR p = slab_alloc(&unit->tx_buffer_cache);
+	Permit();
+	return p;
+}
+
+static inline void tx_staging_free(struct GenetUnit *unit, APTR p)
+{
+	Forbid();
+	slab_free(&unit->tx_buffer_cache, p);
+	Permit();
+}
+
+static inline u16 tx_free_bds(const struct bcmgenet_tx_ring *ring)
+{
+	return (u16)(TX_DESCS - ((u32)(ring->tx_prod_index - ring->tx_cons_index) & DMA_P_INDEX_MASK));
+}
+
+static inline void tx_advance_prod(struct bcmgenet_tx_ring *ring)
+{
+	ring->tx_prod_index = (u16)(((u32)ring->tx_prod_index + 1U) & DMA_P_INDEX_MASK);
 }
 
 static inline struct enet_cb *bcmgenet_get_txcb(struct bcmgenet_tx_ring *ring)
@@ -33,188 +63,258 @@ static inline struct enet_cb *bcmgenet_get_txcb(struct bcmgenet_tx_ring *ring)
 	return tx_cb_ptr;
 }
 
-/* Simple helper to free a transmit control block's resources
- * Returns an skb when the last transmit control block associated with the
- * skb is freed.  The skb should be freed by the caller if necessary.
- */
-static inline struct IOSana2Req *bcmgenet_free_tx_cb(struct enet_cb *cb)
+/* Build the 14-byte Ethernet II header into `buf`. */
+static inline void build_eth_header(u8 *buf, const u8 *dst_mac,
+									const u8 *src_mac, u16 ethertype)
 {
-	struct IOSana2Req *ioReq = cb->ioReq;
-
-	if (ioReq)
-	{
-		cb->ioReq = NULL;
-		return ioReq;
-	}
-	return NULL;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
+	*(ULONG *)buf = *(const ULONG *)dst_mac;
+	*(UWORD *)(buf + 4) = *(const UWORD *)&dst_mac[4];
+	*(ULONG *)(buf + 6) = *(const ULONG *)src_mac;
+	*(UWORD *)(buf + 10) = *(const UWORD *)&src_mac[4];
+	*(UWORD *)(buf + 12) = ethertype;
+#pragma GCC diagnostic pop
 }
 
-/* Unlocked version of the reclaim routine */
-unsigned int bcmgenet_tx_reclaim(struct GenetUnit *unit, unsigned int budget)
+/* Fill a CB and program its descriptor */
+static inline void tx_cb_publish(struct enet_cb *cb, APTR staging, dma_addr_t dma, u32 len_stat)
 {
-	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
+	cb->staging_buffer = staging;
+	cb->data_buffer = dma;
+	dmadesc_set(cb->descriptor_address, dma, len_stat);
+}
 
+void bcmgenet_tx_reclaim(struct GenetUnit *unit, u16 budget)
+{
 	if (budget == 0U)
-		return 0;
+		return;
+
+	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
 	/* Compute how many buffers are transmitted since last xmit call */
-	UWORD tx_cons_index = readl((ULONG)unit->genetBase + TDMA_CONS_INDEX) & DMA_C_INDEX_MASK;
-	UWORD txbds_ready = (tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK;
+	u16 tx_cons_index = mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK;
+	u16 txbds_ready = (u16)((u32)(tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK);
+	txbds_ready = (txbds_ready > budget) ? budget : txbds_ready;
 
-	/* Reclaim transmitted buffers */
-	UWORD txbds_processed = 0;
-	ULONG bytes_compl = 0;
-	unsigned int pkts_compl = 0;
-	while (txbds_processed < txbds_ready && pkts_compl < budget)
+	u16 txbds_processed = 0;
+	while (txbds_processed < txbds_ready)
 	{
-		struct IOSana2Req *io = bcmgenet_free_tx_cb(&ring->tx_control_block[ring->clean_ptr]);
-		++txbds_processed;
-		++ring->clean_ptr;
-
-		if (io)
+		struct enet_cb *cb = &ring->tx_control_block[ring->clean_ptr];
+		if (cb->staging_buffer)
 		{
-			pkts_compl++;
-			bytes_compl += io->ios2_DataLength;
-			KprintfH("[genet] %s: Reclaimed tx buffer 0x%lx, length %ld\n", __func__, io, io->ios2_DataLength);
-			ReplyMsg((struct Message *)io);
+			slab_free(&unit->tx_buffer_cache, cb->staging_buffer);
+			cb->staging_buffer = NULL;
 		}
+		++ring->clean_ptr;
+		++txbds_processed;
 	}
 
-	ring->tx_cons_index = (ring->tx_cons_index + txbds_processed) & DMA_C_INDEX_MASK;
-
-	unit->internalStats.tx_packets += pkts_compl;
-	unit->internalStats.tx_bytes += bytes_compl;
-
-	return pkts_compl;
+	ring->tx_cons_index = (u16)((u32)(ring->tx_cons_index + txbds_processed) & DMA_C_INDEX_MASK);
 }
 
-int bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
+u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: unit %ld, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
+	KprintfH("[genet] %s: unit %lu, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
+
 	struct Opener *opener = io->ios2_BufferManagement;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
-	ObtainSemaphore(&ring->tx_ring_sem);
-
-	KprintfH("[genet] %s: pre: tx_prod_index %ld, write_ptr %ld\n", __func__, ring->tx_prod_index, ring->write_ptr);
-
-	UWORD free_bds = TX_DESCS - ((ring->tx_prod_index - ring->tx_cons_index) & DMA_P_INDEX_MASK);
-	UBYTE bds_required = (io->ios2_Req.io_Flags & SANA2IOF_RAW) ? 1 : 2;
-	if (unlikely(free_bds <= bds_required))
-	{
-		KprintfH("[genet] %s: Not enough free BDs\n", __func__);
-		goto ret_error;
-	}
+	BOOL is_raw = (io->ios2_Req.io_Flags & SANA2IOF_RAW) != 0;
 
 	if (unlikely(io->ios2_DataLength == 0))
 	{
 		KprintfH("[genet] %s: No data to send\n", __func__);
-		goto ret_error;
+		goto err_no_buf;
 	}
 
-	if (likely((io->ios2_Req.io_Flags & SANA2IOF_RAW) == 0))
+	/*
+	 * Phase 1 — outside the ring lock: decide DMA vs. copy, slab-allocate
+	 * staging, build header, run user CopyFromBuff, prime the DMA cache.
+	 * This keeps the up-to-1500-byte memcpy and the cache flush out of the
+	 * critical section.
+	 */
+	APTR hdr_staging = NULL, body_staging = NULL;
+	dma_addr_t hdr_dma = 0, body_dma = 0;
+	u32 hdr_len = 0, body_len = 0;
+	u8 bds_required;
+	BOOL is_dma_path = FALSE;
+
+	if (likely(!is_raw))
 	{
-		KprintfH("[genet] %s: adding ethernet header\n", __func__);
-
-		struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(ring);
-		UBYTE *ptr = (UBYTE *)tx_cb_ptr->internal_buffer;
-		tx_cb_ptr->data_buffer = NULL;
-		tx_cb_ptr->ioReq = NULL;
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-		// Copy destination MAC address (6 bytes)
-		*(ULONG *)&ptr[0] = *(ULONG *)&io->ios2_DstAddr[0];
-		*(UWORD *)&ptr[4] = *(UWORD *)&io->ios2_DstAddr[4];
-
-		// Copy source MAC address (6 bytes)
-		*(ULONG *)&ptr[6] = *(ULONG *)&unit->currentMacAddress[0];
-		*(UWORD *)&ptr[10] = *(UWORD *)&unit->currentMacAddress[4];
-#pragma GCC diagnostic pop
-
-		*(UWORD *)&ptr[12] = io->ios2_PacketType;
-
-		ULONG len_stat = (ETH_HLEN << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT);
-		/* Note: if we ever change from DMA_TX_APPEND_CRC below we
-		 * will need to restore software padding of "runt" packets
-		 */
-		len_stat |= DMA_TX_APPEND_CRC;
-		len_stat |= DMA_SOP;
-
-		dmadesc_set(tx_cb_ptr->descriptor_address, tx_cb_ptr->internal_buffer, len_stat);
-
-		ULONG len = ETH_HLEN;
-		CachePreDMA(tx_cb_ptr->internal_buffer, &len, DMA_ReadFromRAM);
-
-		/* Advance our write pointer */
-		ring->tx_prod_index++;
-		ring->tx_prod_index &= DMA_P_INDEX_MASK;
-		KprintfH("[genet] %s: ETH header sent type: 0x%lx dst addr: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__, io->ios2_PacketType,
-				 io->ios2_DstAddr[0], io->ios2_DstAddr[1], io->ios2_DstAddr[2],
-				 io->ios2_DstAddr[3], io->ios2_DstAddr[4], io->ios2_DstAddr[5]);
-	}
-
-	// Then the body from upstream
-	struct enet_cb *tx_cb_ptr = bcmgenet_get_txcb(ring);
-	tx_cb_ptr->ioReq = io;
-	/* We'll use the ln_Pred pointer to mark it is on the TX ring now and can't be aborted */
-	io->ios2_Req.io_Message.mn_Node.ln_Pred = NULL;
-
-	if (unlikely(opener->DMACopyFromBuff) && (tx_cb_ptr->data_buffer = (APTR)opener->DMACopyFromBuff(io->ios2_Data)) != NULL)
-	{
-		if (unlikely(tx_cb_ptr->data_buffer <= (APTR)0x1FFFFF))
+		if (unlikely(opener->DMACopyFromBuff))
 		{
-			KprintfH("[genet] %s: Cannot use buffers in CHIP memory, falling back to copying.\n", __func__);
-			// opener->DMACopyFromBuff = NULL; // Disable DMA copy
-			goto use_software_copy;
+			dma_addr_t d = (dma_addr_t)opener->DMACopyFromBuff(io->ios2_Data);
+			// TODO not only CHIP, we only can use memory provided by PI4!
+			if (likely(d > 0x1FFFFFUL))
+			{
+				body_dma = d;
+			}
+			else
+			{
+				KprintfH("[genet] %s: Cannot use CHIP memory buffer, falling back to copy\n", __func__);
+			}
 		}
-		KprintfH("[genet] %s: Using DMA copy from buffer 0x%lx\n", __func__, (ULONG)tx_cb_ptr->data_buffer);
-		unit->internalStats.tx_dma++;
+
+		if (unlikely(body_dma))
+		{
+			/* Two-descriptor DMA path: header in staging, body via user DMA. */
+			KprintfH("[genet] %s: DMA path, body_dma=0x%lx\n", __func__, body_dma);
+			hdr_staging = tx_staging_alloc(unit);
+			if (unlikely(!hdr_staging))
+				goto err_no_buf;
+
+			build_eth_header((u8 *)hdr_staging, io->ios2_DstAddr,
+							 unit->currentMacAddress, (u16)io->ios2_PacketType);
+			hdr_dma = (dma_addr_t)hdr_staging;
+			hdr_len = ETH_HLEN;
+			body_len = io->ios2_DataLength;
+			CachePreDMA((APTR)hdr_dma, &hdr_len, DMA_ReadFromRAM);
+			CachePreDMA((APTR)body_dma, &body_len, DMA_ReadFromRAM);
+			is_dma_path = TRUE;
+			bds_required = 2;
+		}
+		else
+		{
+			/* Single-descriptor copy path: header + body into staging. */
+			body_staging = tx_staging_alloc(unit);
+			if (unlikely(!body_staging))
+				goto err_no_buf;
+
+			build_eth_header((u8 *)body_staging, io->ios2_DstAddr,
+							 unit->currentMacAddress, (u16)io->ios2_PacketType);
+
+			u32 copy_length = io->ios2_DataLength;
+			if (unit->use_miami_workaround)
+				copy_length = (copy_length + 3U) & ~3U;
+			if (!opener->CopyFromBuff ||
+				opener->CopyFromBuff((u8 *)body_staging + ETH_HLEN, io->ios2_Data, copy_length) == 0)
+			{
+				KprintfH("[genet] %s: Failed to copy packet data\n", __func__);
+				tx_staging_free(unit, body_staging);
+				body_staging = NULL;
+				goto err_no_buf;
+			}
+
+			body_dma = (dma_addr_t)body_staging;
+			body_len = ETH_HLEN + io->ios2_DataLength;
+			CachePreDMA((APTR)body_dma, &body_len, DMA_ReadFromRAM);
+			bds_required = 1;
+		}
 	}
 	else
 	{
-	use_software_copy:
-		KprintfH("[genet] %s: Using software copy from buffer\n", __func__);
-		if (!opener->CopyFromBuff || opener->CopyFromBuff(tx_cb_ptr->internal_buffer, io->ios2_Data, genetConfig.use_miami_workaround ? ((io->ios2_DataLength + 3) & ~3) : io->ios2_DataLength) == 0)
+		/* RAW path: caller provides a complete Ethernet frame. */
+		if (unlikely(opener->DMACopyFromBuff))
 		{
-			KprintfH("[genet] %s: Failed to copy packet data from buffer\n", __func__);
-			goto ret_error;
+			dma_addr_t d = (dma_addr_t)opener->DMACopyFromBuff(io->ios2_Data);
+			if (d > 0x1FFFFFUL)
+			{
+				KprintfH("[genet] %s: RAW DMA copy from buffer 0x%lx\n", __func__, d);
+				body_dma = d;
+				is_dma_path = TRUE;
+			}
 		}
-		tx_cb_ptr->data_buffer = tx_cb_ptr->internal_buffer;
-		unit->internalStats.tx_copy++;
+		if (likely(!body_dma))
+		{
+			KprintfH("[genet] %s: RAW software copy\n", __func__);
+			body_staging = tx_staging_alloc(unit);
+			if (unlikely(!body_staging))
+				goto err_no_buf;
+
+			u32 copy_length = io->ios2_DataLength;
+			if (unit->use_miami_workaround)
+				copy_length = (copy_length + 3U) & ~3U;
+			if (!opener->CopyFromBuff ||
+				opener->CopyFromBuff(body_staging, io->ios2_Data, copy_length) == 0)
+			{
+				KprintfH("[genet] %s: Failed to copy RAW packet data\n", __func__);
+				tx_staging_free(unit, body_staging);
+				body_staging = NULL;
+				goto err_no_buf;
+			}
+			body_dma = (dma_addr_t)body_staging;
+		}
+		body_len = io->ios2_DataLength;
+		CachePreDMA((APTR)body_dma, &body_len, DMA_ReadFromRAM);
+		bds_required = 1;
 	}
 
-	ULONG len_stat = (io->ios2_DataLength << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT);
-	/* Note: if we ever change from DMA_TX_APPEND_CRC below we
-	 * will need to restore software padding of "runt" packets
+	/*
+	 * Phase 2 — under the ring lock: free-BD check, optional lazy reclaim,
+	 * descriptor writes, prod-index advance, MMIO kick. No memcpy, no
+	 * CachePreDMA, no user callbacks here.
 	 */
-	len_stat |= DMA_TX_APPEND_CRC;
-	if (unlikely(io->ios2_Req.io_Flags & SANA2IOF_RAW))
+	KprintfH("[genet] %s: pre: tx_prod_index %ld, write_ptr %ld\n", __func__, ring->tx_prod_index, ring->write_ptr);
+	Forbid();
+	u16 free_bds = tx_free_bds(ring);
+
+	/*
+	 * Lazy reclaim: skip the MMIO read on every submit. TX reply already
+	 * happened at submit time, so stale descriptors don't block the stack.
+	 * Reclaim only when the ring is actually getting low.
+	 */
+	if (unlikely(free_bds < TX_RECLAIM_THRESHOLD))
 	{
-		len_stat |= DMA_SOP;
+		bcmgenet_tx_reclaim(unit, TX_DESCS);
+		free_bds = tx_free_bds(ring);
 	}
-	len_stat |= DMA_EOP;
-	KprintfH("[genet] %s: Setting descriptor address 0x%lx, data buffer 0x%lx, len_stat 0x%lx\n",
-			 __func__, tx_cb_ptr->descriptor_address, tx_cb_ptr->data_buffer, len_stat);
 
-	dmadesc_set(tx_cb_ptr->descriptor_address, tx_cb_ptr->data_buffer, len_stat);
+	if (unlikely(free_bds <= bds_required))
+	{
+		KprintfH("[genet] %s: Not enough free BDs\n", __func__);
+		Permit();
+		if (hdr_staging)
+			tx_staging_free(unit, hdr_staging);
+		if (body_staging)
+			tx_staging_free(unit, body_staging);
+		goto err_no_buf;
+	}
 
-	CachePreDMA(tx_cb_ptr->data_buffer, &io->ios2_DataLength, DMA_ReadFromRAM);
+	/* Tell abortIO this request is committed to the ring. */
+	io->ios2_Req.io_Message.mn_Node.ln_Pred = NULL;
 
-	/* Advance our write pointer */
-	ring->tx_prod_index++;
-	ring->tx_prod_index &= DMA_P_INDEX_MASK;
+	if (unlikely(!is_raw && is_dma_path))
+	{
+		/* Two-descriptor DMA: SOP header CB (no packet boundary) + EOP body CB. */
+		struct enet_cb *hcb = bcmgenet_get_txcb(ring);
+		tx_cb_publish(hcb, hdr_staging, hdr_dma,
+					  (ETH_HLEN << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT) | DMA_TX_APPEND_CRC | DMA_SOP);
+		tx_advance_prod(ring);
 
-	writel(ring->tx_prod_index, (ULONG)unit->genetBase + TDMA_PROD_INDEX);
-	KprintfH("[genet] %s: Transmitting packet, tx_prod_index %ld\n", __func__, ring->tx_prod_index);
+		struct enet_cb *bcb = bcmgenet_get_txcb(ring);
+		tx_cb_publish(bcb, NULL, body_dma,
+					  (io->ios2_DataLength << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT) | DMA_TX_APPEND_CRC | DMA_EOP);
+		tx_advance_prod(ring);
 
-	ReleaseSemaphore(&ring->tx_ring_sem);
-	return COMMAND_SCHEDULED;
+		unit->internalStats.tx_dma++;
+		unit->internalStats.tx_bytes += io->ios2_DataLength + ETH_HLEN;
+	}
+	else
+	{
+		/* Single descriptor: non-RAW copy, RAW DMA, or RAW copy. */
+		struct enet_cb *cb = bcmgenet_get_txcb(ring);
+		u16 wire_len = is_raw ? (u16)io->ios2_DataLength : (u16)body_len;
+		tx_cb_publish(cb, body_staging, body_dma,
+					  ((u32)wire_len << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT) | DMA_TX_APPEND_CRC | DMA_SOP | DMA_EOP);
+		tx_advance_prod(ring);
 
-ret_error:
+		if (unlikely(is_dma_path))
+			unit->internalStats.tx_dma++;
+		else
+			unit->internalStats.tx_copy++;
+		unit->internalStats.tx_bytes += wire_len;
+	}
+	unit->internalStats.tx_packets++;
+
+	KprintfH("[genet] %s: Scheduled, tx_prod_index %ld\n", __func__, ring->tx_prod_index);
+	mmio_write32(ring->tx_prod_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
+	Permit();
+	return COMMAND_PROCESSED;
+
+err_no_buf:
 	unit->internalStats.tx_dropped++;
 	io->ios2_WireError = S2WERR_BUFF_ERROR;
 	io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
-	ReportEvents(unit, S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
-	ReleaseSemaphore(&ring->tx_ring_sem);
+	UnitSubmitControlAsync(unit, UNIT_CTRL_EVENT_REPORT, (union UnitControlPayload){.eventSet = S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR});
 	return COMMAND_PROCESSED;
 }

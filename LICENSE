@@ -1,23 +1,20 @@
 # License
 
-This project contains files originating from both GPL-2.0-or-later and MPL-2.0 sources, with modifications. Please refer to the SPDX headers in individual source files for specific licensing information.
+This repository is mixed-license. The file-level SPDX header is the authoritative license for each source file.
 
-Upstream projects:
-- [Emu68-tools](https://github.com/michalsc/Emu68-tools)
-- [u-boot](https://github.com/u-boot/u-boot)
+The code falls into four main provenance groups:
 
-You may use, modify, and distribute this project under the terms of either:
+- Linux or U-Boot derived code, under GPL-family SPDX headers:
+	`genet.device/src/bcmgenet.c`, `genet.device/src/bcmgenet-tx.c`, `genet.device/src/bcmgenet-irq.c`, `genet.device/src/phy.c`, `genet.device/src/phy_interface.c`, and the imported hardware headers under `genet.device/include/genet/` such as `bcmgenet-irq.h`, `bcmgenet-regs.h`, `ethtool.h`, `mii.h`, `phy.h`, `phy_interface.h`, and `unimac.h`.
 
-- The GNU General Public License, version 2.0 or (at your option) any later version (GPL-2.0-or-later), or
-- The Mozilla Public License, version 2.0 (MPL-2.0),
+- Amiga SANA-II scaffolding that resembles generic SANA-II drivers and also WiFiPi more specifically, kept on the cautious dual-license track:
+	`genet.device/src/device.c`, `device_beginio.c`, `device_abortio.c`, `device_end.c`, `unit.c`, `unit_commands.c`, `unit_commands_mcast.c`, `unit_io.c`, `unit_task.c`, and `genet.device/include/device.h`.
+	These files use `MPL-2.0 OR GPL-2.0+`.
 
-subject to the compatibility and requirements of the respective licenses as they apply to each file.
+- Original repository files, licensed `GPL-2.0+`:
+	`genet.device/src/devtree_parse.c`, `genet.device/include/genet/bcmgenet.h`, and everything under `runtime-config/`.
 
-When redistributing or modifying this project, you must comply with the terms and conditions of all applicable licenses as indicated in the SPDX headers.
+- Bundled AmigaOS SDK headers, kept under their original notices:
+	`genet.device/include/devices/sana2.h` and `genet.device/include/devices/sana2specialstats.h`.
 
-For more information, see:
-
-- [GPL-2.0-or-later](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
-- [MPL-2.0](https://www.mozilla.org/MPL/2.0/)
-
-If you have questions about licensing, please consult the license texts or contact the project maintainers.
+When redistributing or modifying this repository, follow the SPDX header or original notice on each file you use.
