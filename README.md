@@ -50,6 +50,7 @@ The hardware-facing GENET and PHY implementation is based primarily on [Das U-Bo
 - Promiscuous mode support
 - Multicast address and range programming
 - `genet-stats` monitoring tool
+- The drivers is ROM-able
 
 ## Unimplemented / Planned Features
 
