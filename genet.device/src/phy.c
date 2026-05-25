@@ -353,7 +353,7 @@ static s32 genphy_update_link(struct phy_device *phydev)
 			}
 
 			mii_reg = mdio_read(phydev, MII_BMSR);
-			delay_us(50 * 1000); /* 50 ms */
+			delay_ms(50);
 		}
 		Kprintf(" done\n");
 		phydev->link = TRUE;
@@ -581,7 +581,7 @@ s32 phy_reset(struct phy_device *phydev)
 			Kprintf("[genet] %s: PHY status read failed\n", __func__);
 			return reg;
 		}
-		delay_us(1000);
+		delay_ms(1);
 	}
 
 	if (reg & BMCR_RESET)

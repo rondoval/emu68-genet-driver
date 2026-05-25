@@ -111,7 +111,7 @@ static void bcmgenet_disable_dma(struct GenetUnit *unit)
 
 	/* Wait 10ms for packet drain in both tx and rx dma */
 	// TODO timer?
-	delay_us(10000);
+	delay_ms(10);
 
 	mmio_clear32(BCMGENET_REG(unit, RDMA_REG_BASE + DMA_CTRL), DMA_EN);
 	for (u32 timeout = 0; timeout < DMA_TIMEOUT_VAL; timeout++)
@@ -730,11 +730,11 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 
 	/* Disable MAC receive */
 	mmio_clear32(BCMGENET_REG(unit, UMAC_CMD), CMD_RX_EN);
-	delay_us(1000);
+	delay_ms(1);
 	bcmgenet_disable_dma(unit);
 	/* Disable MAC transmit. TX DMA disabled must be done before this */
 	mmio_clear32(BCMGENET_REG(unit, UMAC_CMD), CMD_TX_EN);
-	delay_us(1000);
+	delay_ms(1);
 
 	bcmgenet_intr_disable(unit);
 	RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
