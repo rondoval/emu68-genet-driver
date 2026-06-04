@@ -566,6 +566,9 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 		goto rx_buf_allocated;
 	}
 
+	ULONG rxlen = RX_TOTAL_BUFSIZE;
+	CachePreDMA((APTR)unit->rxbuffer, &rxlen, 0);
+
 	bcmgenet_umac_reset(unit);
 
 	bcmgenet_gmac_write_hwaddr(unit, unit->currentMacAddress);
