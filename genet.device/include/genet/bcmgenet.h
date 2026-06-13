@@ -12,6 +12,7 @@ struct IOSana2Req;
 u32 bcmgenet_eth_probe(struct GenetUnit *unit);
 u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit);
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit);
+void bcmgenet_reset_quiesce(struct GenetUnit *unit);
 u32 bcmgenet_set_coalesce(struct GenetUnit *unit, u32 tx_max_coalesced_frames, u32 rx_max_coalesced_frames, u32 rx_coalesce_usecs);
 void bcmgenet_set_rx_mode(struct GenetUnit *unit); /* Updates PROMISC flag and sets up MDF if possible */
 void bcmgenet_irq0_enable(struct GenetUnit *unit, u32 irq_mask);

@@ -15,6 +15,7 @@
 #include <types.h>
 #include <bcm_gpio.h>
 #include <slab.h>
+#include <reset_guard.h>
 
 #include <genet/phy.h>
 #include <genet/bcmgenet.h>
@@ -262,6 +263,7 @@ struct GenetDevice
 	struct GenetRuntimeConfig runtimeConfig;
 	struct Library *utilityBase;
 	struct Library *gic400Base;
+	struct reset_guard resetGuard; /* pre-reset DMA quiesce hooks */
 
 	// For now, we'll just assume there can be only one unit
 	struct GenetUnit *unit;

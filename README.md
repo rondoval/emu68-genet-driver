@@ -55,7 +55,6 @@ The hardware-facing GENET and PHY implementation is based primarily on [Das U-Bo
 ## Unimplemented / Planned Features
 
 - PHY link state updates at runtime
-- Better shutdown / reset handling
 
 ## Requirements
 

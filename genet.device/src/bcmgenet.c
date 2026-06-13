@@ -522,7 +522,7 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit)
 	/* update MDF filter */
 	u8 i = 0;
 	/* Broadcast */
-	const u8 broadcast[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+	static const u8 broadcast[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 	bcmgenet_set_mdf_addr(unit, broadcast, &i);
 	/* my own address.*/
 	bcmgenet_set_mdf_addr(unit, unit->currentMacAddress, &i);
@@ -727,10 +727,12 @@ u32 bcmgenet_eth_probe(struct GenetUnit *unit)
 	return bcmgenet_phy_init(unit);
 }
 
-void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
+/* Stop all bus-master activity (RX/TX DMA, MAC, interrupts) without
+ * releasing any resources.  Also the pre-reset quiesce: the RX ring keeps
+ * receiving into RAM the next OS session reuses unless this runs before
+ * the machine resets. */
+void bcmgenet_reset_quiesce(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Stopping GENET\n", __func__);
-
 	/* Disable MAC receive */
 	mmio_clear32(BCMGENET_REG(unit, UMAC_CMD), CMD_RX_EN);
 	delay_ms(1);
@@ -740,6 +742,13 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 	delay_ms(1);
 
 	bcmgenet_intr_disable(unit);
+}
+
+void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
+{
+	KprintfH("[genet] %s: Stopping GENET\n", __func__);
+
+	bcmgenet_reset_quiesce(unit);
 	RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
 
 	/* tx reclaim */
