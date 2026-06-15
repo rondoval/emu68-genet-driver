@@ -15,6 +15,7 @@
 #include <types.h>
 #include <bcm_gpio.h>
 #include <slab.h>
+#include <dma_mem.h>
 #include <reset_guard.h>
 
 #include <genet/phy.h>
@@ -179,7 +180,9 @@ struct throughput_stats
 struct GenetUnit
 {
 	struct Unit unit;
-	APTR memoryPool;
+	struct dma_mem_ctx dma_ctx; /* Emu68 (DMA-reachable) RAM regions; backs dmaPool */
+	struct dma_pool *dmaPool;	/* region-restricted DMA pool (Emu68 RAM) for DMA buffers */
+	APTR metaPool;				/* ordinary Exec pool for CPU-only metadata */
 	struct GenetDevice *device;
 
 	/* config */

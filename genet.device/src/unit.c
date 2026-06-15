@@ -64,35 +64,40 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 	unit->use_miami_workaround = unit->device->runtimeConfig.use_miami_workaround;
 	unit->budget = unit->device->runtimeConfig.budget;
 
-	unit->memoryPool = CreatePool(MEMF_FAST | MEMF_PUBLIC, 16384, 8192);
-	if (unit->memoryPool == NULL)
+	/* DMA buffers (rings, rx buffer, tx staging) must live in Emu68 (Pi-DRAM) RAM the
+	 * GENET DMA engine can reach, so the DMA pool is region-restricted; with no device
+	 * tree there is no reachable region and we refuse to open.  CPU-only metadata uses a
+	 * separate ordinary Exec pool. */
+	dma_mem_init(&unit->dma_ctx);
+	unit->dmaPool = dma_pool_create(&unit->dma_ctx);
+	unit->metaPool = CreatePool(MEMF_FAST | MEMF_PUBLIC, 16384, 8192);
+
+	u32 result;
+	if (unit->dmaPool == NULL || unit->metaPool == NULL)
 	{
-		Kprintf("[genet] %s: Failed to create memory pool\n", __func__);
-		return S2ERR_NO_RESOURCES;
+		Kprintf("[genet] %s: Failed to create memory pools\n", __func__);
+		result = S2ERR_NO_RESOURCES;
+		goto fail;
 	}
 	_NewMinList(&unit->multicastRanges);
 	unit->multicastCount = 0;
 
 	_NewMinList(&unit->openers);
 
-	u32 result = DevTreeParse(unit);
+	result = DevTreeParse(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to parse device tree: %ld\n", __func__, result);
-		DeletePool(unit->memoryPool);
-		unit->memoryPool = NULL;
-		return result;
+		goto fail;
 	}
-	
+
 	/* On first open, we initialize current MAC to 0 to indicate it was not set yet */
 	mem_zero(unit->currentMacAddress, sizeof(unit->currentMacAddress));
 	result = UnitTaskStart(unit);
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to start unit task: %ld\n", __func__, result);
-		DeletePool(unit->memoryPool);
-		unit->memoryPool = NULL;
-		return result;
+		goto fail;
 	}
 
 	if (opener != NULL)
@@ -101,6 +106,19 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 	}
 
 	return S2ERR_NO_ERROR;
+
+fail:
+	if (unit->dmaPool)
+	{
+		dma_pool_delete(unit->dmaPool);
+		unit->dmaPool = NULL;
+	}
+	if (unit->metaPool)
+	{
+		DeletePool(unit->metaPool);
+		unit->metaPool = NULL;
+	}
+	return result;
 }
 
 u32 UnitConfigure(struct GenetUnit *unit)
@@ -155,8 +173,10 @@ u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 			UnitOffline(unit);
 		}
 		UnitTaskStop(unit);
-		DeletePool(unit->memoryPool);
-		unit->memoryPool = NULL;
+		dma_pool_delete(unit->dmaPool);
+		unit->dmaPool = NULL;
+		DeletePool(unit->metaPool);
+		unit->metaPool = NULL;
 		unit->state = STATE_UNCONFIGURED;
 	}
 	else if (opener != NULL)

@@ -59,7 +59,7 @@ void UnitSubmitControlAsync(struct GenetUnit *unit, UWORD command, union UnitCon
     if (unit == NULL || unit->controlPort == NULL)
         return;
 
-    struct UnitControlMsg *msg = pool_alloc(&unit->memoryPool, sizeof(struct UnitControlMsg));
+    struct UnitControlMsg *msg = pool_alloc(unit->metaPool, sizeof(struct UnitControlMsg));
     if (msg == NULL)
     {
         Kprintf("[genet] %s: Failed to allocate message for async unit control\n", __func__);
@@ -187,7 +187,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 if(cmsg->msg.mn_ReplyPort != NULL)
                     ReplyMsg(&cmsg->msg);
                 else
-                    pool_free(&unit->memoryPool, cmsg);
+                    pool_free(unit->metaPool, cmsg);
             }
             if (budget == 0)
             {

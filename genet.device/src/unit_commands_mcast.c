@@ -72,7 +72,7 @@ u32 Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
     }
 
     /* No range was found. Create new one and add the multicast range on the WiFi module */
-    struct MulticastRange *range = AllocPooled(unit->memoryPool, sizeof(struct MulticastRange));
+    struct MulticastRange *range = pool_alloc(unit->metaPool, sizeof(struct MulticastRange));
     if (!range)
     {
         Kprintf("[genet] %s: Failed to allocate memory for multicast range\n", __func__);
@@ -131,7 +131,7 @@ u32 Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
             if (range->useCount == 0)
             {
                 RemoveMinNode((struct MinNode *)range);
-                FreePooled(unit->memoryPool, range, sizeof(struct MulticastRange));
+                pool_free(unit->metaPool, range);
 
                 u32 count = (u32)(upper_bound - lower_bound + 1);
                 unit->multicastCount -= count;
