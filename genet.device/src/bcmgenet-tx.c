@@ -144,14 +144,15 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 		if (unlikely(opener->DMACopyFromBuff))
 		{
 			dma_addr_t d = (dma_addr_t)opener->DMACopyFromBuff(io->ios2_Data);
-			// TODO not only CHIP, we only can use memory provided by PI4!
-			if (likely(d > 0x1FFFFFUL))
+			/* GENET DMA can only reach Emu68 (Pi-DRAM) RAM; Chip RAM and any
+			 * Zorro/accelerator Fast RAM are unreachable -> fall back to copy. */
+			if (likely(dma_addr_reachable(&unit->dma_ctx, (APTR)d, io->ios2_DataLength)))
 			{
 				body_dma = d;
 			}
 			else
 			{
-				KprintfH("[genet] %s: Cannot use CHIP memory buffer, falling back to copy\n", __func__);
+				KprintfH("[genet] %s: buffer not DMA-reachable, falling back to copy\n", __func__);
 			}
 		}
 
@@ -207,7 +208,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 		if (unlikely(opener->DMACopyFromBuff))
 		{
 			dma_addr_t d = (dma_addr_t)opener->DMACopyFromBuff(io->ios2_Data);
-			if (d > 0x1FFFFFUL)
+			if (dma_addr_reachable(&unit->dma_ctx, (APTR)d, io->ios2_DataLength))
 			{
 				KprintfH("[genet] %s: RAW DMA copy from buffer 0x%lx\n", __func__, d);
 				body_dma = d;

@@ -111,7 +111,7 @@ static void bcmgenet_disable_dma(struct GenetUnit *unit)
 
 	/* Wait 10ms for packet drain in both tx and rx dma */
 	// TODO timer?
-	delay_us(10000);
+	delay_ms(10);
 
 	mmio_clear32(BCMGENET_REG(unit, RDMA_REG_BASE + DMA_CTRL), DMA_EN);
 	for (u32 timeout = 0; timeout < DMA_TIMEOUT_VAL; timeout++)
@@ -280,7 +280,7 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 
 	/* Initialize common Rx ring structures */
 	const APTR desc_base = unit->genetBase + GENET_RX_OFF;
-	ring->rx_control_block = AllocPooled(unit->memoryPool, RX_DESCS * sizeof(struct enet_cb));
+	ring->rx_control_block = pool_alloc(unit->metaPool, RX_DESCS * sizeof(struct enet_cb));
 	if (!ring->rx_control_block)
 	{
 		return S2ERR_NO_RESOURCES;
@@ -345,7 +345,7 @@ static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 
 	/* Initialize common TX ring structures */
 	APTR desc_base = unit->genetBase + GENET_TX_OFF;
-	ring->tx_control_block = AllocPooled(unit->memoryPool, TX_DESCS * sizeof(struct enet_cb));
+	ring->tx_control_block = pool_alloc(unit->metaPool, TX_DESCS * sizeof(struct enet_cb));
 	if (!ring->tx_control_block)
 	{
 		return S2ERR_NO_RESOURCES;
@@ -357,7 +357,7 @@ static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 		ring->tx_control_block[i].descriptor_address = desc_base + i * DMA_DESC_SIZE;
 	}
 
-	slab_cache_init(&unit->tx_buffer_cache, unit->memoryPool,
+	slab_cache_init(&unit->tx_buffer_cache, unit->metaPool, unit->dmaPool,
 	                RX_BUF_LENGTH, DMA_ALIGN_MIN, TX_DESCS);
 
 	/* Cannot init TDMA_CONS_INDEX to 0, so align TDMA_PROD_INDEX on it instead */
@@ -522,7 +522,7 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit)
 	/* update MDF filter */
 	u8 i = 0;
 	/* Broadcast */
-	const u8 broadcast[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+	static const u8 broadcast[] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 	bcmgenet_set_mdf_addr(unit, broadcast, &i);
 	/* my own address.*/
 	bcmgenet_set_mdf_addr(unit, unit->currentMacAddress, &i);
@@ -558,13 +558,16 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	KprintfH("[genet] %s: Starting GENET\n", __func__);
 	u32 ret;
 
-	unit->rxbuffer = (dma_addr_t)dma_zalloc(unit->memoryPool, DMA_ALIGN_MIN, RX_TOTAL_BUFSIZE);
+	unit->rxbuffer = (dma_addr_t)dma_zalloc(unit->dmaPool, DMA_ALIGN_MIN, RX_TOTAL_BUFSIZE);
 	if (!unit->rxbuffer)
 	{
 		Kprintf("[genet] %s: Failed to allocate RX buffer\n", __func__);
 		ret = S2ERR_NO_RESOURCES;
 		goto rx_buf_allocated;
 	}
+
+	ULONG rxlen = RX_TOTAL_BUFSIZE;
+	CachePreDMA((APTR)unit->rxbuffer, &rxlen, 0);
 
 	bcmgenet_umac_reset(unit);
 
@@ -641,7 +644,7 @@ init_dma:
 	slab_cache_destroy(&unit->tx_buffer_cache);
 
 rx_buf_allocated:
-	dma_free(unit->memoryPool, (APTR)unit->rxbuffer);
+	dma_free(unit->dmaPool, (APTR)unit->rxbuffer);
 	unit->rxbuffer = 0;
 
 	return ret;
@@ -724,19 +727,28 @@ u32 bcmgenet_eth_probe(struct GenetUnit *unit)
 	return bcmgenet_phy_init(unit);
 }
 
+/* Stop all bus-master activity (RX/TX DMA, MAC, interrupts) without
+ * releasing any resources.  Also the pre-reset quiesce: the RX ring keeps
+ * receiving into RAM the next OS session reuses unless this runs before
+ * the machine resets. */
+void bcmgenet_reset_quiesce(struct GenetUnit *unit)
+{
+	/* Disable MAC receive */
+	mmio_clear32(BCMGENET_REG(unit, UMAC_CMD), CMD_RX_EN);
+	delay_ms(1);
+	bcmgenet_disable_dma(unit);
+	/* Disable MAC transmit. TX DMA disabled must be done before this */
+	mmio_clear32(BCMGENET_REG(unit, UMAC_CMD), CMD_TX_EN);
+	delay_ms(1);
+
+	bcmgenet_intr_disable(unit);
+}
+
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
 	KprintfH("[genet] %s: Stopping GENET\n", __func__);
 
-	/* Disable MAC receive */
-	mmio_clear32(BCMGENET_REG(unit, UMAC_CMD), CMD_RX_EN);
-	delay_us(1000);
-	bcmgenet_disable_dma(unit);
-	/* Disable MAC transmit. TX DMA disabled must be done before this */
-	mmio_clear32(BCMGENET_REG(unit, UMAC_CMD), CMD_TX_EN);
-	delay_us(1000);
-
-	bcmgenet_intr_disable(unit);
+	bcmgenet_reset_quiesce(unit);
 	RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
 
 	/* tx reclaim */
@@ -746,7 +758,7 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 
 	if (unit->rxbuffer)
 	{
-		dma_free(unit->memoryPool, (APTR)unit->rxbuffer);
+		dma_free(unit->dmaPool, (APTR)unit->rxbuffer);
 		unit->rxbuffer = 0;
 	}
 	slab_cache_destroy(&unit->tx_buffer_cache);

@@ -24,7 +24,7 @@
 - Treat `device*.c`, `unit*.c`, `unit_commands*.c`, `unit_io.c`, `unit_task.c`, and `genet.device/include/device.h` as the cautious dual-licensed SANA-II scaffolding track: they resemble generic SANA-II drivers and also WiFiPi more specifically, so do not casually relicense them.
 - Treat `genet.device/src/devtree_parse.c`, `genet.device/include/genet/bcmgenet.h`, and `runtime-config/*` as original repository files currently licensed `GPL-2.0+`.
 - Treat the hardware-facing `bcmgenet*`, `phy*`, and imported `include/genet/*` headers as Linux/U-Boot-derived GPL-family material and preserve their file-level SPDX identifiers.
-- The README documents a soft-reboot hang when the driver is online; be cautious with interrupt enable and teardown changes.
+- A reset guard quiesces GENET DMA before the Amiga resets (both Ctrl-Amiga-Amiga and `ColdReboot()` / `C:Reboot`); be cautious with interrupt enable, teardown, and reset-guard changes.
 
 ## Validation
 

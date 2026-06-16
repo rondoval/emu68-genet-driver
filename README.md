@@ -10,9 +10,14 @@ The hardware-facing GENET and PHY implementation is based primarily on [Das U-Bo
 
 ## Known bugs
 
-- Amiga may get stuck at boot if you soft reboot while the driver is online
+- None currently known.
 
 ## What's new
+3.10:
+- Added a reset guard: the driver now quiesces GENET DMA before the Amiga resets (both Ctrl-Amiga-Amiga and `ColdReboot()` / `C:Reboot`).
+- Reworked unit memory management to use separate pools: DMA buffers are allocated from a region-restricted pool in Pistorm RAM that the GENET DMA engine can reach, while CPU-only metadata uses an ordinary Exec pool. DMA reachability is now decided by an explicit predicate instead of a hardcoded address check.
+- Added a `CachePreDMA()` call for the RX buffer to ensure cache coherency before the controller starts writing into it.
+
 3.8:
 - TX and RX memory handling reworked again: the TX path now uses the common slab allocator, RX ring buffers use `dma_zalloc()`, and TX completion handling no longer depends on TX IRQs.
 - Request flow is more robust under load: `CMD_READ` uses an SPSC ring, `CMD_WRITE` is handled only in user context, and TX reclaim runs in the bottom half.
@@ -55,7 +60,6 @@ The hardware-facing GENET and PHY implementation is based primarily on [Das U-Bo
 ## Unimplemented / Planned Features
 
 - PHY link state updates at runtime
-- Better shutdown / reset handling
 
 ## Requirements
 

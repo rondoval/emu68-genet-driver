@@ -154,6 +154,17 @@ static s32 genet_open_libraries(struct GenetDevice *base)
     return 0;
 }
 
+/* reset_guard prepare: stop RX/TX DMA before the machine resets, so the
+ * GENET stops writing into RAM the next OS session will reuse. */
+static void genet_reset_prepare(APTR user)
+{
+    struct GenetDevice *base = user;
+    struct GenetUnit *unit = base->unit;
+
+    if (unit && unit->state == STATE_ONLINE)
+        bcmgenet_reset_quiesce(unit);
+}
+
 APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6"))
 {
     (void)_SysBase;
@@ -163,6 +174,10 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     base->unit = NULL;
     base->utilityBase = NULL;
     base->gic400Base = NULL;
+
+    if (!reset_guard_install(&base->resetGuard, genet_reset_prepare, base,
+                             (CONST_STRPTR)"genet.device"))
+        Kprintf("[genet] %s: reset guard install failed\n", __func__);
 
     return base;
 }
@@ -387,6 +402,14 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
     }
     else
     {
+        /* The ColdReboot vector may have been re-patched on top of our
+         * stub — then the code must stay resident. */
+        if (!reset_guard_remove(&base->resetGuard))
+        {
+            KprintfH("[genet] %s: reset guard not removable, staying resident\n", __func__);
+            return NULL;
+        }
+
         ULONG segList = base->segList;
 
         /* Remove yourself from list of devices */

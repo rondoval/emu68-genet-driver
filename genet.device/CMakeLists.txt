@@ -77,6 +77,9 @@ target_link_libraries(genet.device
         GIC400::gic400_headers
 )
 
+# ROM-able: no writable .data/.bss may sneak in
+emu68_rom_check(genet.device)
+
 install(
     PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/genet.device
     DESTINATION DEVS/Networks
