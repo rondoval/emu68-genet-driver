@@ -34,6 +34,11 @@ struct GenetRuntimeConfig
 };
 
 void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config);
+/* Debug-only; compiled out (call included) without DEBUG. */
+#ifdef DEBUG
 void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config);
+#else
+#define DumpGenetRuntimeConfig(config) ((void)0)
+#endif
 
 #endif /* GENET_RUNTIME_CONFIG_H */

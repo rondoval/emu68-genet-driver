@@ -139,9 +139,9 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
     CloseLibrary((struct Library *)DOSBase);
 }
 
+#ifdef DEBUG
 void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config)
 {
-#ifdef DEBUG
     Kprintf("[genet] config: pri=%ld stack_bytes=%lu use_dma=%ld miami=%ld periodic_task_ms=%lu budget=%lu rx_coalesce_usecs=%lu rx_coalesce_frames=%lu tx_coalesce_frames=%lu\n",
             (LONG)config->unit_task_priority,
             (ULONG)config->unit_stack_bytes,
@@ -152,5 +152,5 @@ void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config)
             (ULONG)config->rx_coalesce_usecs,
             (ULONG)config->rx_coalesce_frames,
             (ULONG)config->tx_coalesce_frames);
-#endif
 }
+#endif /* DEBUG (DumpGenetRuntimeConfig) */
