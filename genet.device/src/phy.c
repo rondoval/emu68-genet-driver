@@ -551,7 +551,7 @@ s32 phy_startup(struct phy_device *phydev)
 	return genphy_parse_link(phydev);
 }
 
-s32 phy_reset(struct phy_device *phydev)
+static s32 phy_reset(struct phy_device *phydev)
 {
 	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	u16 timeout = 500;

@@ -24,7 +24,7 @@ void bcmgenet_irq0_enable(struct GenetUnit *unit, u32 irq_mask)
 		   BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_CLEAR));
 }
 
-void bcmgenet_irq0_disable(struct GenetUnit *unit, u32 irq_mask)
+static inline void bcmgenet_irq0_disable(struct GenetUnit *unit, u32 irq_mask)
 {
 	mmio_write32(irq_mask,
 		   BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_SET));
@@ -43,8 +43,9 @@ void bcmgenet_intr_disable(struct GenetUnit *unit)
 		   BCMGENET_REG(unit, GENET_INTRL2_1_OFF + INTRL2_CPU_CLEAR));
 }
 
-/* bcmgenet_isr0: handle other stuff */
-void bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"))
+/* bcmgenet_isr0: handle other stuff.  Returns 1 if the interrupt was ours, 0
+ * otherwise (the AmigaOS interrupt-server "handled?" convention). */
+ULONG bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"))
 {
 	(void)irq;
 	(void)execBase;
@@ -52,6 +53,10 @@ void bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit a
 	/* Read irq status */
 	u32 status = mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_STAT)) &
 				   ~mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_STATUS));
+
+	/* Nothing pending for us — report not-handled. */
+	if (!status)
+		return 0;
 
 	/* Clear before handling so any new events after this point re-assert cleanly */
 	mmio_write32(status, BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
@@ -71,13 +76,11 @@ void bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit a
 		unit->internalStats.irq0_rx_count++;
 	}
 
-	if (status)
-	{
-		unit->internalStats.irq0_count++;
-		if ((status & (UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE)) == 0)
-			unit->internalStats.irq0_other_count++;
-		/* Save irq status for bottom-half processing. */
-		unit->irq0_status |= status;
-		Signal(unit->task, 1UL << unit->irq0_signal);
-	}
+	unit->internalStats.irq0_count++;
+	if ((status & (UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE)) == 0)
+		unit->internalStats.irq0_other_count++;
+	/* Save irq status for bottom-half processing. */
+	unit->irq0_status |= status;
+	Signal(unit->task, 1UL << unit->irq0_signal);
+	return 1;
 }

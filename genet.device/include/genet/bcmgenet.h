@@ -16,9 +16,8 @@ void bcmgenet_reset_quiesce(struct GenetUnit *unit);
 u32 bcmgenet_set_coalesce(struct GenetUnit *unit, u32 tx_max_coalesced_frames, u32 rx_max_coalesced_frames, u32 rx_coalesce_usecs);
 void bcmgenet_set_rx_mode(struct GenetUnit *unit); /* Updates PROMISC flag and sets up MDF if possible */
 void bcmgenet_irq0_enable(struct GenetUnit *unit, u32 irq_mask);
-void bcmgenet_irq0_disable(struct GenetUnit *unit, u32 irq_mask);
 void bcmgenet_intr_disable(struct GenetUnit *unit);
-void bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"));
+ULONG bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"));
 
 /* RX functions */
 s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget);
