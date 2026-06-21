@@ -574,8 +574,8 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
         if (unit->state == STATE_OFFLINE)
             unit->reconfigurations++;
 
-        mem_zero(&unit->internalStats, sizeof(unit->internalStats));
-        mem_zero(&unit->throughputStats, sizeof(unit->throughputStats));
+        memset(&unit->internalStats, 0, sizeof(unit->internalStats));
+        memset(&unit->throughputStats, 0, sizeof(unit->throughputStats));
         bcmgenet_reset_mib_counters(unit);
 
         struct Device *unitTimerBase = unit->timerBase;

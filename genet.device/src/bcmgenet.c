@@ -287,7 +287,7 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 		return S2ERR_NO_RESOURCES;
 	}
 
-	mem_zero(ring->rx_control_block, RX_DESCS * sizeof(struct enet_cb));
+	memset(ring->rx_control_block, 0, RX_DESCS * sizeof(struct enet_cb));
 
 	const u32 len_stat = (RX_BUF_LENGTH << DMA_BUFLENGTH_SHIFT); // | DMA_OWN;
 
@@ -352,7 +352,7 @@ static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 		return S2ERR_NO_RESOURCES;
 	}
 
-	mem_zero(ring->tx_control_block, TX_DESCS * sizeof(struct enet_cb));
+	memset(ring->tx_control_block, 0, TX_DESCS * sizeof(struct enet_cb));
 	for (u32 i = 0; i < TX_DESCS; i++)
 	{
 		ring->tx_control_block[i].descriptor_address = desc_base + i * DMA_DESC_SIZE;
