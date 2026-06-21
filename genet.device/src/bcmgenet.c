@@ -177,7 +177,8 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 		length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
 		u8 *addr = (u8 *)rx_cb->data_buffer;
 
-		CachePostDMA(addr, &length, 0);
+		ULONG cache_len = length; /* ULONG* for CachePostDMA on any NDK (length is reused below) */
+		CachePostDMA(addr, &cache_len, 0);
 		KprintfH("[genet] %s: packet=%08lx length=%lu\n", __func__, addr + RX_BUF_OFFSET, (ULONG)(length - RX_BUF_OFFSET));
 
 		if (unlikely(length > RX_BUF_LENGTH))

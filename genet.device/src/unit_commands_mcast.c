@@ -15,6 +15,7 @@
 #include <device.h>
 #include <debug.h>
 #include <memory.h>
+#include <minlist.h>
 
 static inline u64 GetAddress(const u8 *addr)
 {

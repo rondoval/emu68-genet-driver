@@ -165,7 +165,7 @@ struct internal_stats
 	u32 irq0_rx_count;		 // IRQ0 fires that included RXDMA_DONE
 	u32 irq0_other_count;	 // IRQ0 fires with neither TX nor RX DONE (link/PHY/etc.)
 
-	TimeVal_Type last_start;
+	struct timeval last_start; /* TimeVal_Type in NDK 3.2; struct timeval is the same and works on any NDK */
 };
 
 struct throughput_stats

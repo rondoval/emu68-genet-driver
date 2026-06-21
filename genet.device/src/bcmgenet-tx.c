@@ -12,6 +12,7 @@
 #include <proto/exec.h>
 #endif
 
+#include <exec/execbase.h> /* DMA_ReadFromRAM for CachePreDMA(); older NDKs don't pull it in transitively */
 #include <iomem.h>
 #include <types.h>
 #include <debug.h>
@@ -135,7 +136,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	 */
 	APTR hdr_staging = NULL, body_staging = NULL;
 	dma_addr_t hdr_dma = 0, body_dma = 0;
-	u32 hdr_len = 0, body_len = 0;
+	ULONG hdr_len = 0, body_len = 0; /* ULONG so &hdr_len/&body_len match CachePreDMA on any NDK */
 	u8 bds_required;
 	BOOL is_dma_path = FALSE;
 
