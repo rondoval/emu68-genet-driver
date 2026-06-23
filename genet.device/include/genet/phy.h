@@ -82,15 +82,6 @@ struct phy_device
 };
 
 /**
- * phy_reset() - Resets the specified PHY
- * Issues a reset of the PHY and waits for it to complete
- *
- * @phydev:	PHY to reset
- * @return: 0 if OK, -ve on error
- */
-s32 phy_reset(struct phy_device *phydev);
-
-/**
  * phy_connect() - Creates a PHY device for the Ethernet interface
  * Creates a PHY device for the PHY at the given address, if one doesn't exist
  * already, and associates it with the Ethernet device.

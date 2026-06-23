@@ -23,6 +23,8 @@ struct IntuitionBase *IntuitionBase;
 struct DosLibrary    *DOSBase;
 struct Library       *ListBrowserBase;
 
+static const char verstag[] __attribute__((used)) = VERSTAG;
+
 #define GENET_DEVICE  "genet.device"
 #define GENET_UNIT    0
 #define REFRESH_SECS  1

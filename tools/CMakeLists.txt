@@ -6,6 +6,10 @@ add_link_options(-s)
 
 add_executable(genet-stats genet-stats.c)
 
+target_compile_definitions(genet-stats PRIVATE
+    VERSTAG="$VER: genet-stats ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR} ${CURRENT_DATE}"
+)
+
 # Add shared include path for SANA-II headers
 target_include_directories(genet-stats
     PRIVATE

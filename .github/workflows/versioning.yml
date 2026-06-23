@@ -1,0 +1,19 @@
+name: Versioning
+
+# Gates every PR on a version bump + RELEASE-NOTES.md update + a clean build inside
+# the stack, and auto-tags v<version> on merge to main. The logic lives in the
+# stack's reusable workflow so all components stay in lock-step.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  versioning:
+    uses: rondoval/emu68-driver-stack/.github/workflows/component-versioning.yml@main
+    with:
+      source_dir_var: EMU68_GENET_SOURCE_DIR

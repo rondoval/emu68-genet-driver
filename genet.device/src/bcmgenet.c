@@ -177,7 +177,8 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 		length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
 		u8 *addr = (u8 *)rx_cb->data_buffer;
 
-		CachePostDMA(addr, &length, 0);
+		ULONG cache_len = length; /* ULONG* for CachePostDMA on any NDK (length is reused below) */
+		CachePostDMA(addr, &cache_len, 0);
 		KprintfH("[genet] %s: packet=%08lx length=%lu\n", __func__, addr + RX_BUF_OFFSET, (ULONG)(length - RX_BUF_OFFSET));
 
 		if (unlikely(length > RX_BUF_LENGTH))
@@ -286,7 +287,7 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 		return S2ERR_NO_RESOURCES;
 	}
 
-	mem_zero(ring->rx_control_block, RX_DESCS * sizeof(struct enet_cb));
+	memset(ring->rx_control_block, 0, RX_DESCS * sizeof(struct enet_cb));
 
 	const u32 len_stat = (RX_BUF_LENGTH << DMA_BUFLENGTH_SHIFT); // | DMA_OWN;
 
@@ -351,7 +352,7 @@ static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 		return S2ERR_NO_RESOURCES;
 	}
 
-	mem_zero(ring->tx_control_block, TX_DESCS * sizeof(struct enet_cb));
+	memset(ring->tx_control_block, 0, TX_DESCS * sizeof(struct enet_cb));
 	for (u32 i = 0; i < TX_DESCS; i++)
 	{
 		ring->tx_control_block[i].descriptor_address = desc_base + i * DMA_DESC_SIZE;

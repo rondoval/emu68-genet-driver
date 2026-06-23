@@ -92,7 +92,7 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 	}
 
 	/* On first open, we initialize current MAC to 0 to indicate it was not set yet */
-	mem_zero(unit->currentMacAddress, sizeof(unit->currentMacAddress));
+	memset(unit->currentMacAddress, 0, sizeof(unit->currentMacAddress));
 	result = UnitTaskStart(unit);
 	if (result != S2ERR_NO_ERROR)
 	{

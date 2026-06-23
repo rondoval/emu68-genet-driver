@@ -14,6 +14,7 @@
 #include <device.h>
 #include <types.h>
 #include <debug.h>
+#include <minlist.h>
 #include <runtime_config.h>
 
 static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLength, u16 dma_flags)

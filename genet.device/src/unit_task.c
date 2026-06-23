@@ -254,8 +254,9 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 }
                 else
                 {
-                    /* We caught up, enable interrupts */
-                    mmio_write32(UMAC_IRQ_RXDMA_DONE, BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
+                    /* Caught up: just unmask.  The ISR already ACKed (INTRL2_CPU_CLEAR);
+                     * any RX writeback that latched STAT during the drain window re-fires
+                     * the interrupt on unmask, so nothing is lost. */
                     bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE);
                 }
             }
@@ -268,10 +269,6 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             {
                 WaitIO(&packetTimerReq->tr_node);
             }
-
-            /* Just in case we got stuck */
-            if (unit->state == STATE_ONLINE)
-                bcmgenet_irq0_enable(unit, /* UMAC_IRQ_TXDMA_DONE | */ UMAC_IRQ_RXDMA_DONE);
 
             // TODO pool PHY for state, BCM2711 genet has a bug where PHY interrupts don't work properly
 

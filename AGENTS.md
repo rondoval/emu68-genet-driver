@@ -6,6 +6,7 @@
 - The README examples use an out-of-tree `build/` directory with `cmake ..`, `make`, and `make install`.
 - Equivalent configure/build flow is acceptable, but do not assume `build/` already exists.
 - The repo-local `compile` task expects an existing `build/` directory. If it is missing, configure first with `cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain.cmake -DCMAKE_PREFIX_PATH=/path/to/prefix -DCMAKE_INSTALL_PREFIX=/path/to/prefix`.
+- Debug backend: pass `-DEMU68_DEBUG_BACKEND=serial` (default `pistorm` | `serial` | `off`); selected stack-wide via `emu68-common`, `serial` links `debug.lib` and is not ROM-able.
 - Version string handling now follows the same pattern as `emu68-xhci-driver`: the top-level `CMakeLists.txt` defines `VERSTRING` from project version plus date, and `genet.device/CMakeLists.txt` only consumes it.
 
 ## Runtime Notes

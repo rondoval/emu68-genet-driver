@@ -15,6 +15,7 @@
 #include <device.h>
 #include <debug.h>
 #include <memory.h>
+#include <minlist.h>
 
 static inline u64 GetAddress(const u8 *addr)
 {
@@ -80,7 +81,7 @@ u32 Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
         ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
         return COMMAND_PROCESSED;
     }
-    mem_zero(range, sizeof(struct MulticastRange));
+    memset(range, 0, sizeof(struct MulticastRange));
     range->useCount = 1;
     range->lowerBound = lower_bound;
     range->upperBound = upper_bound;
