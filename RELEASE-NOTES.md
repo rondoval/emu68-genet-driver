@@ -1,3 +1,87 @@
+# Release notes — genet.device 3.11
+
+Changes since v3.10.
+
+A maintenance release: an interrupt-handling cleanup, adoption of the stack-wide
+debug backend, and portability fixes for building against newer/older NDKs and at
+`-O3`.  No functional change for the typical user.
+
+---
+
+## Breaking changes
+
+None.
+
+---
+
+## Improvements / Reliability
+
+### Interrupt handler reports handled / not-handled; RX re-arm simplified
+
+`bcmgenet_isr0()` now returns `ULONG` following the AmigaOS interrupt-server
+convention — `1` when the interrupt was ours, `0` otherwise — and returns `0`
+early when no GENET status bits are pending, so it no longer claims interrupts it
+did not service.  `bcmgenet_irq0_disable()` became `static inline` (it is internal
+to the IRQ module and is dropped from the public header).
+
+The unit task's RX "caught up" path now simply unmasks `UMAC_IRQ_RXDMA_DONE`
+instead of clearing `INTRL2_CPU_CLEAR` before unmasking: the ISR has already
+ACKed, and any RX writeback that latched the status during the drain window
+re-fires the interrupt on unmask, so nothing is lost and the clear-before-unmask
+race is gone.  The "just in case we got stuck" blind re-arm after the periodic
+timer was removed.  The now-unused `phy_reset()` declaration was deleted.
+
+### Debug output now follows the stack-wide backend
+
+`genet.device` and the `runtime-config` static library no longer hard-code
+`-DDEBUG`.  Debug output is selected through emu68-common's stack-wide
+`EMU68_DEBUG_BACKEND` (`pistorm` | `serial` | `off`): the builds now call
+`emu68_debug_backend_definitions()` for the compile defines and
+`emu68_debug_backend_finalize(genet.device ROMABLE)` in place of the direct
+`emu68_rom_check` (for the `serial` backend this links `debug.lib` plus the weak
+`__divsi3` glue and skips the ROM check).  `DumpGenetRuntimeConfig()` is now
+compiled out entirely when `DEBUG` is unset, with the call site retained as a
+`((void)0)` no-op.
+
+---
+
+## Build / portability
+
+### NDK 3.9 (and older) compatibility
+
+The driver now builds cleanly against newer and older NDKs as well as the target
+NDK 3.2:
+
+- `internal_stats.last_start` is typed `struct timeval` rather than the
+  NDK-3.2-only `TimeVal_Type` (same layout, available on any NDK).
+- `<minlist.h>` is included where the type-safe MinList wrappers are used
+  (`unit_commands.c`, `unit_commands_mcast.c`, `unit_io.c`), picking up
+  emu68-common's fallback macros on pre-3.2 NDKs.
+- `bcmgenet-tx.c` includes `<exec/execbase.h>` explicitly for `DMA_ReadFromRAM`,
+  and the `CachePreDMA()` / `CachePostDMA()` length arguments are `ULONG` so their
+  addresses match the API prototype on any NDK.
+
+### Built at `-O3`
+
+`mem_zero()` calls were replaced with the standard `memset()` (emu68-common
+dropped its `mem_zero` family), and the `runtime-config` library was brought from
+`-Os` to `-O3` to match the rest of the driver.
+
+### Versioning workflow
+
+A `.github/workflows/versioning.yml` that gates every PR on a version bump + a
+`RELEASE-NOTES.md` update + a clean build inside the stack, and auto-tags
+`v<version>` on merge to `main`, via the stack's reusable
+`component-versioning.yml` so all components stay in lock-step.
+
+### `$VER` strings report `major.minor`; `genet-stats` carries a version tag
+
+The driver's embedded `$VER:` string now uses
+`PROJECT_VERSION_MAJOR.PROJECT_VERSION_MINOR` so it matches the reported library
+version.  The `genet-stats` tool now embeds its own `$VER:` tag (via a `VERSTAG`
+compile definition) so `version genet-stats` and `C:Version` report it.
+
+
 # Release notes — genet.device 3.10
 
 Changes since v3.8.
