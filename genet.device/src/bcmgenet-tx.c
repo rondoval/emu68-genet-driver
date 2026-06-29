@@ -12,7 +12,6 @@
 #include <proto/exec.h>
 #endif
 
-#include <exec/execbase.h> /* DMA_ReadFromRAM for CachePreDMA(); older NDKs don't pull it in transitively */
 #include <iomem.h>
 #include <types.h>
 #include <debug.h>

@@ -18,7 +18,6 @@
 #include <debug.h>
 #include <memory.h>
 #include <types.h>
-#include <minlist.h>
 
 #include <genet/bcmgenet_mib.h>
 #include <genet/genet_specialstats.h>
