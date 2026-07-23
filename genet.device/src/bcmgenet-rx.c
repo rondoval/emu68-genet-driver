@@ -158,14 +158,6 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 budget)
 			goto next;
 		}
 
-		/* Invalidate only now — after every drop check that reads nothing
-		 * from the buffer. A dropped frame's buffer is never read, and it
-		 * is re-armed via the recycle-path pre-DMA clean (or stays in the
-		 * ring and gets invalidated when a frame is finally accepted), so
-		 * skipping the ~32-line ivac for error/pool-dry frames is free.
-		 * Must stay above the first buffer read: the fingerprint below. */
-		cache_post_dma(addr, length, 0);
-
 		if (likely(unit->ndStarted))
 		{
 			APTR fresh = netdev_rx_pop(unit);
@@ -187,6 +179,13 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 budget)
 				unit->internalStats.rx_pool_dry++;
 				goto next;
 			}
+
+			/* Invalidate the DMA-written buffer, now that the frame is
+			 * accepted. Every drop above — error, oversize, !ndStarted,
+			 * pool-dry — reads nothing from the buffer and re-arms it via the
+			 * recycle-path pre-DMA clean, so it skips the ~32-line ivac for
+			 * free. Must precede the first buffer read: the RSB below. */
+			cache_post_dma(addr, length, 0);
 
 			/* The 64-byte RSB precedes the frame. RXCHK's result (L3
 			 * parser off) is the PLAIN 1's-complement sum over the frame

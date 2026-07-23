@@ -518,11 +518,19 @@ static s32 genphy_read_pause(struct phy_device *phydev)
  */
 s32 genphy_read_status(struct phy_device *phydev, BOOL polling)
 {
+	BOOL old_link = phydev->link;
 	s32 ret = genphy_update_link(phydev, polling);
 	if (ret < 0)
 		return ret;
 
 	if (!phydev->link)
+		return 0;
+
+	/* With autoneg on, a link that was up and is still up cannot have changed
+	 * speed/duplex/pause without going through a link event first (renegotiation
+	 * drops the link), so the several slow MDIO reads in genphy_parse_link() +
+	 * genphy_read_pause() would only re-read unchanged values. */
+	if (phydev->autoneg == AUTONEG_ENABLE && old_link)
 		return 0;
 
 	ret = genphy_parse_link(phydev);

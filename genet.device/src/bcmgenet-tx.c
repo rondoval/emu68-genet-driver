@@ -216,6 +216,24 @@ void bcmgenet_netdev_tx_quiesce(struct GenetUnit *unit)
 	}
 }
 
+/* A descriptor is submittable iff its segment count is in range and every
+ * segment is a non-empty, in-bounds, DMA-reachable buffer. Checked before the
+ * segment reaches CachePreDMA: a trashed pointer would fault Emu68's ARM-side
+ * cache-clean loop (dc cvac on an unmapped address). */
+static BOOL tx_desc_ok(struct GenetUnit *unit, const struct NetDevTxDesc *d)
+{
+	if (d->ntd_NumSegs == 0 || d->ntd_NumSegs > ND_TX_MAX_SEGS)
+		return FALSE;
+	for (UWORD s = 0; s < d->ntd_NumSegs; s++)
+	{
+		const struct NetDevSg *sg = &d->ntd_Segs[s];
+		if (sg->nsg_Len == 0 || sg->nsg_Len > RX_BUF_LENGTH ||
+		    !dma_addr_reachable(&unit->dma_ctx, sg->nsg_Data, sg->nsg_Len))
+			return FALSE;
+	}
+	return TRUE;
+}
+
 /* The ndo_TxSubmit implementation: accept a prefix of the batch, one
  * doorbell. Foreign task context (the stack's core lock serializes callers).
  */
@@ -229,79 +247,47 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
 	/*
-	 * Phase 0 — reject garbage before CachePreDMA touches it: a trashed
-	 * segment pointer crashes Emu68's ARM-side cache-clean loop with an
-	 * unhandled page fault (dc cvac on an unmapped address). A bad head
-	 * descriptor is consumed and
-	 * completed as dropped — the stack's accounting closes, the machine
-	 * lives; a bad descriptor deeper in the batch truncates to the good
-	 * prefix and is dropped on the caller's retry.
-	 */
-	for (ULONG i = 0; i < count; i++)
-	{
-		const struct NetDevTxDesc *d = &descs[i];
-		BOOL bad = d->ntd_NumSegs == 0 || d->ntd_NumSegs > ND_TX_MAX_SEGS;
-		for (UWORD s = 0; !bad && s < d->ntd_NumSegs; s++)
-		{
-			const struct NetDevSg *sg = &d->ntd_Segs[s];
-			if (sg->nsg_Len == 0 || sg->nsg_Len > RX_BUF_LENGTH ||
-			    !dma_addr_reachable(&unit->dma_ctx, sg->nsg_Data, sg->nsg_Len))
-				bad = TRUE;
-		}
-		if (likely(!bad))
-			continue;
-		if (i != 0)
-		{
-			count = i; /* good prefix proceeds; the bad head returns next call */
-			break;
-		}
-		if (txdone_free(unit) == 0)
-			return 0; /* no room to report it — retry after the next harvest */
-		Kprintf("[genet] %s: BAD SG in head descriptor (segs %lu, seg0 data 0x%08lx len %lu) — frame dropped\n",
-				__func__, (ULONG)d->ntd_NumSegs,
-				(ULONG)d->ntd_Segs[0].nsg_Data, (ULONG)d->ntd_Segs[0].nsg_Len);
-		unit->internalStats.tx_bad++;
-		/* a zero-BD, zero-length packet: completed behind whatever is already
-		 * queued, and skipped by the harvest's and the quiesce's tallies */
-		txdone_push(unit, d->ntd_Cookie, ring->tx_prod_index, 0);
-		Signal(unit->task, 1UL << unit->tx_signal);
-		return 1;
-	}
-
-	/*
-	 * Phase 1 — prime the DMA cache for every segment. Harmless for
-	 * descriptors that end up not accepted (a flush is idempotent).
+	 * One pass over the batch: per descriptor, validate -> reserve -> prime ->
+	 * write, with a single prod-index doorbell for the whole accepted prefix.
 	 *
-	 * Every clean in this submit carries DMAF_NoSync; the single closing
-	 * barrier is the emu68_barrier() before the doorbell — the only point
-	 * where the hardware starts reading. A ring-full bail-out leaves cleans
-	 * unclosed, which is fine: nothing is armed, and the retry re-cleans.
+	 * Validation (tx_desc_ok) precedes the CachePreDMA prime because a trashed
+	 * segment pointer would fault Emu68's ARM-side cache-clean loop. The prime
+	 * follows the ring-space check, so nothing is cleaned that the ring will
+	 * not accept — the rejected tail is never touched. Every clean carries
+	 * DMAF_NoSync; the single closing barrier is the emu68_barrier() before the
+	 * doorbell, the only point where the hardware starts reading. Free space is
+	 * read from the hardware consumer index, so a slow harvest never costs ring
+	 * capacity.
 	 */
-	PERF_T0(t_submit); /* driver-internal submit: cache prime + ring writes + doorbell */
-	for (ULONG i = 0; i < count; i++)
-	{
-		const struct NetDevTxDesc *d = &descs[i];
-		for (UWORD s = 0; s < d->ntd_NumSegs; s++)
-			cache_pre_dma(d->ntd_Segs[s].nsg_Data, d->ntd_Segs[s].nsg_Len,
-						  DMA_ReadFromRAM | DMAF_NoSync);
-	}
-
-	/*
-	 * Phase 2 — descriptor writes, one prod-index doorbell for the whole
-	 * batch. Free space is read from the hardware consumer index, so a
-	 * slow harvest never costs ring capacity.
-	 */
+	PERF_T0(t_submit); /* driver-internal submit: validate + cache prime + ring writes + doorbell */
 	ULONG accepted = 0;
 	BOOL kick = FALSE;
 
 	while (accepted < count)
 	{
 		const struct NetDevTxDesc *d = &descs[accepted];
+
+		if (unlikely(!tx_desc_ok(unit, d)))
+		{
+			/* A bad descriptor deeper in the batch truncates to the good
+			 * prefix, which still proceeds to the doorbell; the bad one
+			 * returns on the caller's retry. A bad head has no good prefix to
+			 * hide behind: consume and complete it as a zero-BD, zero-length
+			 * drop so the stack's accounting closes and the caller advances. */
+			if (accepted != 0)
+				break;
+			if (txdone_free(unit) == 0)
+				return 0; /* no room to report it — retry after the next harvest */
+			Kprintf("[genet] %s: BAD SG in head descriptor (segs %lu, seg0 data 0x%08lx len %lu) — frame dropped\n",
+					__func__, (ULONG)d->ntd_NumSegs,
+					(ULONG)d->ntd_Segs[0].nsg_Data, (ULONG)d->ntd_Segs[0].nsg_Len);
+			unit->internalStats.tx_bad++;
+			txdone_push(unit, d->ntd_Cookie, ring->tx_prod_index, 0);
+			Signal(unit->task, 1UL << unit->tx_signal);
+			return 1;
+		}
+
 		u16 need = d->ntd_NumSegs;
-
-		if (unlikely(need == 0 || need > ND_TX_MAX_SEGS))
-			break; /* malformed — contract violation; reject the tail */
-
 		/* +1: with TBUF_64B_EN every frame's stream starts with a 64-byte
 		 * TSB, submitted as its own SOP descriptor. */
 		u16 need_bds = (u16)(need + 1);
@@ -321,6 +307,11 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 		}
 		if (free_bds <= need_bds || txdone_free(unit) == 0)
 			break; /* full — the stack retries after nso_TxDone */
+
+		/* Validated and known to fit: prime the segments for DMA. */
+		for (u16 s = 0; s < need; s++)
+			cache_pre_dma(d->ntd_Segs[s].nsg_Data, d->ntd_Segs[s].nsg_Len,
+						  DMA_ReadFromRAM | DMAF_NoSync);
 
 		/* TSB: one block per ring slot, keyed by the TSB descriptor's own
 		 * slot. Only tx_csum_info is consumed by the hardware. */
