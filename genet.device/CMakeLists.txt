@@ -25,7 +25,7 @@ add_compile_options(
 )
 
 # Debug-output backend defines (EMU68_DEBUG_BACKEND, see emu68-common).
-emu68_debug_backend_definitions()
+emu68_debug_definitions()
 
 # Sources
 add_executable(genet.device

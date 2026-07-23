@@ -1,3 +1,32 @@
+# Release notes — genet.device 3.12
+
+Changes since 3.11.
+
+A build-system maintenance release: the driver builds against the current
+`emu68-common` debug facilities.  No functional change for any user.
+
+---
+
+## Breaking changes
+
+None.
+
+---
+
+## Build system
+
+### Adopt the current `emu68-common` debug tier API
+
+`emu68-common`'s debug macros moved from the old two-level `DEBUG` / `DEBUG_HIGH`
+scheme to a cumulative tier ladder (`off` / `profile` / `debug` / `trace`).  The
+driver follows suit: the CMake `emu68_debug_backend_definitions()` call becomes
+`emu68_debug_definitions()`, the high-verbosity `KprintfH` diagnostics become
+`KprintfT` (trace tier), and the `DEBUG_HIGH` compile guards become `TRACE`.
+`DEBUG_HIGH` was the old high-verbosity level, so `TRACE` is its exact
+equivalent — the emitted code and runtime behaviour are unchanged.
+
+---
+
 # Release notes — genet.device 3.11
 
 Changes since v3.10.

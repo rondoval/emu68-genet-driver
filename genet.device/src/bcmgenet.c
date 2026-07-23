@@ -47,7 +47,7 @@
 
 static void bcmgenet_umac_reset(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Resetting UMAC\n", __func__);
+	KprintfT("[genet] %s: Resetting UMAC\n", __func__);
 
 	mmio_set32(BCMGENET_REG(unit, SYS_RBUF_FLUSH_CTRL), BIT(1));
 	delay_us(10);
@@ -97,7 +97,7 @@ static void bcmgenet_gmac_write_hwaddr(struct GenetUnit *unit, const u8 *addr)
 
 static void bcmgenet_disable_dma(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Disabling DMA\n", __func__);
+	KprintfT("[genet] %s: Disabling DMA\n", __func__);
 	mmio_clear32(BCMGENET_REG(unit, TDMA_REG_BASE + DMA_CTRL), DMA_EN);
 	for (u32 timeout = 0; timeout < DMA_TIMEOUT_VAL; timeout++)
 	{
@@ -123,7 +123,7 @@ static void bcmgenet_disable_dma(struct GenetUnit *unit)
 		}
 		delay_us(1);
 	}
-	KprintfH("[genet] %s: DMA disabled\n", __func__);
+	KprintfT("[genet] %s: DMA disabled\n", __func__);
 
 	/* Flush TX queues */
 	mmio_write32(1, BCMGENET_REG(unit, UMAC_TX_FLUSH));
@@ -133,7 +133,7 @@ static void bcmgenet_disable_dma(struct GenetUnit *unit)
 
 static void bcmgenet_enable_dma(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Enabling DMA\n", __func__);
+	KprintfT("[genet] %s: Enabling DMA\n", __func__);
 	mmio_set32(BCMGENET_REG(unit, RDMA_REG_BASE + DMA_CTRL), DMA_EN);
 	mmio_set32(BCMGENET_REG(unit, TDMA_REG_BASE + DMA_CTRL), DMA_EN);
 }
@@ -161,7 +161,7 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 		}
 	}
 
-	KprintfH("[genet] %s: rx_prod_index=%lu, rx_cons_index=%lu\n", __func__, (ULONG)rx_prod_index, (ULONG)unit->rx_ring.rx_cons_index);
+	KprintfT("[genet] %s: rx_prod_index=%lu, rx_cons_index=%lu\n", __func__, (ULONG)rx_prod_index, (ULONG)unit->rx_ring.rx_cons_index);
 
 	u16 rx_cons_index = unit->rx_ring.rx_cons_index;
 	u16 to_process = (u16)((u32)(rx_prod_index - rx_cons_index) & DMA_C_INDEX_MASK);
@@ -179,18 +179,18 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 
 		ULONG cache_len = length; /* ULONG* for CachePostDMA on any NDK (length is reused below) */
 		CachePostDMA(addr, &cache_len, 0);
-		KprintfH("[genet] %s: packet=%08lx length=%lu\n", __func__, addr + RX_BUF_OFFSET, (ULONG)(length - RX_BUF_OFFSET));
+		KprintfT("[genet] %s: packet=%08lx length=%lu\n", __func__, addr + RX_BUF_OFFSET, (ULONG)(length - RX_BUF_OFFSET));
 
 		if (unlikely(length > RX_BUF_LENGTH))
 		{
-			KprintfH("[genet] %s: len %lu exceeds RX_BUF_LENGTH %lu\n", __func__, (ULONG)length, (ULONG)RX_BUF_LENGTH);
+			KprintfT("[genet] %s: len %lu exceeds RX_BUF_LENGTH %lu\n", __func__, (ULONG)length, (ULONG)RX_BUF_LENGTH);
 			unit->internalStats.rx_length_errors++;
 			goto next;
 		}
 
 		if (unlikely(!(dma_flags & DMA_EOP) || !(dma_flags & DMA_SOP)))
 		{
-			KprintfH("[genet] %s: dropping fragmented packet, dma_flags=0x%lx\n", __func__, (ULONG)dma_flags);
+			KprintfT("[genet] %s: dropping fragmented packet, dma_flags=0x%lx\n", __func__, (ULONG)dma_flags);
 			unit->internalStats.rx_fragmented_errors++;
 			goto next;
 		}
@@ -202,7 +202,7 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 								  DMA_RX_LG |
 								  DMA_RX_RXER)))
 		{
-			KprintfH("[genet] %s: Packet error, length=%lu, dma_flag=0x%lx\n",
+			KprintfT("[genet] %s: Packet error, length=%lu, dma_flag=0x%lx\n",
 					 __func__, (ULONG)length, (ULONG)dma_flags);
 			if (dma_flags & DMA_RX_CRC_ERROR)
 				unit->internalStats.rx_crc_errors++;
@@ -276,7 +276,7 @@ u32 bcmgenet_set_coalesce(struct GenetUnit *unit, u32 tx_max_coalesced_frames, u
 
 static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Initializing RX ring\n", __func__);
+	KprintfT("[genet] %s: Initializing RX ring\n", __func__);
 	struct bcmgenet_rx_ring *ring = &unit->rx_ring;
 
 	/* Initialize common Rx ring structures */
@@ -308,7 +308,7 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 	/* cannot init RDMA_PROD_INDEX to 0, so align RDMA_CONS_INDEX on it instead */
 	ring->rx_cons_index = mmio_read32(BCMGENET_REG(unit, RDMA_PROD_INDEX)) & DMA_P_INDEX_MASK;
 	mmio_write32(ring->rx_cons_index, BCMGENET_REG(unit, RDMA_CONS_INDEX));
-	KprintfH("[genet] %s: rx_cons_index=%lu\n", __func__, (ULONG)unit->rx_ring.rx_cons_index);
+	KprintfT("[genet] %s: rx_cons_index=%lu\n", __func__, (ULONG)unit->rx_ring.rx_cons_index);
 
 	mmio_write32((RX_DESCS << DMA_RING_SIZE_SHIFT) | RX_BUF_LENGTH, unit->genetBase + RDMA_RING_REG_BASE + DMA_RING_BUF_SIZE);
 	mmio_write32((DMA_FC_THRESH_LO << DMA_XOFF_THRESHOLD_SHIFT) | DMA_FC_THRESH_HI, unit->genetBase + RDMA_XON_XOFF_THRESH);
@@ -341,7 +341,7 @@ static u32 bcmgenet_init_rx_queues(struct GenetUnit *unit)
 
 static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Initializing TX ring\n", __func__);
+	KprintfT("[genet] %s: Initializing TX ring\n", __func__);
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
 	/* Initialize common TX ring structures */
@@ -414,7 +414,7 @@ static u32 bcmgenet_init_tx_queues(struct GenetUnit *unit)
 
 static u32 bcmgenet_adjust_link(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Adjusting link for PHY interface %s\n", __func__, phy_string_for_interface(unit->phy_interface));
+	KprintfT("[genet] %s: Adjusting link for PHY interface %s\n", __func__, phy_string_for_interface(unit->phy_interface));
 	struct phy_device *phy_dev = unit->phydev;
 	u32 speed;
 
@@ -460,7 +460,7 @@ static u32 bcmgenet_init_dma(struct GenetUnit *unit)
 	/* Disable RX/TX DMA and flush TX queues */
 	bcmgenet_disable_dma(unit);
 
-	KprintfH("[genet] %s: Initializing DMA\n", __func__);
+	KprintfT("[genet] %s: Initializing DMA\n", __func__);
 
 	/* Flush RX */
 	mmio_set32(BCMGENET_REG(unit, GENET_SYS_OFF + SYS_RBUF_FLUSH_CTRL), BIT(0));
@@ -556,7 +556,7 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit)
 
 u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Starting GENET\n", __func__);
+	KprintfT("[genet] %s: Starting GENET\n", __func__);
 	u32 ret;
 
 	unit->rxbuffer = (dma_addr_t)dma_zalloc(unit->dmaPool, DMA_ALIGN_MIN, RX_TOTAL_BUFSIZE);
@@ -630,7 +630,7 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	 */
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R);
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE /* | UMAC_IRQ_TXDMA_DONE */);
-	KprintfH("[genet] %s: Enabled link and RX DMA interrupts (TX reclaimed in xmit/watchdog)\n", __func__);
+	KprintfT("[genet] %s: Enabled link and RX DMA interrupts (TX reclaimed in xmit/watchdog)\n", __func__);
 
 	/* Enable Rx/Tx */
 	mmio_set32(BCMGENET_REG(unit, UMAC_CMD), CMD_TX_EN | CMD_RX_EN);
@@ -653,7 +653,7 @@ rx_buf_allocated:
 
 static u32 bcmgenet_phy_init(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Initializing PHY interface %s\n", __func__, phy_string_for_interface(unit->phy_interface));
+	KprintfT("[genet] %s: Initializing PHY interface %s\n", __func__, phy_string_for_interface(unit->phy_interface));
 	struct phy_device *phydev;
 
 	phydev = phy_create(unit, unit->phy_interface);
@@ -684,7 +684,7 @@ static u32 bcmgenet_interface_set(struct GenetUnit *unit)
 	{
 	case PHY_INTERFACE_MODE_RGMII:
 	case PHY_INTERFACE_MODE_RGMII_RXID:
-		KprintfH("[genet] %s: Setting PHY mode to RGMII\n", __func__);
+		KprintfT("[genet] %s: Setting PHY mode to RGMII\n", __func__);
 		mmio_write32(PORT_MODE_EXT_GPHY, BCMGENET_REG(unit, SYS_PORT_CTRL));
 		break;
 	default:
@@ -747,7 +747,7 @@ void bcmgenet_reset_quiesce(struct GenetUnit *unit)
 
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Stopping GENET\n", __func__);
+	KprintfT("[genet] %s: Stopping GENET\n", __func__);
 
 	bcmgenet_reset_quiesce(unit);
 	RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
@@ -769,5 +769,5 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 		phy_destroy(unit->phydev);
 		unit->phydev = NULL;
 	}
-	KprintfH("[genet] %s: PHY destroyed. GENET stopped.\n", __func__);
+	KprintfT("[genet] %s: PHY destroyed. GENET stopped.\n", __func__);
 }

@@ -61,7 +61,7 @@ ULONG bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit 
 	/* Clear before handling so any new events after this point re-assert cleanly */
 	mmio_write32(status, BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
 
-	KprintfH("[genet] %s: IRQ0 status: 0x%08lX unit: 0x%08lx\n", __func__, (ULONG)status, (ULONG)unit);
+	KprintfT("[genet] %s: IRQ0 status: 0x%08lX unit: 0x%08lx\n", __func__, (ULONG)status, (ULONG)unit);
 
 	/* Disable both TX and RX until the bottom-half catches up */
 	if (status & UMAC_IRQ_TXDMA_DONE)

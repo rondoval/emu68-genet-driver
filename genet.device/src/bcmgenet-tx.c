@@ -59,7 +59,7 @@ static inline void tx_advance_prod(struct bcmgenet_tx_ring *ring)
 static inline struct enet_cb *bcmgenet_get_txcb(struct bcmgenet_tx_ring *ring)
 {
 	struct enet_cb *tx_cb_ptr = &ring->tx_control_block[ring->write_ptr++];
-	KprintfH("[genet] %s: tx_cb_ptr 0x%lx, write_ptr %ld\n", __func__, tx_cb_ptr, ring->write_ptr - 1);
+	KprintfT("[genet] %s: tx_cb_ptr 0x%lx, write_ptr %ld\n", __func__, tx_cb_ptr, ring->write_ptr - 1);
 	return tx_cb_ptr;
 }
 
@@ -115,7 +115,7 @@ void bcmgenet_tx_reclaim(struct GenetUnit *unit, u16 budget)
 
 u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: unit %lu, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
+	KprintfT("[genet] %s: unit %lu, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
 
 	struct Opener *opener = io->ios2_BufferManagement;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
@@ -123,7 +123,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 
 	if (unlikely(io->ios2_DataLength == 0))
 	{
-		KprintfH("[genet] %s: No data to send\n", __func__);
+		KprintfT("[genet] %s: No data to send\n", __func__);
 		goto err_no_buf;
 	}
 
@@ -152,14 +152,14 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			}
 			else
 			{
-				KprintfH("[genet] %s: buffer not DMA-reachable, falling back to copy\n", __func__);
+				KprintfT("[genet] %s: buffer not DMA-reachable, falling back to copy\n", __func__);
 			}
 		}
 
 		if (unlikely(body_dma))
 		{
 			/* Two-descriptor DMA path: header in staging, body via user DMA. */
-			KprintfH("[genet] %s: DMA path, body_dma=0x%lx\n", __func__, body_dma);
+			KprintfT("[genet] %s: DMA path, body_dma=0x%lx\n", __func__, body_dma);
 			hdr_staging = tx_staging_alloc(unit);
 			if (unlikely(!hdr_staging))
 				goto err_no_buf;
@@ -190,7 +190,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			if (!opener->CopyFromBuff ||
 				opener->CopyFromBuff((u8 *)body_staging + ETH_HLEN, io->ios2_Data, copy_length) == 0)
 			{
-				KprintfH("[genet] %s: Failed to copy packet data\n", __func__);
+				KprintfT("[genet] %s: Failed to copy packet data\n", __func__);
 				tx_staging_free(unit, body_staging);
 				body_staging = NULL;
 				goto err_no_buf;
@@ -210,14 +210,14 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			dma_addr_t d = (dma_addr_t)opener->DMACopyFromBuff(io->ios2_Data);
 			if (dma_addr_reachable(&unit->dma_ctx, (APTR)d, io->ios2_DataLength))
 			{
-				KprintfH("[genet] %s: RAW DMA copy from buffer 0x%lx\n", __func__, d);
+				KprintfT("[genet] %s: RAW DMA copy from buffer 0x%lx\n", __func__, d);
 				body_dma = d;
 				is_dma_path = TRUE;
 			}
 		}
 		if (likely(!body_dma))
 		{
-			KprintfH("[genet] %s: RAW software copy\n", __func__);
+			KprintfT("[genet] %s: RAW software copy\n", __func__);
 			body_staging = tx_staging_alloc(unit);
 			if (unlikely(!body_staging))
 				goto err_no_buf;
@@ -228,7 +228,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			if (!opener->CopyFromBuff ||
 				opener->CopyFromBuff(body_staging, io->ios2_Data, copy_length) == 0)
 			{
-				KprintfH("[genet] %s: Failed to copy RAW packet data\n", __func__);
+				KprintfT("[genet] %s: Failed to copy RAW packet data\n", __func__);
 				tx_staging_free(unit, body_staging);
 				body_staging = NULL;
 				goto err_no_buf;
@@ -245,7 +245,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	 * descriptor writes, prod-index advance, MMIO kick. No memcpy, no
 	 * CachePreDMA, no user callbacks here.
 	 */
-	KprintfH("[genet] %s: pre: tx_prod_index %ld, write_ptr %ld\n", __func__, ring->tx_prod_index, ring->write_ptr);
+	KprintfT("[genet] %s: pre: tx_prod_index %ld, write_ptr %ld\n", __func__, ring->tx_prod_index, ring->write_ptr);
 	Forbid();
 	u16 free_bds = tx_free_bds(ring);
 
@@ -262,7 +262,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 
 	if (unlikely(free_bds <= bds_required))
 	{
-		KprintfH("[genet] %s: Not enough free BDs\n", __func__);
+		KprintfT("[genet] %s: Not enough free BDs\n", __func__);
 		Permit();
 		if (hdr_staging)
 			tx_staging_free(unit, hdr_staging);
@@ -307,7 +307,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	}
 	unit->internalStats.tx_packets++;
 
-	KprintfH("[genet] %s: Scheduled, tx_prod_index %ld\n", __func__, ring->tx_prod_index);
+	KprintfT("[genet] %s: Scheduled, tx_prod_index %ld\n", __func__, ring->tx_prod_index);
 	mmio_write32(ring->tx_prod_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
 	Permit();
 	return COMMAND_PROCESSED;

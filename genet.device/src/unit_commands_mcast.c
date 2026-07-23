@@ -38,10 +38,10 @@ static inline u64 GetAddress(const u8 *addr)
 u32 Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-#ifdef DEBUG_HIGH
+#ifdef TRACE
     if (io->ios2_Req.io_Command == S2_ADDMULTICASTADDRESSES)
     {
-        KprintfH("[genet] %s: Adding multicast address range %02lx:%02lx:%02lx:%02lx:%02lx:%02lx - %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
+        KprintfT("[genet] %s: Adding multicast address range %02lx:%02lx:%02lx:%02lx:%02lx:%02lx - %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
                  __func__,
                  io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
                  io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5],
@@ -50,7 +50,7 @@ u32 Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
     }
     else
     {
-        KprintfH("[genet] %s: Adding multicast address %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
+        KprintfT("[genet] %s: Adding multicast address %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
                  __func__,
                  io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
                  io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5]);
@@ -97,10 +97,10 @@ u32 Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
 u32 Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-#ifdef DEBUG_HIGH
+#ifdef TRACE
     if (io->ios2_Req.io_Command == S2_DELMULTICASTADDRESSES)
     {
-        KprintfH("[genet] %s: Removing multicast address range %02lx:%02lx:%02lx:%02lx:%02lx:%02lx - %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
+        KprintfT("[genet] %s: Removing multicast address range %02lx:%02lx:%02lx:%02lx:%02lx:%02lx - %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
                  __func__,
                  io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
                  io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5],
@@ -109,7 +109,7 @@ u32 Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
     }
     else
     {
-        KprintfH("[genet] %s: Removing multicast address %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
+        KprintfT("[genet] %s: Removing multicast address %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
                  __func__,
                  io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
                  io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5]);
