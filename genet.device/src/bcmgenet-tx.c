@@ -1,8 +1,26 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Broadcom GENET (Gigabit Ethernet) controller driver
+ * Broadcom GENET (Gigabit Ethernet) controller driver — netdev TX path.
  *
  * Copyright (c) 2014-2025 Broadcom
+ *
+ * Zero-copy scatter-gather transmit: the stack submits descriptor batches
+ * whose segments live in memory from ndo_DmaAlloc (guaranteed reachable);
+ * one hardware doorbell per batch. No staging buffers, no memcpy.
+ *
+ * NO LOCK. Two single-writer relations carry the whole path:
+ *
+ *   BD ring      producer (this file's submit, foreign task, serialized by
+ *                the stack's core lock) -> hardware. Descriptors live in the
+ *                controller's BD RAM and are read by the DMA engine alone,
+ *                so free space comes straight off TDMA_CONS_INDEX and no
+ *                consumer state takes part.
+ *   ndTxDone     producer (submit) -> consumer (unit task, tx_harvest), an
+ *                SPSC FIFO of {cookie, end-of-packet BD index}. It is what
+ *                decouples cookie delivery from BD reuse, and the only
+ *                object the two contexts share.
+ *
+ * nso_TxDone is called from the unit task only, never from a submitter.
  */
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
@@ -12,16 +30,18 @@
 #include <proto/exec.h>
 #endif
 
-#include <exec/execbase.h> /* DMA_ReadFromRAM for CachePreDMA(); older NDKs don't pull it in transitively */
+#include <cache_ops.h>
 #include <iomem.h>
 #include <types.h>
 #include <debug.h>
 #include <device.h>
-#include <runtime_config.h>
 
 #include <genet/bcmgenet.h>
 #include <genet/bcmgenet-regs.h>
-#include <genet/bcmgenet-irq.h>
+#include <dma_mem.h>
+
+/* Cookies delivered per nso_TxDone call. */
+#define TX_DONE_BATCH 32u
 
 /* Combined address + length/status setter */
 static inline void dmadesc_set(APTR descriptor_address, dma_addr_t addr, u32 val)
@@ -30,26 +50,22 @@ static inline void dmadesc_set(APTR descriptor_address, dma_addr_t addr, u32 val
 	mmio_write32(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
 }
 
-/* Slab cache wrappers — Forbid is brief and recursion-safe, so callers may
- * be either inside or outside the ring lock. */
-static inline APTR tx_staging_alloc(struct GenetUnit *unit)
+/* The ring slot the producer is about to fill. TX_DESCS is 256, so the
+ * 16-bit BD index truncates straight to it — no separate write pointer. */
+static inline u8 tx_slot(const struct bcmgenet_tx_ring *ring)
 {
-	Forbid();
-	APTR p = slab_alloc(&unit->tx_buffer_cache);
-	Permit();
-	return p;
+	return (u8)ring->tx_prod_index;
 }
 
-static inline void tx_staging_free(struct GenetUnit *unit, APTR p)
+/* BD RAM address of that slot. */
+static inline APTR tx_desc(const struct GenetUnit *unit, const struct bcmgenet_tx_ring *ring)
 {
-	Forbid();
-	slab_free(&unit->tx_buffer_cache, p);
-	Permit();
+	return BCMGENET_REG(unit, GENET_TX_OFF) + (u32)tx_slot(ring) * DMA_DESC_SIZE;
 }
 
 static inline u16 tx_free_bds(const struct bcmgenet_tx_ring *ring)
 {
-	return (u16)(TX_DESCS - ((u32)(ring->tx_prod_index - ring->tx_cons_index) & DMA_P_INDEX_MASK));
+	return (u16)(TX_DESCS - ((u32)(ring->tx_prod_index - ring->hw_cons_cache) & DMA_P_INDEX_MASK));
 }
 
 static inline void tx_advance_prod(struct bcmgenet_tx_ring *ring)
@@ -57,266 +73,319 @@ static inline void tx_advance_prod(struct bcmgenet_tx_ring *ring)
 	ring->tx_prod_index = (u16)(((u32)ring->tx_prod_index + 1U) & DMA_P_INDEX_MASK);
 }
 
-static inline struct enet_cb *bcmgenet_get_txcb(struct bcmgenet_tx_ring *ring)
+/* FIFO slots the producer may still fill. */
+static inline u32 txdone_free(const struct GenetUnit *unit)
 {
-	struct enet_cb *tx_cb_ptr = &ring->tx_control_block[ring->write_ptr++];
-	KprintfH("[genet] %s: tx_cb_ptr 0x%lx, write_ptr %ld\n", __func__, tx_cb_ptr, ring->write_ptr - 1);
-	return tx_cb_ptr;
+	return ND_TXDONE_RING_N - (unit->ndTxDoneProd - unit->ndTxDoneCons);
 }
 
-/* Build the 14-byte Ethernet II header into `buf`. */
-static inline void build_eth_header(u8 *buf, const u8 *dst_mac,
-									const u8 *src_mac, u16 ethertype)
+/* Does the unit task have completions waiting as of `hw_cons`? Producer-side
+ * peek at the consumer's head entry: the consumer only ever advances, and an
+ * entry is not rewritten until the producer wraps onto it (which needs the
+ * consumer to have passed it), so a stale read costs at most one redundant
+ * Signal to a task that is by definition already awake. */
+static inline BOOL txdone_pending(const struct GenetUnit *unit, u16 hw_cons)
 {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstrict-aliasing"
-	*(ULONG *)buf = *(const ULONG *)dst_mac;
-	*(UWORD *)(buf + 4) = *(const UWORD *)&dst_mac[4];
-	*(ULONG *)(buf + 6) = *(const ULONG *)src_mac;
-	*(UWORD *)(buf + 10) = *(const UWORD *)&src_mac[4];
-	*(UWORD *)(buf + 12) = ethertype;
-#pragma GCC diagnostic pop
+	u32 cons = unit->ndTxDoneCons;
+	if (cons == unit->ndTxDoneProd)
+		return FALSE;
+	/* Read the producer's published index before the entry it publishes. */
+	asm volatile("" ::: "memory");
+	return (u16)(hw_cons - unit->ndTxDone[cons & ND_TXDONE_RING_MASK].gtd_End) < 0x8000u;
 }
 
-/* Fill a CB and program its descriptor */
-static inline void tx_cb_publish(struct enet_cb *cb, APTR staging, dma_addr_t dma, u32 len_stat)
+/* Queue a cookie for the unit task, complete once the hardware consumer
+ * reaches `end`. Producer side; the caller has checked txdone_free().
+ * `bytes` is 0 for a packet the sanity gate rejected. */
+static inline void txdone_push(struct GenetUnit *unit, APTR cookie, u16 end, u16 bytes)
 {
-	cb->staging_buffer = staging;
-	cb->data_buffer = dma;
-	dmadesc_set(cb->descriptor_address, dma, len_stat);
+	u32 prod = unit->ndTxDoneProd;
+	struct GenetTxDone *e = &unit->ndTxDone[prod & ND_TXDONE_RING_MASK];
+	e->gtd_Cookie = cookie;
+	e->gtd_End = end;
+	e->gtd_Bytes = bytes;
+	asm volatile("" ::: "memory");
+	unit->ndTxDoneProd = prod + 1;
 }
 
-void bcmgenet_tx_reclaim(struct GenetUnit *unit, u16 budget)
+/*
+ * Deliver every TX cookie the hardware has finished with. Unit task only.
+ *
+ * The hardware consumer index is sampled ONCE, which bounds the pass: a
+ * packet nso_TxDone submits from inside this call cannot complete into it.
+ * Completion is a modular comparison against that snapshot — safe because an
+ * unharvested entry's distance can never approach the 16-bit half-window
+ * (the FIFO holds at most ND_TXDONE_RING_N packets of ND_TX_MAX_SEGS + 1
+ * BDs each, i.e. well under 32768 BDs of producer advance).
+ */
+void bcmgenet_tx_harvest(struct GenetUnit *unit)
 {
-	if (budget == 0U)
+	u32 cons = unit->ndTxDoneCons;
+	if (cons == unit->ndTxDoneProd)
+		return; /* nothing outstanding: no MMIO, no work */
+	if (unlikely(unit->ndStackOps == NULL))
+	{
+		/* Detached with entries still queued — a close that skipped DETACH.
+		 * Retire them silently; there is no longer a stack to tell. */
+		unit->ndTxDoneCons = unit->ndTxDoneProd;
 		return;
-
-	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
-
-	/* Compute how many buffers are transmitted since last xmit call */
-	u16 tx_cons_index = mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK;
-	u16 txbds_ready = (u16)((u32)(tx_cons_index - ring->tx_cons_index) & DMA_C_INDEX_MASK);
-	txbds_ready = (txbds_ready > budget) ? budget : txbds_ready;
-
-	u16 txbds_processed = 0;
-	while (txbds_processed < txbds_ready)
-	{
-		struct enet_cb *cb = &ring->tx_control_block[ring->clean_ptr];
-		if (cb->staging_buffer)
-		{
-			slab_free(&unit->tx_buffer_cache, cb->staging_buffer);
-			cb->staging_buffer = NULL;
-		}
-		++ring->clean_ptr;
-		++txbds_processed;
 	}
 
-	ring->tx_cons_index = (u16)((u32)(ring->tx_cons_index + txbds_processed) & DMA_C_INDEX_MASK);
+	PERF_T0(t_harvest);
+	u16 hw_cons = (u16)(mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK);
+
+	APTR batch[TX_DONE_BATCH];
+	for (;;)
+	{
+		ULONG n = 0;
+		/* re-read the producer index every pass: nso_TxDone below may
+		 * re-enter ndo_TxSubmit and extend the FIFO */
+		while (n < TX_DONE_BATCH && cons != unit->ndTxDoneProd)
+		{
+			const struct GenetTxDone *e = &unit->ndTxDone[cons & ND_TXDONE_RING_MASK];
+			if ((u16)(hw_cons - e->gtd_End) >= 0x8000u)
+				break; /* still in flight — and so is everything behind it */
+			/* Tallied here, where the hardware consumer has passed the packet,
+			 * so the counters mean "transmitted". A zero length marks a
+			 * sanity-gate reject, already counted in tx_bad. */
+			if (likely(e->gtd_Bytes != 0))
+			{
+				unit->internalStats.tx_packets++;
+				unit->internalStats.tx_bytes += e->gtd_Bytes;
+			}
+			batch[n++] = e->gtd_Cookie;
+			cons++;
+		}
+		if (n == 0)
+			break;
+		/* Publish before the callback: a re-entrant submit. */
+		asm volatile("" ::: "memory");
+		unit->ndTxDoneCons = cons;
+		unit->ndStackOps->nso_TxDone(unit->ndStackCtx, batch, n);
+	}
+	PERF_ADD(&unit->gu_Perf, GP_TX_HARVEST, t_harvest);
 }
 
-u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
+/*
+ * STOP-time quiesce: hardware DMA is already disabled — complete everything
+ * still queued so the stack's memory accounting closes exactly. Unit task
+ * context, and the ABI requires it to finish before the STOP op replies.
+ *
+ * ndStarted is cleared before this runs, but a submitter that read the flag
+ * just before then can still be part-way through queueing its cookies, and
+ * anything it pushes after the drain below would never be completed — a
+ * permanent pbuf leak in the stack. So wait it out first. ndo_TxSubmit never
+ * blocks, so an in-flight submitter needs nothing but CPU to finish: dropping
+ * below every other task hands it exactly that, and the wait is bounded by one
+ * submit call.
+ */
+void bcmgenet_netdev_tx_quiesce(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: unit %lu, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
+	if (unit->ndTxBusy != 0)
+	{
+		struct Task *self = FindTask(NULL);
+		BYTE pri = SetTaskPri(self, -128);
+		while (unit->ndTxBusy != 0)
+			;
+		SetTaskPri(self, pri);
+	}
 
-	struct Opener *opener = io->ios2_BufferManagement;
+	bcmgenet_tx_harvest(unit); /* whatever did make it onto the wire */
+
+	if (unit->ndStackOps == NULL)
+		return; /* no stack left to complete cookies to; harvest retired them */
+
+	APTR batch[TX_DONE_BATCH];
+	u32 cons = unit->ndTxDoneCons;
+	while (cons != unit->ndTxDoneProd)
+	{
+		ULONG n = 0;
+		while (n < TX_DONE_BATCH && cons != unit->ndTxDoneProd)
+		{
+			const struct GenetTxDone *e = &unit->ndTxDone[cons & ND_TXDONE_RING_MASK];
+			batch[n++] = e->gtd_Cookie;
+			cons++;
+			/* Zero length is a sanity-gate reject: already in tx_bad, and
+			 * counting it here too would report one lost frame as two. */
+			if (e->gtd_Bytes != 0)
+				unit->internalStats.tx_dropped++;
+		}
+		asm volatile("" ::: "memory");
+		unit->ndTxDoneCons = cons;
+		unit->ndStackOps->nso_TxDone(unit->ndStackCtx, batch, n);
+	}
+}
+
+/* The ndo_TxSubmit implementation: accept a prefix of the batch, one
+ * doorbell. Foreign task context (the stack's core lock serializes callers).
+ */
+LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc *descs, ULONG count)
+{
+	KprintfT("[genet] %s: count %lu len %lu\n", __func__, count,
+			 (ULONG)(count != 0 ? descs[0].ntd_Segs[0].nsg_Len : 0));
+	if (unlikely(!unit->ndStarted))
+		return 0;
+
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
-	BOOL is_raw = (io->ios2_Req.io_Flags & SANA2IOF_RAW) != 0;
 
-	if (unlikely(io->ios2_DataLength == 0))
+	/*
+	 * Phase 0 — reject garbage before CachePreDMA touches it: a trashed
+	 * segment pointer crashes Emu68's ARM-side cache-clean loop with an
+	 * unhandled page fault (dc cvac on an unmapped address). A bad head
+	 * descriptor is consumed and
+	 * completed as dropped — the stack's accounting closes, the machine
+	 * lives; a bad descriptor deeper in the batch truncates to the good
+	 * prefix and is dropped on the caller's retry.
+	 */
+	for (ULONG i = 0; i < count; i++)
 	{
-		KprintfH("[genet] %s: No data to send\n", __func__);
-		goto err_no_buf;
+		const struct NetDevTxDesc *d = &descs[i];
+		BOOL bad = d->ntd_NumSegs == 0 || d->ntd_NumSegs > ND_TX_MAX_SEGS;
+		for (UWORD s = 0; !bad && s < d->ntd_NumSegs; s++)
+		{
+			const struct NetDevSg *sg = &d->ntd_Segs[s];
+			if (sg->nsg_Len == 0 || sg->nsg_Len > RX_BUF_LENGTH ||
+			    !dma_addr_reachable(&unit->dma_ctx, sg->nsg_Data, sg->nsg_Len))
+				bad = TRUE;
+		}
+		if (likely(!bad))
+			continue;
+		if (i != 0)
+		{
+			count = i; /* good prefix proceeds; the bad head returns next call */
+			break;
+		}
+		if (txdone_free(unit) == 0)
+			return 0; /* no room to report it — retry after the next harvest */
+		Kprintf("[genet] %s: BAD SG in head descriptor (segs %lu, seg0 data 0x%08lx len %lu) — frame dropped\n",
+				__func__, (ULONG)d->ntd_NumSegs,
+				(ULONG)d->ntd_Segs[0].nsg_Data, (ULONG)d->ntd_Segs[0].nsg_Len);
+		unit->internalStats.tx_bad++;
+		/* a zero-BD, zero-length packet: completed behind whatever is already
+		 * queued, and skipped by the harvest's and the quiesce's tallies */
+		txdone_push(unit, d->ntd_Cookie, ring->tx_prod_index, 0);
+		Signal(unit->task, 1UL << unit->tx_signal);
+		return 1;
 	}
 
 	/*
-	 * Phase 1 — outside the ring lock: decide DMA vs. copy, slab-allocate
-	 * staging, build header, run user CopyFromBuff, prime the DMA cache.
-	 * This keeps the up-to-1500-byte memcpy and the cache flush out of the
-	 * critical section.
+	 * Phase 1 — prime the DMA cache for every segment. Harmless for
+	 * descriptors that end up not accepted (a flush is idempotent).
+	 *
+	 * Every clean in this submit carries DMAF_NoSync; the single closing
+	 * barrier is the emu68_barrier() before the doorbell — the only point
+	 * where the hardware starts reading. A ring-full bail-out leaves cleans
+	 * unclosed, which is fine: nothing is armed, and the retry re-cleans.
 	 */
-	APTR hdr_staging = NULL, body_staging = NULL;
-	dma_addr_t hdr_dma = 0, body_dma = 0;
-	ULONG hdr_len = 0, body_len = 0; /* ULONG so &hdr_len/&body_len match CachePreDMA on any NDK */
-	u8 bds_required;
-	BOOL is_dma_path = FALSE;
-
-	if (likely(!is_raw))
+	PERF_T0(t_submit); /* driver-internal submit: cache prime + ring writes + doorbell */
+	for (ULONG i = 0; i < count; i++)
 	{
-		if (unlikely(opener->DMACopyFromBuff))
-		{
-			dma_addr_t d = (dma_addr_t)opener->DMACopyFromBuff(io->ios2_Data);
-			/* GENET DMA can only reach Emu68 (Pi-DRAM) RAM; Chip RAM and any
-			 * Zorro/accelerator Fast RAM are unreachable -> fall back to copy. */
-			if (likely(dma_addr_reachable(&unit->dma_ctx, (APTR)d, io->ios2_DataLength)))
-			{
-				body_dma = d;
-			}
-			else
-			{
-				KprintfH("[genet] %s: buffer not DMA-reachable, falling back to copy\n", __func__);
-			}
-		}
-
-		if (unlikely(body_dma))
-		{
-			/* Two-descriptor DMA path: header in staging, body via user DMA. */
-			KprintfH("[genet] %s: DMA path, body_dma=0x%lx\n", __func__, body_dma);
-			hdr_staging = tx_staging_alloc(unit);
-			if (unlikely(!hdr_staging))
-				goto err_no_buf;
-
-			build_eth_header((u8 *)hdr_staging, io->ios2_DstAddr,
-							 unit->currentMacAddress, (u16)io->ios2_PacketType);
-			hdr_dma = (dma_addr_t)hdr_staging;
-			hdr_len = ETH_HLEN;
-			body_len = io->ios2_DataLength;
-			CachePreDMA((APTR)hdr_dma, &hdr_len, DMA_ReadFromRAM);
-			CachePreDMA((APTR)body_dma, &body_len, DMA_ReadFromRAM);
-			is_dma_path = TRUE;
-			bds_required = 2;
-		}
-		else
-		{
-			/* Single-descriptor copy path: header + body into staging. */
-			body_staging = tx_staging_alloc(unit);
-			if (unlikely(!body_staging))
-				goto err_no_buf;
-
-			build_eth_header((u8 *)body_staging, io->ios2_DstAddr,
-							 unit->currentMacAddress, (u16)io->ios2_PacketType);
-
-			u32 copy_length = io->ios2_DataLength;
-			if (unit->use_miami_workaround)
-				copy_length = (copy_length + 3U) & ~3U;
-			if (!opener->CopyFromBuff ||
-				opener->CopyFromBuff((u8 *)body_staging + ETH_HLEN, io->ios2_Data, copy_length) == 0)
-			{
-				KprintfH("[genet] %s: Failed to copy packet data\n", __func__);
-				tx_staging_free(unit, body_staging);
-				body_staging = NULL;
-				goto err_no_buf;
-			}
-
-			body_dma = (dma_addr_t)body_staging;
-			body_len = ETH_HLEN + io->ios2_DataLength;
-			CachePreDMA((APTR)body_dma, &body_len, DMA_ReadFromRAM);
-			bds_required = 1;
-		}
-	}
-	else
-	{
-		/* RAW path: caller provides a complete Ethernet frame. */
-		if (unlikely(opener->DMACopyFromBuff))
-		{
-			dma_addr_t d = (dma_addr_t)opener->DMACopyFromBuff(io->ios2_Data);
-			if (dma_addr_reachable(&unit->dma_ctx, (APTR)d, io->ios2_DataLength))
-			{
-				KprintfH("[genet] %s: RAW DMA copy from buffer 0x%lx\n", __func__, d);
-				body_dma = d;
-				is_dma_path = TRUE;
-			}
-		}
-		if (likely(!body_dma))
-		{
-			KprintfH("[genet] %s: RAW software copy\n", __func__);
-			body_staging = tx_staging_alloc(unit);
-			if (unlikely(!body_staging))
-				goto err_no_buf;
-
-			u32 copy_length = io->ios2_DataLength;
-			if (unit->use_miami_workaround)
-				copy_length = (copy_length + 3U) & ~3U;
-			if (!opener->CopyFromBuff ||
-				opener->CopyFromBuff(body_staging, io->ios2_Data, copy_length) == 0)
-			{
-				KprintfH("[genet] %s: Failed to copy RAW packet data\n", __func__);
-				tx_staging_free(unit, body_staging);
-				body_staging = NULL;
-				goto err_no_buf;
-			}
-			body_dma = (dma_addr_t)body_staging;
-		}
-		body_len = io->ios2_DataLength;
-		CachePreDMA((APTR)body_dma, &body_len, DMA_ReadFromRAM);
-		bds_required = 1;
+		const struct NetDevTxDesc *d = &descs[i];
+		for (UWORD s = 0; s < d->ntd_NumSegs; s++)
+			cache_pre_dma(d->ntd_Segs[s].nsg_Data, d->ntd_Segs[s].nsg_Len,
+						  DMA_ReadFromRAM | DMAF_NoSync);
 	}
 
 	/*
-	 * Phase 2 — under the ring lock: free-BD check, optional lazy reclaim,
-	 * descriptor writes, prod-index advance, MMIO kick. No memcpy, no
-	 * CachePreDMA, no user callbacks here.
+	 * Phase 2 — descriptor writes, one prod-index doorbell for the whole
+	 * batch. Free space is read from the hardware consumer index, so a
+	 * slow harvest never costs ring capacity.
 	 */
-	KprintfH("[genet] %s: pre: tx_prod_index %ld, write_ptr %ld\n", __func__, ring->tx_prod_index, ring->write_ptr);
-	Forbid();
-	u16 free_bds = tx_free_bds(ring);
+	ULONG accepted = 0;
+	BOOL kick = FALSE;
 
-	/*
-	 * Lazy reclaim: skip the MMIO read on every submit. TX reply already
-	 * happened at submit time, so stale descriptors don't block the stack.
-	 * Reclaim only when the ring is actually getting low.
-	 */
-	if (unlikely(free_bds < TX_RECLAIM_THRESHOLD))
+	while (accepted < count)
 	{
-		bcmgenet_tx_reclaim(unit, TX_DESCS);
-		free_bds = tx_free_bds(ring);
-	}
+		const struct NetDevTxDesc *d = &descs[accepted];
+		u16 need = d->ntd_NumSegs;
 
-	if (unlikely(free_bds <= bds_required))
-	{
-		KprintfH("[genet] %s: Not enough free BDs\n", __func__);
-		Permit();
-		if (hdr_staging)
-			tx_staging_free(unit, hdr_staging);
-		if (body_staging)
-			tx_staging_free(unit, body_staging);
-		goto err_no_buf;
-	}
+		if (unlikely(need == 0 || need > ND_TX_MAX_SEGS))
+			break; /* malformed — contract violation; reject the tail */
 
-	/* Tell abortIO this request is committed to the ring. */
-	io->ios2_Req.io_Message.mn_Node.ln_Pred = NULL;
+		/* +1: with TBUF_64B_EN every frame's stream starts with a 64-byte
+		 * TSB, submitted as its own SOP descriptor. */
+		u16 need_bds = (u16)(need + 1);
 
-	if (unlikely(!is_raw && is_dma_path))
-	{
-		/* Two-descriptor DMA: SOP header CB (no packet boundary) + EOP body CB. */
-		struct enet_cb *hcb = bcmgenet_get_txcb(ring);
-		tx_cb_publish(hcb, hdr_staging, hdr_dma,
-					  (ETH_HLEN << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT) | DMA_TX_APPEND_CRC | DMA_SOP);
+		u16 free_bds = tx_free_bds(ring);
+		if (unlikely(free_bds < TX_CONS_REFRESH_BDS))
+		{
+			ring->hw_cons_cache =
+				(u16)(mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK);
+			free_bds = tx_free_bds(ring);
+			/* Space came back straight off the hardware index, so the unit
+			 * task may not have been woken for any of it: TXDMA_DONE needs
+			 * TX_COALESCE_FRAMES buffers, which a bursty low-rate stream can
+			 * go a long time without reaching. Wake it, or those cookies —
+			 * and the stack's pbufs — wait for the housekeeping tick. */
+			kick = TRUE;
+		}
+		if (free_bds <= need_bds || txdone_free(unit) == 0)
+			break; /* full — the stack retries after nso_TxDone */
+
+		/* TSB: one block per ring slot, keyed by the TSB descriptor's own
+		 * slot. Only tx_csum_info is consumed by the hardware. */
+		struct genet_status_64 *tsb = (struct genet_status_64 *)
+			((u8 *)unit->ndTxTsb + ((u32)tx_slot(ring) * GENET_STATUS64_LEN));
+		u32 csum_info = 0;
+		if (d->ntd_Flags & NDTF_L4CSUM)
+		{
+			csum_info = STATUS_TX_CSUM_LV |
+						(((u32)d->ntd_CsumStart & STATUS_TX_CSUM_START_MASK)
+						 << STATUS_TX_CSUM_START_SHIFT) |
+						((u32)d->ntd_CsumOffset & STATUS_TX_CSUM_OFFSET_MASK);
+			if (d->ntd_Flags & NDTF_L4_UDP)
+				csum_info |= STATUS_TX_CSUM_PROTO_UDP;
+		}
+		tsb->tx_csum_info = le32(csum_info);
+		cache_pre_dma(tsb, GENET_STATUS64_LEN, DMA_ReadFromRAM | DMAF_NoSync);
+
+		/* the TSB says WHERE to checksum; the SOP descriptor's
+		 * DMA_TX_DO_CSUM is what makes the engine do it at all */
+		u32 sop_stat = ((u32)GENET_STATUS64_LEN << DMA_BUFLENGTH_SHIFT) |
+					   (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT) |
+					   DMA_TX_APPEND_CRC | DMA_SOP;
+		if (d->ntd_Flags & NDTF_L4CSUM)
+			sop_stat |= DMA_TX_DO_CSUM;
+		dmadesc_set(tx_desc(unit, ring), (dma_addr_t)tsb, sop_stat);
 		tx_advance_prod(ring);
 
-		struct enet_cb *bcb = bcmgenet_get_txcb(ring);
-		tx_cb_publish(bcb, NULL, body_dma,
-					  (io->ios2_DataLength << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT) | DMA_TX_APPEND_CRC | DMA_EOP);
-		tx_advance_prod(ring);
+		u16 bytes = 0;
+		for (u16 s = 0; s < need; s++)
+		{
+			const struct NetDevSg *sg = &d->ntd_Segs[s];
 
-		unit->internalStats.tx_dma++;
-		unit->internalStats.tx_bytes += io->ios2_DataLength + ETH_HLEN;
+			u32 len_stat = ((u32)sg->nsg_Len << DMA_BUFLENGTH_SHIFT) |
+						   (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT) |
+						   DMA_TX_APPEND_CRC;
+			if (s == need - 1)
+				len_stat |= DMA_EOP;
+
+			dmadesc_set(tx_desc(unit, ring), (dma_addr_t)sg->nsg_Data, len_stat);
+			tx_advance_prod(ring);
+			bytes = (u16)(bytes + sg->nsg_Len);
+		}
+
+		/* The length travels with the cookie: the packet and byte counters are
+		 * tallied by the harvest, on the unit task, so nothing outside that
+		 * task writes them and no snapshot can catch a 64-bit carry half
+		 * applied. */
+		txdone_push(unit, d->ntd_Cookie, ring->tx_prod_index, bytes);
+		accepted++;
 	}
-	else
+
+	if (accepted != 0)
 	{
-		/* Single descriptor: non-RAW copy, RAW DMA, or RAW copy. */
-		struct enet_cb *cb = bcmgenet_get_txcb(ring);
-		u16 wire_len = is_raw ? (u16)io->ios2_DataLength : (u16)body_len;
-		tx_cb_publish(cb, body_staging, body_dma,
-					  ((u32)wire_len << DMA_BUFLENGTH_SHIFT) | (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT) | DMA_TX_APPEND_CRC | DMA_SOP | DMA_EOP);
-		tx_advance_prod(ring);
-
-		if (unlikely(is_dma_path))
-			unit->internalStats.tx_dma++;
-		else
-			unit->internalStats.tx_copy++;
-		unit->internalStats.tx_bytes += wire_len;
+		/* close the NoSync clean batch (segments + TSBs) before the
+		 * hardware is told to read them */
+		emu68_barrier();
+		mmio_write32(ring->tx_prod_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
 	}
-	unit->internalStats.tx_packets++;
+	else if (count != 0)
+		unit->internalStats.tx_rejected++; /* ring full */
 
-	KprintfH("[genet] %s: Scheduled, tx_prod_index %ld\n", __func__, ring->tx_prod_index);
-	mmio_write32(ring->tx_prod_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
-	Permit();
-	return COMMAND_PROCESSED;
+	if (unlikely(kick) && txdone_pending(unit, ring->hw_cons_cache))
+		Signal(unit->task, 1UL << unit->tx_signal);
 
-err_no_buf:
-	unit->internalStats.tx_dropped++;
-	io->ios2_WireError = S2WERR_BUFF_ERROR;
-	io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
-	UnitSubmitControlAsync(unit, UNIT_CTRL_EVENT_REPORT, (union UnitControlPayload){.eventSet = S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR});
-	return COMMAND_PROCESSED;
+	PERF_ADD(&unit->gu_Perf, GP_TX_SUBMIT, t_submit);
+	return (LONG)accepted;
 }

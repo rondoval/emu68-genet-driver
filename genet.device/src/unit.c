@@ -20,7 +20,7 @@
 
 static void SetupMDIO(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Setting up MDIO bus\n", __func__);
+	KprintfT("[genet] %s: Setting up MDIO bus\n", __func__);
 	gpioSetAlternate(unit->gpioBase, PIN_RGMII_MDIO, GPIO_AF_5);
 	gpioSetAlternate(unit->gpioBase, PIN_RGMII_MDC, GPIO_AF_5);
 	gpioSetPull(unit->gpioBase, PIN_RGMII_MDIO, GPIO_PULL_UP);
@@ -29,7 +29,7 @@ static void SetupMDIO(struct GenetUnit *unit)
 
 static void SetupRGMII(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Setting up RGMII bus\n", __func__);
+	KprintfT("[genet] %s: Setting up RGMII bus\n", __func__);
 	for (u8 i = 46; i < 58; i++)
 	{
 		gpioSetAlternate(unit->gpioBase, i, GPIO_AF_INPUT);
@@ -42,27 +42,27 @@ static void SetupRGMII(struct GenetUnit *unit)
 	}
 }
 
-u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *opener)
+u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags)
 {
-	KprintfH("[genet] %s: Opening unit %lu with flags %lx\n", __func__, unitNumber, flags);
+	KprintfT("[genet] %s: Opening unit %lu with flags %lx\n", __func__, unitNumber, flags);
+	(void)flags;
 	if (unit->unit.unit_OpenCnt > 0)
 	{
-		KprintfH("[genet] %s: Unit already running; using control helper to add opener\n", __func__);
 		unit->unit.unit_OpenCnt++;
-		if (opener)
-		{
-			UnitSubmitControl(unit, UNIT_CTRL_OPENER_ADD, (union UnitControlPayload){ .opener = opener });
-		}
-		KprintfH("[genet] %s: Unit opened successfully, current open count: %ld\n", __func__, unit->unit.unit_OpenCnt);
-		return S2ERR_NO_ERROR;
+		KprintfT("[genet] %s: Unit opened successfully, current open count: %ld\n", __func__, unit->unit.unit_OpenCnt);
+		return GENET_OK;
 	}
 
 	unit->state = STATE_UNCONFIGURED;
-	unit->flags = flags;
-	unit->unit.unit_OpenCnt = 1;
 	unit->unitNumber = unitNumber;
-	unit->use_miami_workaround = unit->device->runtimeConfig.use_miami_workaround;
 	unit->budget = unit->device->runtimeConfig.budget;
+	unit->ndRxPoolBufs = unit->device->runtimeConfig.rx_pool_bufs;
+
+	/* Coalescing starts at the prefs defaults; NETDEV_CMD_SET_COALESCE
+	 * replaces them for the lifetime of the open. */
+	unit->coalTxFrames = unit->device->runtimeConfig.tx_coalesce_frames;
+	unit->coalRxFrames = unit->device->runtimeConfig.rx_coalesce_frames;
+	unit->coalRxUsecs = unit->device->runtimeConfig.rx_coalesce_usecs;
 
 	/* DMA buffers (rings, rx buffer, tx staging) must live in Emu68 (Pi-DRAM) RAM the
 	 * GENET DMA engine can reach, so the DMA pool is region-restricted; with no device
@@ -76,16 +76,11 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 	if (unit->dmaPool == NULL || unit->metaPool == NULL)
 	{
 		Kprintf("[genet] %s: Failed to create memory pools\n", __func__);
-		result = S2ERR_NO_RESOURCES;
+		result = ENOMEM;
 		goto fail;
 	}
-	_NewMinList(&unit->multicastRanges);
-	unit->multicastCount = 0;
-
-	_NewMinList(&unit->openers);
-
 	result = DevTreeParse(unit);
-	if (result != S2ERR_NO_ERROR)
+	if (result != GENET_OK)
 	{
 		Kprintf("[genet] %s: Failed to parse device tree: %ld\n", __func__, result);
 		goto fail;
@@ -94,18 +89,14 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 	/* On first open, we initialize current MAC to 0 to indicate it was not set yet */
 	memset(unit->currentMacAddress, 0, sizeof(unit->currentMacAddress));
 	result = UnitTaskStart(unit);
-	if (result != S2ERR_NO_ERROR)
+	if (result != GENET_OK)
 	{
 		Kprintf("[genet] %s: Failed to start unit task: %ld\n", __func__, result);
 		goto fail;
 	}
 
-	if (opener != NULL)
-	{
-		UnitSubmitControl(unit, UNIT_CTRL_OPENER_ADD, (union UnitControlPayload){ .opener = opener });
-	}
-
-	return S2ERR_NO_ERROR;
+	unit->unit.unit_OpenCnt = 1;
+	return GENET_OK;
 
 fail:
 	if (unit->dmaPool)
@@ -126,51 +117,74 @@ u32 UnitConfigure(struct GenetUnit *unit)
 	SetupMDIO(unit);
 	SetupRGMII(unit);
 
-	KprintfH("[genet] %s: About to probe UMAC\n", __func__);
+	KprintfT("[genet] %s: About to probe UMAC\n", __func__);
 	u32 result = bcmgenet_eth_probe(unit);
-	if (result != S2ERR_NO_ERROR)
+	if (result != GENET_OK)
 	{
 		Kprintf("[genet] %s: Failed to probe UMAC: %ld\n", __func__, result);
 		return result;
 	}
 
 	unit->state = STATE_CONFIGURED;
-	return S2ERR_NO_ERROR;
+	return GENET_OK;
 }
 
 u32 UnitOnline(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: About to start UMAC\n", __func__);
+	KprintfT("[genet] %s: About to start UMAC\n", __func__);
 	u32 result = bcmgenet_gmac_eth_start(unit);
-	if (result != S2ERR_NO_ERROR)
+	if (result != GENET_OK)
 	{
 		Kprintf("[genet] %s: Failed to start UMAC: %ld\n", __func__, result);
-		bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
+		/* Unwinds whichever stages the start reached; the unit stays
+		 * configured, so a retry needs no reconfiguration. */
+		bcmgenet_gmac_eth_stop(unit);
 		return result;
 	}
 
 	unit->state = STATE_ONLINE;
-	return S2ERR_NO_ERROR;
+	return GENET_OK;
 }
 
 void UnitOffline(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Stopping UMAC\n", __func__);
-	unit->state = STATE_OFFLINE;
-	bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
+	KprintfT("[genet] %s: Stopping UMAC\n", __func__);
+	bcmgenet_gmac_eth_stop(unit);
+	unit->state = STATE_CONFIGURED;
 }
 
-u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
+u32 UnitClose(struct GenetUnit *unit)
 {
-	KprintfH("[genet] %s: Closing unit %lu with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
+	KprintfT("[genet] %s: Closing unit %lu\n", __func__, unit->unitNumber);
 
 	unit->unit.unit_OpenCnt--;
 	if (unit->unit.unit_OpenCnt == 0)
 	{
-		Kprintf("[genet] %s: Last opener closed, cleaning up unit\n", __func__);
+		Kprintf("[genet] %s: Last user closed, cleaning up unit\n", __func__);
+
+		/* Closing while still attached breaks the ABI, which requires DETACH
+		 * first and refuses it while the stack holds RX buffers. Everything
+		 * below frees the memory those buffers live in, so a release after
+		 * this point writes through freed memory - nothing the driver can
+		 * defend against. Drop the attachment so at least no callback goes
+		 * out to a stack that is already gone, and say so. */
+		if (unit->ndStackOps != NULL)
+		{
+			Kprintf("[genet] %s: closed while attached (%lu RX buffers still out) - forcing detach\n",
+					__func__, (ULONG)unit->ndRxHeld);
+			unit->ndStarted = FALSE;
+			unit->ndStackOps = NULL;
+			unit->ndStackCtx = NULL;
+			unit->ndOwnerPort = NULL;
+		}
+
 		if (unit->state == STATE_ONLINE)
 		{
 			UnitOffline(unit);
+		}
+		if (unit->state == STATE_CONFIGURED)
+		{
+			bcmgenet_eth_unconfigure(unit);
 		}
 		UnitTaskStop(unit);
 		dma_pool_delete(unit->dmaPool);
@@ -178,10 +192,6 @@ u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 		DeletePool(unit->metaPool);
 		unit->metaPool = NULL;
 		unit->state = STATE_UNCONFIGURED;
-	}
-	else if (opener != NULL)
-	{
-		UnitSubmitControl(unit, UNIT_CTRL_OPENER_REM, (union UnitControlPayload){ .opener = opener });
 	}
 
 	return (u32)unit->unit.unit_OpenCnt;

@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.14.0)
-project(emu68-genet-driver VERSION 3.11)
+project(emu68-genet-driver VERSION 4.0)
 
 string(TIMESTAMP CURRENT_DATE "(%d.%m.%Y)")
 set(VERSTRING "$VER: ${PROJECT_NAME} ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR} ${CURRENT_DATE}")
 
 find_package(GIC400 REQUIRED)
 find_package(Emu68Common REQUIRED)
+find_package(Netdev REQUIRED) # the netdev driver ABI header (lwip-amiga)
 
 # Set default install prefix to ./install subdirectory
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -14,4 +15,3 @@ endif()
 
 add_subdirectory(runtime-config)
 add_subdirectory(genet.device)
-add_subdirectory(tools)

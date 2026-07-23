@@ -10,6 +10,7 @@
 #define _BCMGENET_REGS_H
 
 #include <bits.h>
+#include <types.h>
 
 #define SYS_REV_CTRL 0x00
 
@@ -30,7 +31,55 @@
 #define GENET_RBUF_OFF 0x0300
 #define RBUF_TBUF_SIZE_CTRL (GENET_RBUF_OFF + 0xb4)
 #define RBUF_CTRL (GENET_RBUF_OFF + 0x00)
+#define RBUF_64B_EN BIT(0)
 #define RBUF_ALIGN_2B BIT(1)
+#define RBUF_CHK_CTRL (GENET_RBUF_OFF + 0x14)
+#define RBUF_RXCHK_EN BIT(0)
+#define RBUF_SKIP_FCS BIT(4)
+#define RBUF_L3_PARSE_DIS BIT(5)
+
+#define GENET_TBUF_OFF 0x0600
+#define TBUF_CTRL (GENET_TBUF_OFF + 0x00)
+#define TBUF_64B_EN BIT(0)
+
+/* Energy-detect / power management, one register per buffer block. Both sit
+ * outside the UniMAC, so CMD_SW_RESET leaves them at whatever the firmware or a
+ * previous OS wrote. Broadcom's driver keeps the RBUF pair clear unconditionally
+ * — RBUF EEE/PM breaks the GENET receive path — and only sets the TBUF pair when
+ * EEE is in use, which this driver never enables. */
+#define RBUF_ENERGY_CTRL (GENET_RBUF_OFF + 0x9c)
+#define TBUF_ENERGY_CTRL (GENET_TBUF_OFF + 0x14)
+#define ENERGY_EEE_EN BIT(0)
+#define ENERGY_PM_EN BIT(1)
+
+/* 64-byte status block, prepended to every frame when RBUF_64B_EN /
+ * TBUF_64B_EN are set (GENET v5). TX: only tx_csum_info is consumed by the
+ * hardware; RX: length_status mirrors the descriptor, rx_csum carries the
+ * RXCHK result. Layout and bits follow the Linux bcmgenet driver.
+ * The words are LITTLE-ENDIAN in DMA memory — unlike the descriptors,
+ * which live behind the byte-swapping mmio_* accessors, every access
+ * here needs an explicit le32(). */
+struct genet_status_64
+{
+	u32 length_status;	/* length and peripheral status */
+	u32 ext_status;		/* extended status */
+	u32 rx_csum;		/* STATUS_RX_CSUM_* */
+	u32 unused1[9];
+	u32 tx_csum_info;	/* STATUS_TX_CSUM_* */
+	u32 unused2[3];
+};
+
+#define GENET_STATUS64_LEN 64
+
+#define STATUS_RX_CSUM_MASK 0xFFFFu		/* 1's-complement sum, network-order halfword */
+#define STATUS_RX_CSUM_OK 0x10000u		/* L4 verified — L3 parser only, unused w/ RBUF_L3_PARSE_DIS */
+#define STATUS_RX_CSUM_FR 0x20000u		/* fragmented — L3 parser only, unused w/ RBUF_L3_PARSE_DIS */
+
+#define STATUS_TX_CSUM_START_MASK 0x7FFFu
+#define STATUS_TX_CSUM_START_SHIFT 16
+#define STATUS_TX_CSUM_PROTO_UDP 0x8000u
+#define STATUS_TX_CSUM_OFFSET_MASK 0x7FFFu
+#define STATUS_TX_CSUM_LV 0x80000000u
 
 #define GENET_UMAC_OFF 0x0800
 #define UMAC_MIB_CTRL (GENET_UMAC_OFF + 0x580)
@@ -39,9 +88,32 @@
 #define UMAC_MAC1 (GENET_UMAC_OFF + 0x010)
 #define UMAC_CMD (GENET_UMAC_OFF + 0x008)
 #define UMAC_TX_FLUSH (GENET_UMAC_OFF + 0x334)
-#define MDIO_CMD (GENET_UMAC_OFF + 0x614)
 #define UMAC_MDF_CTRL (GENET_UMAC_OFF + 0x650)
 #define UMAC_MDF_ADDR (GENET_UMAC_OFF + 0x654)
+
+/* MDF exact-match filter: 17 slots of two registers each, enabled from the top
+ * of UMAC_MDF_CTRL down (slot k = bit MAX_MDF_FILTER-1-k). Two are permanently
+ * spent on broadcast and the station address; the rest hold multicast. */
+#define MAX_MDF_FILTER 17
+#define GENET_MDF_MCAST_MAX (MAX_MDF_FILTER - 2)
+
+/* MDIO controller (BCM2711). Command, status and data all share one register:
+ * a transaction is started by setting MDIO_START_BUSY and is complete when the
+ * hardware clears it. */
+#define MDIO_CMD (GENET_UMAC_OFF + 0x614)
+#define MDIO_START_BUSY BIT(29)
+#define MDIO_READ_FAIL BIT(28)
+#define MDIO_RD (2U << 26)
+#define MDIO_WR BIT(26)
+#define MDIO_PMD_SHIFT 21
+#define MDIO_PMD_MASK 0x1fU
+#define MDIO_REG_SHIFT 16
+#define MDIO_REG_MASK 0x1fU
+
+/* A clause-22 transaction on this controller takes ~25 us; the poll waits that
+ * long before its first read. The timeout only has to cover a wedged bus. */
+#define MDIO_C22_XFER_US 30U
+#define MDIO_TIMEOUT_US 20000U
 
 #define MIB_RESET_RX BIT(0)
 #define MIB_RESET_RUNT BIT(1)
@@ -49,50 +121,103 @@
 
 /*
  * MIB counter block. Byte offsets are relative to genetBase (absolute).
- * Layout: RX named counters, 0xC gap, TX named counters, 0xC gap, RUNT.
- * The 10 size-bucket counters preceding each block are skipped here.
+ *
+ * Three blocks, each opening with the same 10 packet-size buckets: RX at
+ * +0x000, TX at +0x080, RUNT at +0x100. Linux reaches them as
+ * UMAC_MIB_START + j + n * BCMGENET_STAT_OFFSET (0xc) — same layout,
+ * spelled out here. Order below follows struct bcmgenet_rx_counters /
+ * bcmgenet_tx_counters in the upstream bcmgenet.h so the two diff cleanly.
+ *
+ * All are free-running 32-bit and wrap; MIB_RESET_* zeroes the three blocks.
  */
 #define UMAC_MIB_BASE       (GENET_UMAC_OFF + 0x400)
 
-/* RX MIB named counters (struct bcmgenet_rx_counters) */
-#define UMAC_MIB_RX_PKT     (UMAC_MIB_BASE + 0x028)
-#define UMAC_MIB_RX_BYTES   (UMAC_MIB_BASE + 0x02C)
-#define UMAC_MIB_RX_MCA     (UMAC_MIB_BASE + 0x030)
-#define UMAC_MIB_RX_BCA     (UMAC_MIB_BASE + 0x034)
-#define UMAC_MIB_RX_FCS     (UMAC_MIB_BASE + 0x038)
-#define UMAC_MIB_RX_PF      (UMAC_MIB_BASE + 0x040)
-#define UMAC_MIB_RX_ALN     (UMAC_MIB_BASE + 0x048)
-#define UMAC_MIB_RX_OVR     (UMAC_MIB_BASE + 0x058)
-#define UMAC_MIB_RX_JBR     (UMAC_MIB_BASE + 0x05C)
-#define UMAC_MIB_RX_POK     (UMAC_MIB_BASE + 0x064)
-#define UMAC_MIB_RX_UC      (UMAC_MIB_BASE + 0x068)
+/* RX size buckets (struct bcmgenet_pkt_counters) — frames received per length
+ * band, inclusive, counted whether good or bad. A traffic histogram: bulk
+ * transfers pile into 1024-1518, bare ACKs into 64. */
+#define UMAC_MIB_RX_CNT_64   (UMAC_MIB_BASE + 0x000) /* 64 octets exactly */
+#define UMAC_MIB_RX_CNT_127  (UMAC_MIB_BASE + 0x004) /* 65-127 octets */
+#define UMAC_MIB_RX_CNT_255  (UMAC_MIB_BASE + 0x008) /* 128-255 octets */
+#define UMAC_MIB_RX_CNT_511  (UMAC_MIB_BASE + 0x00C) /* 256-511 octets */
+#define UMAC_MIB_RX_CNT_1023 (UMAC_MIB_BASE + 0x010) /* 512-1023 octets */
+#define UMAC_MIB_RX_CNT_1518 (UMAC_MIB_BASE + 0x014) /* 1024-1518 octets (to MTU) */
+#define UMAC_MIB_RX_CNT_MGV  (UMAC_MIB_BASE + 0x018) /* MGV: 1519-1522, good VLAN-tagged */
+#define UMAC_MIB_RX_CNT_2047 (UMAC_MIB_BASE + 0x01C) /* 1523-2047 octets */
+#define UMAC_MIB_RX_CNT_4095 (UMAC_MIB_BASE + 0x020) /* 2048-4095 octets */
+#define UMAC_MIB_RX_CNT_9216 (UMAC_MIB_BASE + 0x024) /* 4096-9216 octets (jumbo) */
 
-/* TX MIB named counters (struct bcmgenet_tx_counters) — TX block starts at +0x80 */
-#define UMAC_MIB_TX_PKTS    (UMAC_MIB_BASE + 0x0A8)
-#define UMAC_MIB_TX_MCA     (UMAC_MIB_BASE + 0x0AC)
-#define UMAC_MIB_TX_BCA     (UMAC_MIB_BASE + 0x0B0)
-#define UMAC_MIB_TX_PF      (UMAC_MIB_BASE + 0x0B4)
-#define UMAC_MIB_TX_FCS     (UMAC_MIB_BASE + 0x0BC)
-#define UMAC_MIB_TX_OVR     (UMAC_MIB_BASE + 0x0C0)
-#define UMAC_MIB_TX_DRF     (UMAC_MIB_BASE + 0x0C4)
-#define UMAC_MIB_TX_EDF     (UMAC_MIB_BASE + 0x0C8)
-#define UMAC_MIB_TX_SCL     (UMAC_MIB_BASE + 0x0CC)
-#define UMAC_MIB_TX_MCL     (UMAC_MIB_BASE + 0x0D0)
-#define UMAC_MIB_TX_LCL     (UMAC_MIB_BASE + 0x0D4)
-#define UMAC_MIB_TX_ECL     (UMAC_MIB_BASE + 0x0D8)
-#define UMAC_MIB_TX_NCL     (UMAC_MIB_BASE + 0x0E0)
-#define UMAC_MIB_TX_JBR     (UMAC_MIB_BASE + 0x0E4)
-#define UMAC_MIB_TX_BYTES   (UMAC_MIB_BASE + 0x0E8)
-#define UMAC_MIB_TX_POK     (UMAC_MIB_BASE + 0x0EC)
-#define UMAC_MIB_TX_UC      (UMAC_MIB_BASE + 0x0F0)
+/* RX named counters (RSV, Receive Status Vector — struct bcmgenet_rx_counters) */
+#define UMAC_MIB_RX_PKT     (UMAC_MIB_BASE + 0x028) /* frames received, good or bad */
+#define UMAC_MIB_RX_BYTES   (UMAC_MIB_BASE + 0x02C) /* octets received */
+#define UMAC_MIB_RX_MCA     (UMAC_MIB_BASE + 0x030) /* MCA: multicast-addressed */
+#define UMAC_MIB_RX_BCA     (UMAC_MIB_BASE + 0x034) /* BCA: broadcast-addressed */
+#define UMAC_MIB_RX_FCS     (UMAC_MIB_BASE + 0x038) /* FCS: frame check sequence (CRC) bad */
+#define UMAC_MIB_RX_CF      (UMAC_MIB_BASE + 0x03C) /* CF: MAC control frames */
+#define UMAC_MIB_RX_PF      (UMAC_MIB_BASE + 0x040) /* PF: PAUSE frames (802.3x flow control) */
+#define UMAC_MIB_RX_UO      (UMAC_MIB_BASE + 0x044) /* UO: control frame, unknown opcode */
+#define UMAC_MIB_RX_ALN     (UMAC_MIB_BASE + 0x048) /* ALN: alignment — not a whole octet count */
+#define UMAC_MIB_RX_FLR     (UMAC_MIB_BASE + 0x04C) /* FLR: frame length field out of range */
+#define UMAC_MIB_RX_CDE     (UMAC_MIB_BASE + 0x050) /* CDE: code error — invalid PHY symbol */
+#define UMAC_MIB_RX_FCR     (UMAC_MIB_BASE + 0x054) /* FCR: false carrier / carrier sense error */
+#define UMAC_MIB_RX_OVR     (UMAC_MIB_BASE + 0x058) /* OVR: oversize, over max frame len, FCS ok */
+#define UMAC_MIB_RX_JBR     (UMAC_MIB_BASE + 0x05C) /* JBR: jabber — oversize AND bad FCS */
+#define UMAC_MIB_RX_MTUE    (UMAC_MIB_BASE + 0x060) /* MTUE: over UMAC_MAX_FRAME_LEN */
+#define UMAC_MIB_RX_POK     (UMAC_MIB_BASE + 0x064) /* POK: packets OK — received without error */
+#define UMAC_MIB_RX_UC      (UMAC_MIB_BASE + 0x068) /* UC: unicast-addressed */
+#define UMAC_MIB_RX_PPP     (UMAC_MIB_BASE + 0x06C) /* PPP: PPP-over-Ethernet frames */
+#define UMAC_MIB_RX_RCRC    (UMAC_MIB_BASE + 0x070) /* RCRC: frames whose CRC matched */
 
-/* RUNT — block starts after TX + 0xC gap */
-#define UMAC_MIB_RX_RUNT    (UMAC_MIB_BASE + 0x100)
+/* TX size buckets — same bands as RX, transmit side. Block starts at +0x080. */
+#define UMAC_MIB_TX_CNT_64   (UMAC_MIB_BASE + 0x080) /* 64 octets exactly */
+#define UMAC_MIB_TX_CNT_127  (UMAC_MIB_BASE + 0x084) /* 65-127 octets */
+#define UMAC_MIB_TX_CNT_255  (UMAC_MIB_BASE + 0x088) /* 128-255 octets */
+#define UMAC_MIB_TX_CNT_511  (UMAC_MIB_BASE + 0x08C) /* 256-511 octets */
+#define UMAC_MIB_TX_CNT_1023 (UMAC_MIB_BASE + 0x090) /* 512-1023 octets */
+#define UMAC_MIB_TX_CNT_1518 (UMAC_MIB_BASE + 0x094) /* 1024-1518 octets (to MTU) */
+#define UMAC_MIB_TX_CNT_MGV  (UMAC_MIB_BASE + 0x098) /* MGV: 1519-1522, good VLAN-tagged */
+#define UMAC_MIB_TX_CNT_2047 (UMAC_MIB_BASE + 0x09C) /* 1523-2047 octets */
+#define UMAC_MIB_TX_CNT_4095 (UMAC_MIB_BASE + 0x0A0) /* 2048-4095 octets */
+#define UMAC_MIB_TX_CNT_9216 (UMAC_MIB_BASE + 0x0A4) /* 4096-9216 octets (jumbo) */
 
-/* Misc MAC counters (V3+ register offsets within RBUF / UMAC blocks) */
-#define UMAC_RBUF_OVFL_CNT  (GENET_RBUF_OFF + 0x94)
-#define UMAC_RBUF_ERR_CNT   (GENET_RBUF_OFF + 0x98)
-#define UMAC_MDF_ERR_CNT    (GENET_UMAC_OFF + 0x638)
+/* TX named counters (TSV, Transmit Status Vector — struct bcmgenet_tx_counters).
+ * The collision and deferral counters only move on a half-duplex link; on a
+ * healthy full-duplex link every one of them should stay at zero. */
+#define UMAC_MIB_TX_PKTS    (UMAC_MIB_BASE + 0x0A8) /* frames transmitted, good or bad */
+#define UMAC_MIB_TX_MCA     (UMAC_MIB_BASE + 0x0AC) /* MCA: multicast-addressed */
+#define UMAC_MIB_TX_BCA     (UMAC_MIB_BASE + 0x0B0) /* BCA: broadcast-addressed */
+#define UMAC_MIB_TX_PF      (UMAC_MIB_BASE + 0x0B4) /* PF: PAUSE frames we sent */
+#define UMAC_MIB_TX_CF      (UMAC_MIB_BASE + 0x0B8) /* CF: MAC control frames */
+#define UMAC_MIB_TX_FCS     (UMAC_MIB_BASE + 0x0BC) /* FCS: frame check sequence errors */
+#define UMAC_MIB_TX_OVR     (UMAC_MIB_BASE + 0x0C0) /* OVR: oversize, over max frame len */
+#define UMAC_MIB_TX_DRF     (UMAC_MIB_BASE + 0x0C4) /* DRF: deferred — medium busy on first try */
+#define UMAC_MIB_TX_EDF     (UMAC_MIB_BASE + 0x0C8) /* EDF: excessive deferral — gave up waiting */
+#define UMAC_MIB_TX_SCL     (UMAC_MIB_BASE + 0x0CC) /* SCL: single collision, then sent */
+#define UMAC_MIB_TX_MCL     (UMAC_MIB_BASE + 0x0D0) /* MCL: multiple (2-15) collisions, then sent */
+#define UMAC_MIB_TX_LCL     (UMAC_MIB_BASE + 0x0D4) /* LCL: late collision, past the 512-bit slot
+                                                     * time — duplex mismatch or over-long cable */
+#define UMAC_MIB_TX_ECL     (UMAC_MIB_BASE + 0x0D8) /* ECL: excessive collisions (16), frame lost */
+#define UMAC_MIB_TX_FRG     (UMAC_MIB_BASE + 0x0DC) /* FRG: fragments — undersize with bad FCS */
+#define UMAC_MIB_TX_NCL     (UMAC_MIB_BASE + 0x0E0) /* NCL: number of collisions, running total */
+#define UMAC_MIB_TX_JBR     (UMAC_MIB_BASE + 0x0E4) /* JBR: jabber — oversize AND bad FCS */
+#define UMAC_MIB_TX_BYTES   (UMAC_MIB_BASE + 0x0E8) /* octets transmitted */
+#define UMAC_MIB_TX_POK     (UMAC_MIB_BASE + 0x0EC) /* POK: packets OK — reached the wire intact */
+#define UMAC_MIB_TX_UC      (UMAC_MIB_BASE + 0x0F0) /* UC: unicast-addressed */
+
+/* RUNT block at +0x100. A runt is a frame shorter than the 64-octet minimum;
+ * a valid-FCS one is a legitimate truncation upstream, a bad-FCS one is a
+ * collision fragment or a wiring fault. */
+#define UMAC_MIB_RX_RUNT           (UMAC_MIB_BASE + 0x100) /* runt frames received */
+#define UMAC_MIB_RX_RUNT_FCS       (UMAC_MIB_BASE + 0x104) /* ...of those, FCS valid */
+#define UMAC_MIB_RX_RUNT_FCS_ALIGN (UMAC_MIB_BASE + 0x108) /* ...FCS invalid or misaligned */
+#define UMAC_MIB_RX_RUNT_BYTES     (UMAC_MIB_BASE + 0x10C) /* octets in runt frames */
+
+/* Misc MAC counters. These sit outside the MIB block, are missed by
+ * MIB_RESET_*, and saturate at ~0 rather than wrapping (write 0 to rearm).
+ * RBUF pair uses the V3+ offsets — v1/v2 put them elsewhere. */
+#define UMAC_RBUF_OVFL_CNT  (GENET_RBUF_OFF + 0x94)  /* RBUF: RX FIFO overflowed, frame lost
+                                                      * before the DMA ring ever saw it */
+#define UMAC_RBUF_ERR_CNT   (GENET_RBUF_OFF + 0x98)  /* RBUF internal errors */
+#define UMAC_MDF_ERR_CNT    (GENET_UMAC_OFF + 0x638) /* MDF: multicast destination filter errors */
 
 /* total number of Buffer Descriptors, same for Rx/Tx */
 #define TOTAL_DESCS 256
@@ -100,6 +225,14 @@
 #define TX_DESCS TOTAL_DESCS
 
 #define DEFAULT_Q 0x10
+
+/* Ethernet framing. Here rather than in device.h because ENET_MAX_MTU_SIZE
+ * below is built from them: the register map has to stand on its own. */
+#define ETH_HLEN 14		  /* Total octets in header					*/
+#define VLAN_HLEN 4		  /* The additional bytes required by VLAN	*/
+						  /* (in addition to the Ethernet header)	*/
+#define ETH_FCS_LEN 4	  /* Octets in the FCS						*/
+#define ETH_DATA_LEN 1500 /* Max. octets in payload					*/
 
 /* Body(1500) + EH_SIZE(14) + VLANTAG(4) + BRCMTAG(6) + FCS(4) = 1528.
  * 1536 is multiple of 256 bytes
@@ -233,9 +366,6 @@
 #define DMA_INTR_THRESHOLD_MASK 0x01FFU
 
 #define RX_BUF_LENGTH 2048
-#define RX_TOTAL_BUFSIZE (RX_BUF_LENGTH * RX_DESCS)
-#define TX_TOTAL_BUFSIZE (RX_BUF_LENGTH * TX_DESCS)
-#define RX_BUF_OFFSET 2
 
 /* Rx Specific Dma descriptor bits */
 #define DMA_RX_CHK_V3PLUS 0x8000U

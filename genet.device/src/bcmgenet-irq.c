@@ -9,8 +9,9 @@
 
 #include <iomem.h>
 #include <debug.h>
-#include <genet/bcmgenet.h>
+#include <genet/bcmgenet-irq.h>
 #include <genet/bcmgenet-regs.h>
+#include <genet/phy.h>
 #include <device.h>
 
 /*
@@ -22,6 +23,18 @@ void bcmgenet_irq0_enable(struct GenetUnit *unit, u32 irq_mask)
 {
 	mmio_write32(irq_mask,
 		   BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_CLEAR));
+}
+
+/* Link sources worth an interrupt. UMAC_IRQ_PHY_DET_R only matters with
+ * autonegotiation off — a PHY that reset has to have its forced settings
+ * pushed again; with autoneg on there is nothing to do about it, and asking
+ * for the event would buy an MDIO status read (slow) per occurrence. */
+u32 bcmgenet_link_irq_mask(const struct GenetUnit *unit)
+{
+	u32 mask = UMAC_IRQ_LINK_EVENT;
+	if (unit->phydev != NULL && unit->phydev->autoneg != AUTONEG_ENABLE)
+		mask |= UMAC_IRQ_PHY_DET_R;
+	return mask;
 }
 
 static inline void bcmgenet_irq0_disable(struct GenetUnit *unit, u32 irq_mask)
@@ -43,8 +56,15 @@ void bcmgenet_intr_disable(struct GenetUnit *unit)
 		   BCMGENET_REG(unit, GENET_INTRL2_1_OFF + INTRL2_CPU_CLEAR));
 }
 
-/* bcmgenet_isr0: handle other stuff.  Returns 1 if the interrupt was ours, 0
- * otherwise (the AmigaOS interrupt-server "handled?" convention). */
+/*
+ * bcmgenet_isr0. Returns 1 if the interrupt was ours, 0 otherwise (the
+ * AmigaOS interrupt-server "handled?" convention).
+ *
+ * Nothing but signals crosses to the bottom half. Exec's Signal() is the
+ * atomic, level-latched interrupt-to-task channel. All handled
+ * sources are masked here and re-armed once the task has caught up, so a
+ * storming source costs one bottom-half pass, not one interrupt per event.
+ */
 ULONG bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"))
 {
 	(void)irq;
@@ -61,26 +81,29 @@ ULONG bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit 
 	/* Clear before handling so any new events after this point re-assert cleanly */
 	mmio_write32(status, BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
 
-	KprintfH("[genet] %s: IRQ0 status: 0x%08lX unit: 0x%08lx\n", __func__, (ULONG)status, (ULONG)unit);
+	KprintfT("[genet] %s: IRQ0 status: 0x%08lX\n", __func__, (ULONG)status);
 
-	/* Disable both TX and RX until the bottom-half catches up */
-	if (status & UMAC_IRQ_TXDMA_DONE)
-	{
-		bcmgenet_irq0_disable(unit, UMAC_IRQ_TXDMA_DONE);
-		unit->internalStats.irq0_tx_count++;
-	}
+	/* Sources fire together under load, so build the combined mask and
+	 * spend a single MASK_SET write instead of one per source. */
+	bcmgenet_irq0_disable(unit, status & (UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE |
+										  UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R));
 
+	ULONG signals = 0;
 	if (status & UMAC_IRQ_RXDMA_DONE)
-	{
-		bcmgenet_irq0_disable(unit, UMAC_IRQ_RXDMA_DONE);
-		unit->internalStats.irq0_rx_count++;
-	}
+		signals |= 1UL << unit->rx_signal;
+	if (status & UMAC_IRQ_TXDMA_DONE)
+		signals |= 1UL << unit->tx_signal;
+	if (status & (UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R))
+		signals |= 1UL << unit->link_signal;
 
+	if (status & UMAC_IRQ_TXDMA_DONE)
+		unit->internalStats.irq0_tx_count++;
+	if (status & UMAC_IRQ_RXDMA_DONE)
+		unit->internalStats.irq0_rx_count++;
 	unit->internalStats.irq0_count++;
-	if ((status & (UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE)) == 0)
+	if (!(status & (UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE)))
 		unit->internalStats.irq0_other_count++;
-	/* Save irq status for bottom-half processing. */
-	unit->irq0_status |= status;
-	Signal(unit->task, 1UL << unit->irq0_signal);
+
+	Signal(unit->task, signals);
 	return 1;
 }

@@ -1,3 +1,65 @@
+# Release notes — genet.device 4.0
+
+genet.device 4.0 is a rewrite built for **lwip-amiga**, a new, much faster TCP/IP stack
+for AmigaOS. Packets now move between the driver and the stack with no copying and no
+locking on the busy path, which is where the bulk of the speed gain comes from — see
+lwip-amiga's own release notes for the numbers.
+
+## Breaking change: this is not a SANA-II driver
+
+genet.device 4.0 only works with **lwip-amiga**. It does not speak SANA-II, so Roadshow,
+AmiTCP, and Miami cannot use it. If you use one of those, install the **3.x** version
+instead — it ships in the same download, and the installer lets you pick.
+
+### Coming from 3.x
+
+Old SANA-II-based tools and settings (Roadshow's `device=genet.device` config, the
+`genet-stats` utility, and so on) don't apply to 4.0. Configure the network through
+lwip-amiga's own `netstack.prefs` instead, and use `netdev-stats` in place of
+`genet-stats` for live driver statistics — see the [README](README.md).
+
+## What's faster
+
+- Data moves directly between the driver and the network stack instead of being copied
+  back and forth, and the hardware calculates checksums instead of the CPU.
+- The busy send/receive path never has to wait on a lock, so throughput holds up better
+  under load.
+
+## Hardware checksum offload
+
+The GENET chip now calculates TCP/UDP checksums for outgoing packets and a checksum for
+incoming ones, instead of the CPU doing that work. See `docs/offloads.md` for the
+technical detail, and the known-limitations note there on what isn't offloaded.
+
+## Link handling
+
+The driver now tracks the network link more reliably — both from link-change interrupts
+and a periodic check, since the GENET chip doesn't always signal a 10 Mbps link coming up
+on its own. Three new `ENV:genet.prefs` settings give you more control:
+
+- `LINK_MODE` restricts the link to one speed/duplex (`10hd`…`1000fd`) instead of letting
+  it negotiate freely — useful for a flaky cable that keeps renegotiating down.
+- `AUTONEG=off` forces that speed/duplex outright, for equipment that won't negotiate
+  (gigabit can't be forced this way — it requires negotiation to work at all).
+- `FLOW_CONTROL` (on by default) lets the Amiga and the switch/router ask each other to
+  pause traffic briefly instead of dropping packets under load.
+
+## Diagnostics
+
+`netdev-stats` (from lwip-amiga) shows live link state and packet counters, and
+`netdev-stats COUNTERS` shows the full set of hardware statistics the chip keeps — handy
+for troubleshooting. It can be run at any time without restarting the network.
+
+## Requirements
+
+- lwip-amiga (SANA-II users want the 3.x variant instead).
+- `gic400.library` at runtime.
+- A reasonably current Emu68 build; see the [README](README.md) for the exact version
+  and a fallback option for older builds.
+- PiStorm32-lite with a Raspberry Pi 4B or CM4.
+
+---
+
 # Release notes — genet.device 3.11
 
 Changes since v3.10.

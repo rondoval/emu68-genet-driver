@@ -15,9 +15,7 @@
 #include <exec/devices.h>
 #include <exec/errors.h>
 #include <dos/dosextens.h>
-
-#include <devices/sana2.h>
-#include <devices/sana2specialstats.h>
+#include <devices/newstyle.h>
 
 #include <device.h>
 #include <minlist.h>
@@ -29,17 +27,16 @@
 #endif
 
 #ifndef DEVICE_IDSTRING
-#define DEVICE_IDSTRING "genet.device 2.3"
+#define DEVICE_IDSTRING "genet.device 4.0"
 #endif
 
 #ifndef DEVICE_VERSION
-#define DEVICE_VERSION 2
+#define DEVICE_VERSION 4
 #endif
 
 #ifndef DEVICE_REVISION
-#define DEVICE_REVISION 3
+#define DEVICE_REVISION 0
 #endif
-
 LONG __attribute__((used, no_reorder)) doNotExecute(void);
 
 /*
@@ -58,13 +55,16 @@ LONG __attribute__((used, no_reorder)) doNotExecute(void)
 extern const UBYTE endOfCode;
 
 /*
-    Const fields containing name of device and ID string. Note! It's not the
-    version string as in case of executables (i.e. the $VER:), but rather
-    "name version.revision (date)" string.
+    Const fields containing name of device and ID string.
 */
 static const char deviceName[] = DEVICE_NAME;
 static const char deviceIdString[] = DEVICE_IDSTRING;
 static const APTR initTable[4];
+
+/* [genet] perf slot names — rodata; order matches enum GenetProfSlot. */
+static const char *const genet_perf_names[GP_SLOT_COUNT] = {
+    "rx_drain", "rx_flush", "tx_submit", "tx_harvest",
+};
 
 /*
     Resident structure describing the object. RTF_AUTOINIT means the rt_Init field
@@ -98,12 +98,10 @@ static const APTR initTable[4] = {
     NULL,
     (APTR)initFunction};
 
-void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"), ULONG flags asm("d1"), struct GenetDevice *base asm("a6"));
-ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"));
+void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"), ULONG flags asm("d1"), struct GenetDevice *base asm("a6"));
+ULONG closeLib(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"));
 ULONG expungeLib(struct GenetDevice *base asm("a6"));
 APTR extFunc(struct GenetDevice *base asm("a6"));
-void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"));
-LONG abortIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"));
 
 static const APTR funcTable[] = {
     (APTR)openLib,
@@ -168,7 +166,8 @@ static void genet_reset_prepare(APTR user)
 APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6"))
 {
     (void)_SysBase;
-    KprintfH("[genet] %s: Initializing device\n", __func__);
+    /* the id string carries the build date — the log's deploy beacon */
+    Kprintf("[genet] %s: %s\n", __func__, (ULONG)deviceIdString);
     base->segList = segList;
     base->device.dd_Library.lib_Revision = DEVICE_REVISION;
     base->unit = NULL;
@@ -182,116 +181,47 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     return base;
 }
 
-#define getBufferFunction(tags, tag32, tag16, tagDefault)     \
-    ({                                                        \
-        APTR func = (APTR)GetTagData(tagDefault, NULL, tags); \
-        func = (APTR)GetTagData(tag16, (ULONG)func, tags);    \
-        func = (APTR)GetTagData(tag32, (ULONG)func, tags);    \
-        func;                                                 \
-    })
-
-static struct Opener *createOpener(struct TagItem *tags, struct Library *UtilityBase, const struct GenetRuntimeConfig *config)
-{
-    struct Opener *opener = NULL;
-    opener = AllocMem(sizeof(struct Opener), MEMF_PUBLIC | MEMF_CLEAR);
-    if (opener == NULL)
-    {
-        Kprintf("[genet] %s: Failed to allocate opener\n", __func__);
-        return NULL;
-    }
-
-    KprintfH("[genet] %s: S2_CopyToBuff %lx\n", __func__, GetTagData(S2_CopyToBuff, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyFromBuff %lx\n", __func__, GetTagData(S2_CopyFromBuff, NULL, tags));
-    KprintfH("[genet] %s: S2_PacketFilter %lx\n", __func__, GetTagData(S2_PacketFilter, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyToBuff16 %lx\n", __func__, GetTagData(S2_CopyToBuff16, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyFromBuff16 %lx\n", __func__, GetTagData(S2_CopyFromBuff16, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyToBuff32 %lx\n", __func__, GetTagData(S2_CopyToBuff32, NULL, tags));
-    KprintfH("[genet] %s: S2_CopyFromBuff32 %lx\n", __func__, GetTagData(S2_CopyFromBuff32, NULL, tags));
-    KprintfH("[genet] %s: S2_DMACopyToBuff32 %lx\n", __func__, GetTagData(S2_DMACopyToBuff32, NULL, tags));
-    KprintfH("[genet] %s: S2_DMACopyFromBuff32 %lx\n", __func__, GetTagData(S2_DMACopyFromBuff32, NULL, tags));
-    KprintfH("[genet] %s: S2_DMACopyToBuff64 %lx\n", __func__, GetTagData(S2_DMACopyToBuff64, NULL, tags));
-    KprintfH("[genet] %s: S2_DMACopyFromBuff64 %lx\n", __func__, GetTagData(S2_DMACopyFromBuff64, NULL, tags));
-    KprintfH("[genet] %s: S2_Log %lx\n", __func__, GetTagData(S2_Log, NULL, tags));
-
-    opener->packetFilter = (struct Hook *)GetTagData(S2_PacketFilter, NULL, tags);
-    opener->CopyToBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyToBuff32, S2_CopyToBuff16, S2_CopyToBuff);
-    opener->CopyFromBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyFromBuff32, S2_CopyFromBuff16, S2_CopyFromBuff);
-
-    if (config->use_dma)
-    {
-        opener->DMACopyToBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyToBuff32, NULL, tags);
-        opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);
-    }
-
-    KprintfH("[genet] %s: CopyToBuff=%lx, CopyFromBuff=%lx, PacketFilter=%lx\n",
-            __func__, opener->CopyToBuff, opener->CopyFromBuff, opener->packetFilter);
-    KprintfH("[genet] %s: DMACopyToBuff=%lx, DMACopyFromBuff=%lx\n",
-            __func__, opener->DMACopyToBuff, opener->DMACopyFromBuff);
-
-    _NewMinList(&opener->readQueue);
-    _NewMinList(&opener->orphanQueue);
-    _NewMinList(&opener->eventQueue);
-    _NewMinList(&opener->ipv4Queue);
-    _NewMinList(&opener->arpQueue);
-
-    opener->readRing.entries = AllocMem(sizeof(struct IOSana2Req *) * OPENER_READ_RING_N,
-                                        MEMF_PUBLIC | MEMF_CLEAR);
-    if (opener->readRing.entries == NULL)
-    {
-        Kprintf("[genet] %s: Failed to allocate SPSC read ring\n", __func__);
-        FreeMem(opener, sizeof(struct Opener));
-        return NULL;
-    }
-
-    return opener;
-}
-
-void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
+void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
              ULONG flags asm("d1"), struct GenetDevice *base asm("a6"))
 {
     BOOL firstOpen = FALSE;
     BOOL createdUnit = FALSE;
 
-    KprintfH("[genet] %s: Opening device with unit number %ld and flags %lx\n", __func__, unitNumber, flags);
+    KprintfT("[genet] %s: Opening device with unit number %ld and flags %lx\n", __func__, unitNumber, flags);
     if (unitNumber != 0)
     {
-        KprintfH("[genet] %s: Invalid unit number %ld\n", __func__, unitNumber);
-        io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        KprintfT("[genet] %s: Invalid unit number %ld\n", __func__, unitNumber);
+        io->io_Error = IOERR_OPENFAIL;
         return;
     }
 
-    if (io->ios2_Req.io_Message.mn_Length < sizeof(struct IOStdReq))
+    if (io->io_Message.mn_Length < sizeof(struct IOStdReq))
     {
-        KprintfH("[genet] %s: Invalid request length %ld\n", __func__, io->ios2_Req.io_Message.mn_Length);
-        io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        KprintfT("[genet] %s: Invalid request length %ld\n", __func__, io->io_Message.mn_Length);
+        io->io_Error = IOERR_OPENFAIL;
         return;
     }
 
     if (base->unit == NULL)
     {
-        KprintfH("[genet] %s: Allocating unit structure\n", __func__);
+        KprintfT("[genet] %s: Allocating unit structure\n", __func__);
         base->unit = AllocMem(sizeof(struct GenetUnit), MEMF_FAST | MEMF_PUBLIC | MEMF_CLEAR);
         if (base->unit == NULL)
         {
             Kprintf("[genet]%s: Failed to allocate unit\n", __func__);
-            io->ios2_Req.io_Error = IOERR_OPENFAIL;
+            io->io_Error = IOERR_OPENFAIL;
             return;
         }
         base->unit->device = base;
+        base->unit->gu_Perf = (struct perf){
+            "genet", genet_perf_names, base->unit->gu_PerfSlots, GP_SLOT_COUNT};
         createdUnit = TRUE;
-    }
-
-    if (flags & SANA2OPF_MINE && base->unit->unit.unit_OpenCnt > 0)
-    {
-        KprintfH("[genet] %s: Unit is already open, can't do exclusive access\n", __func__);
-        io->ios2_Req.io_Error = IOERR_UNITBUSY;
-        return;
     }
 
     firstOpen = (base->device.dd_Library.lib_OpenCnt == 0);
     if (firstOpen && genet_open_libraries(base) != 0)
     {
-        io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        io->io_Error = IOERR_OPENFAIL;
         if (createdUnit)
         {
             FreeMem(base->unit, sizeof(struct GenetUnit));
@@ -302,44 +232,32 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
 
     if (base->unit->unit.unit_OpenCnt == 0)
     {
-        /* We're reloading configuration only if the device was previously not in use */
+        /* Configuration is reloaded only when the unit has no other opener. */
         LoadGenetRuntimeConfig(&base->runtimeConfig);
         DumpGenetRuntimeConfig(&base->runtimeConfig);
     }
 
-    struct Opener *opener = NULL;
-    if (io->ios2_Req.io_Message.mn_Length >= sizeof(struct IOSana2Req))
-    {
-        opener = createOpener(io->ios2_BufferManagement, base->utilityBase, &base->runtimeConfig);
-        if (opener == NULL)
-        {
-            io->ios2_Req.io_Error = IOERR_OPENFAIL;
-            if (base->unit)
-            {
-                FreeMem(base->unit, sizeof(struct GenetUnit));
-                base->unit = NULL;
-            }
-            if (firstOpen)
-                genet_close_libraries(base);
-            return;
-        }
-        io->ios2_BufferManagement = opener;
-    }
+    u32 result = UnitOpen(base->unit, (u32)unitNumber, (u32)flags);
 
-    u32 result = UnitOpen(base->unit, (u32)unitNumber, (u32)flags, opener);
-    io->ios2_Req.io_Unit = (struct Unit *)base->unit;
-
-    if (result == S2ERR_NO_ERROR)
+    if (result == GENET_OK)
     {
-        KprintfH("[genet] %s: Unit opened successfully\n", __func__);
+        KprintfT("[genet] %s: Unit opened successfully\n", __func__);
+        io->io_Unit = (struct Unit *)base->unit;
         base->device.dd_Library.lib_OpenCnt++;
         base->device.dd_Library.lib_Flags &= (UBYTE)~LIBF_DELEXP;
-        io->ios2_Req.io_Message.mn_Node.ln_Type = NT_REPLYMSG;
+        io->io_Message.mn_Node.ln_Type = NT_REPLYMSG;
     }
     else
     {
         Kprintf("[genet] %s: Failed to open unit, error code %ld\n", __func__, result);
-        io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        /* Leave nothing usable behind. */
+        io->io_Error = IOERR_OPENFAIL;
+        io->io_Device = (struct Device *)-1;
+        if (createdUnit)
+        {
+            FreeMem(base->unit, sizeof(struct GenetUnit));
+            base->unit = NULL;
+        }
         if (firstOpen)
             genet_close_libraries(base);
     }
@@ -348,33 +266,17 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     return;
 }
 
-ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"))
+ULONG closeLib(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
-    struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: Closing device\n", __func__);
+    struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
+    KprintfT("[genet] %s: Closing device\n", __func__);
 
-    struct Opener *opener = NULL;
-    if (io->ios2_Req.io_Message.mn_Length >= sizeof(struct IOSana2Req))
-    {
-        opener = io->ios2_BufferManagement;
-    }
-
-    u32 result = UnitClose(unit, opener);
+    u32 result = UnitClose(unit);
     if (result == 0) // last user of Unit disappeared
     {
-        KprintfH("[genet] %s: Unit closed successfully, freeing resources\n", __func__);
+        KprintfT("[genet] %s: Unit closed successfully, freeing resources\n", __func__);
         FreeMem(unit, sizeof(struct GenetUnit));
         base->unit = NULL;
-    }
-    if (opener != NULL)
-    {
-        KprintfH("[genet] %s: Freeing opener resources\n", __func__);
-        if (opener->readRing.entries != NULL)
-        {
-            FreeMem(opener->readRing.entries,
-                    sizeof(struct IOSana2Req *) * OPENER_READ_RING_N);
-        }
-        FreeMem(opener, sizeof(struct Opener));
     }
 
     base->device.dd_Library.lib_OpenCnt--;
@@ -393,10 +295,10 @@ ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6
 
 ULONG expungeLib(struct GenetDevice *base asm("a6"))
 {
-    KprintfH("[genet] %s: Expunging device\n", __func__);
+    KprintfT("[genet] %s: Expunging device\n", __func__);
     if (base->device.dd_Library.lib_OpenCnt > 0)
     {
-        KprintfH("[genet] %s: Device is still open, cannot expunge\n", __func__);
+        KprintfT("[genet] %s: Device is still open, cannot expunge\n", __func__);
         base->device.dd_Library.lib_Flags |= LIBF_DELEXP;
         return NULL;
     }
@@ -406,7 +308,7 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
          * stub — then the code must stay resident. */
         if (!reset_guard_remove(&base->resetGuard))
         {
-            KprintfH("[genet] %s: reset guard not removable, staying resident\n", __func__);
+            KprintfT("[genet] %s: reset guard not removable, staying resident\n", __func__);
             return NULL;
         }
 
@@ -429,4 +331,78 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
 APTR extFunc(struct GenetDevice *base asm("a6"))
 {
     return base;
+}
+
+/*
+    Every packet moves through the direct-call surface exchanged at
+    NETDEV_CMD_ATTACH, so no data-path command reaches BeginIO. The netdev
+    control ops and NSCMD_DEVICEQUERY are serialized by the unit task;
+    everything else is IOERR_NOCMD.
+*/
+void beginIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6") __attribute__((unused)))
+{
+    struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
+    UWORD cmd = io->io_Command;
+
+    if (unit == NULL)
+    {
+        Kprintf("[genet] %s: request has no unit\n", __func__);
+        io->io_Error = IOERR_OPENFAIL;
+        if (!(io->io_Flags & IOF_QUICK))
+            ReplyMsg(&io->io_Message);
+        return;
+    }
+
+    if (NETDEV_IS_CMD(cmd) || cmd == NSCMD_DEVICEQUERY)
+    {
+        KprintfT("[genet] %s: Queuing %04lx\n", __func__, (ULONG)cmd);
+        io->io_Error = 0;
+        io->io_Flags &= (UBYTE)~IOF_QUICK;
+        PutMsg(&unit->unit.unit_MsgPort, &io->io_Message);
+        return;
+    }
+
+    KprintfT("[genet] %s: Unsupported command %04lx\n", __func__, (ULONG)cmd);
+    io->io_Error = IOERR_NOCMD;
+    if (!(io->io_Flags & IOF_QUICK))
+        ReplyMsg(&io->io_Message);
+}
+
+/*
+    The only queued requests are the control commands waiting at the unit
+    port; nothing long-lived is abortable. Best-effort: pull a still-queued
+    message off the port, otherwise let it complete.
+*/
+LONG abortIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6") __attribute__((unused)))
+{
+    KprintfT("[genet] %s: Aborting IO request %lx\n", __func__, io);
+
+    struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
+    if (unit == NULL)
+        return 0;
+
+    BOOL pulled = FALSE;
+    Disable();
+    for (struct Node *node = unit->unit.unit_MsgPort.mp_MsgList.lh_Head;
+         node->ln_Succ != NULL; node = node->ln_Succ)
+    {
+        if (node == &io->io_Message.mn_Node)
+        {
+            Remove(node);
+            pulled = TRUE;
+            break;
+        }
+    }
+    Enable();
+
+    /* Once removed the request is ours alone, so the reply happens outside the
+     * critical section. Not queued: the unit task already owns it, or it was
+     * never sent — either way it completes on its own. AbortIO is a wish. */
+    if (pulled)
+    {
+        io->io_Error = IOERR_ABORTED;
+        ReplyMsg(&io->io_Message);
+    }
+
+    return 0;
 }

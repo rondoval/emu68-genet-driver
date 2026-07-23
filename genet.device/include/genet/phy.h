@@ -16,30 +16,18 @@
 
 struct GenetUnit;
 
-#define CONFIG_PHY_ANEG_TIMEOUT 6000
-
-/* MDIO registers, BCM2711 */
-#define MDIO_START_BUSY BIT(29)
-#define MDIO_READ_FAIL BIT(28)
-#define MDIO_RD (2U << 26)
-#define MDIO_WR BIT(26)
-#define MDIO_PMD_SHIFT 21
-#define MDIO_PMD_MASK 0x1f
-#define MDIO_REG_SHIFT 16
-#define MDIO_REG_MASK 0x1f
-
-#define GENET_UMAC_OFF 0x0800
-#define MDIO_CMD (GENET_UMAC_OFF + 0x614)
-
 /* MII_STAT1000 masks */
 #define PHY_1000BTSR_1000FD BIT(11)
 #define PHY_1000BTSR_1000HD BIT(10)
 
-#define PHY_FLAG_BROKEN_RESET BIT(0) /* soft reset not supported */
-
 #define PHY_DEFAULT_FEATURES (SUPPORTED_Autoneg | \
 							  SUPPORTED_TP |      \
 							  SUPPORTED_MII)
+
+/* Symmetric pause. There is no BMSR bit for pause capability — it is a property
+ * of the MAC, not the PHY — so it is asserted here and negotiated through the
+ * MII_ADVERTISE/MII_LPA pause bits like any other capability. */
+#define PHY_PAUSE_FEATURES (SUPPORTED_Pause | SUPPORTED_Asym_Pause)
 
 #define PHY_10BT_FEATURES (SUPPORTED_10baseT_Half | \
 						   SUPPORTED_10baseT_Full)
@@ -54,8 +42,9 @@ struct GenetUnit;
 							PHY_100BT_FEATURES | \
 							PHY_DEFAULT_FEATURES)
 
-#define PHY_GBIT_FEATURES (PHY_BASIC_FEATURES | \
-						   PHY_1000BT_FEATURES)
+#define PHY_GBIT_FEATURES (PHY_BASIC_FEATURES |  \
+						   PHY_1000BT_FEATURES | \
+						   PHY_PAUSE_FEATURES)
 
 struct phy_device
 {
@@ -71,6 +60,12 @@ struct phy_device
 	BOOL link;
 	phy_interface_t interface;
 
+	/* Negotiated flow control, resolved by genphy_read_pause() per 802.3
+	 * Annex 31B. Not the advertisement — the outcome — so the MAC can program
+	 * CMD_RX_PAUSE_IGNORE / CMD_TX_PAUSE_IGNORE without touching MDIO. */
+	BOOL pause_rx;
+	BOOL pause_tx;
+
 	u32 features;
 	u32 advertising;
 	u32 supported;
@@ -78,7 +73,6 @@ struct phy_device
 	u8 autoneg;
 	u8 addr;
 	u32 phy_id;
-	u32 flags;
 };
 
 /**
@@ -97,7 +91,10 @@ struct phy_device
 struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface);
 
 s32 phy_config(struct phy_device *phydev);
-s32 phy_startup(struct phy_device *phydev);
+/* Non-blocking link/speed/duplex/pause refresh. @polling selects how a latched
+ * link drop is treated: TRUE (periodic poll) keeps it so short drops are seen,
+ * FALSE (link interrupt) reads through it for the current state. */
+s32 genphy_read_status(struct phy_device *phydev, BOOL polling);
 void phy_destroy(struct phy_device *phydev);
 s32 genphy_config_aneg(struct phy_device *phydev);
 

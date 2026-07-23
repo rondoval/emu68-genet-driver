@@ -23,22 +23,22 @@
 #define SUPPORTED_1000baseT_Full BIT(5)
 #define SUPPORTED_Autoneg BIT(6)
 #define SUPPORTED_TP BIT(7)
-#define SUPPORTED_AUI BIT(8)
 #define SUPPORTED_MII BIT(9)
-#define SUPPORTED_FIBRE BIT(10)
-#define SUPPORTED_BNC BIT(11)
-#define SUPPORTED_1000baseX_Half BIT(21)
-#define SUPPORTED_1000baseX_Full BIT(22)
+#define SUPPORTED_Pause BIT(13)
+#define SUPPORTED_Asym_Pause BIT(14)
 
-/* Indicates what features are advertised by the interface. */
+/* Indicates what features are advertised by the interface. The two sets share
+ * bit positions, so a SUPPORTED_ mask can be handed to code expecting an
+ * ADVERTISED_ one and vice versa. */
 #define ADVERTISED_10baseT_Half BIT(0)
 #define ADVERTISED_10baseT_Full BIT(1)
 #define ADVERTISED_100baseT_Half BIT(2)
 #define ADVERTISED_100baseT_Full BIT(3)
+#define ADVERTISED_1000baseT_Half BIT(4)
+#define ADVERTISED_1000baseT_Full BIT(5)
+#define ADVERTISED_Autoneg BIT(6)
 #define ADVERTISED_Pause BIT(13)
 #define ADVERTISED_Asym_Pause BIT(14)
-#define ADVERTISED_1000baseX_Half BIT(21)
-#define ADVERTISED_1000baseX_Full BIT(22)
 
 /* The following are all involved in forcing a particular link
  * mode for the device for setting things.  When getting the

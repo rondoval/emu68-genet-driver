@@ -1,35 +1,30 @@
-# emu68-genet-driver Agent Notes
+# emu68-genet-driver — Agent Notes
 
 ## Build
 
-- Required companion packages: `devicetree.resource`, `emu68-common`, and `emu68-gic400-library`.
-- The README examples use an out-of-tree `build/` directory with `cmake ..`, `make`, and `make install`.
-- Equivalent configure/build flow is acceptable, but do not assume `build/` already exists.
-- The repo-local `compile` task expects an existing `build/` directory. If it is missing, configure first with `cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain.cmake -DCMAKE_PREFIX_PATH=/path/to/prefix -DCMAKE_INSTALL_PREFIX=/path/to/prefix`.
-- Debug backend: pass `-DEMU68_DEBUG_BACKEND=serial` (default `pistorm` | `serial` | `off`); selected stack-wide via `emu68-common`, `serial` links `debug.lib` and is not ROM-able.
-- Version string handling now follows the same pattern as `emu68-xhci-driver`: the top-level `CMakeLists.txt` defines `VERSTRING` from project version plus date, and `genet.device/CMakeLists.txt` only consumes it.
+- CMake packages required: `devicetree.resource`, `emu68-common`, `emu68-gic400-library`, and `Netdev` (the netdev ABI header, exported by lwip-amiga).
+- Build through the superbuild's container wrapper from the stack root — never host `cmake`:
+  `./scripts/docker-build.sh --target emu68-genet-driver`
+- Debug backend (`pistorm` default | `serial` | `off`): `EMU68_CONFIGURE_ARGS="-DEMU68_DEBUG_BACKEND=serial"`. Selected stack-wide via `emu68-common`; `serial` links `debug.lib` and is not ROM-able.
 
-## Runtime Notes
+## Invariants
 
-- The driver loads optional configuration from `ENV:genet.prefs`.
-- Config keys are case-insensitive and missing keys fall back to defaults.
-- If a task changes runtime config parsing, preserve the current behavior that unknown keys are ignored.
+- Speaks the **netdev ABI** (`<devices/netdev.h>`) only; the SANA-II personality lives on the `main` branch. Packets move zero-copy between the stack's DMA memory and the hardware rings — no openers, no packet copies, no per-protocol queues.
+- The datapath is lock-free: every object crossing the unit task and the caller context is a single-producer/single-consumer ring. Be conservative with anything that touches that contract.
+- Keep hardware-facing code in `genet.device/` separate from user-configurable defaults in `runtime-config/`.
+- `gic400.library` is a hard runtime dependency for interrupt handling.
+- A reset guard quiesces GENET DMA before the Amiga resets (Ctrl-Amiga-Amiga and `ColdReboot()` / `C:Reboot`); be careful with interrupt-enable, teardown, and reset-guard changes.
 
-## Code Handling
+## Runtime config
 
-- This is a SANA-II driver; be conservative with opener, queue, and packet-copying logic.
-- Preserve the current split between hardware-facing code in `genet.device/` and user-configurable defaults in `runtime-config/`.
-- `gic400.library` is a hard runtime dependency for interrupt handling in current versions.
-- This repository is mixed-license; preserve existing SPDX headers and do not relabel imported AmigaOS SDK headers without explicit provenance work.
-- Treat clearly original repository files as `GPL-2.0+` unless a task establishes a different provenance requirement.
-- Treat `device*.c`, `unit*.c`, `unit_commands*.c`, `unit_io.c`, `unit_task.c`, and `genet.device/include/device.h` as the cautious dual-licensed SANA-II scaffolding track: they resemble generic SANA-II drivers and also WiFiPi more specifically, so do not casually relicense them.
-- Treat `genet.device/src/devtree_parse.c`, `genet.device/include/genet/bcmgenet.h`, and `runtime-config/*` as original repository files currently licensed `GPL-2.0+`.
-- Treat the hardware-facing `bcmgenet*`, `phy*`, and imported `include/genet/*` headers as Linux/U-Boot-derived GPL-family material and preserve their file-level SPDX identifiers.
-- A reset guard quiesces GENET DMA before the Amiga resets (both Ctrl-Amiga-Amiga and `ColdReboot()` / `C:Reboot`); be cautious with interrupt enable, teardown, and reset-guard changes.
+- Optional configuration loads from `ENV:genet.prefs`. Keys are case-insensitive, missing keys fall back to defaults, and unknown keys are ignored — preserve that.
+
+## Licensing (mixed — preserve every file's SPDX header)
+
+- Dual-licensed `MPL-2.0 OR GPL-2.0+` device scaffolding — do not casually relicense: `device.c`, `device_end.c`, `unit.c`, `unit_task.c`, `netdev_api.c`, `bcmgenet-link.c`, `bcmgenet-mib.c`, `include/device.h`.
+- Original repository files, `GPL-2.0+`: `devtree_parse.c`, `include/genet/bcmgenet.h`, `runtime-config/*`.
+- Linux/U-Boot-derived GPL-family: the remaining `bcmgenet*`, `phy*`, and imported `include/genet/*` (mostly `GPL-2.0+`, some `GPL-2.0-only`). Note `bcmgenet-link.c` and `bcmgenet-mib.c/.h` are the dual-licensed exceptions to the `bcmgenet*` glob.
 
 ## Validation
 
-- Changes to runtime config parsing should be checked in `runtime-config/` and at least one driver build.
-- Interface changes in shared headers or install outputs should be validated through `emu68-driver-stack`.
-- Pure documentation or AGENTS updates usually only need a Problems check; code or CMake changes should be followed by at least `cmake --build build` once configured.
-
+- Code or CMake changes: build with `./scripts/docker-build.sh --target emu68-genet-driver`. Runtime-config parsing changes: also exercise `runtime-config/`. Doc-only changes: a Problems check.

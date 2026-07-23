@@ -7,14 +7,11 @@ The code falls into four main provenance groups:
 - Linux or U-Boot derived code, under GPL-family SPDX headers:
 	`genet.device/src/bcmgenet.c`, `genet.device/src/bcmgenet-tx.c`, `genet.device/src/bcmgenet-irq.c`, `genet.device/src/phy.c`, `genet.device/src/phy_interface.c`, and the imported hardware headers under `genet.device/include/genet/` such as `bcmgenet-irq.h`, `bcmgenet-regs.h`, `ethtool.h`, `mii.h`, `phy.h`, `phy_interface.h`, and `unimac.h`.
 
-- Amiga SANA-II scaffolding that resembles generic SANA-II drivers and also WiFiPi more specifically, kept on the cautious dual-license track:
-	`genet.device/src/device.c`, `device_beginio.c`, `device_abortio.c`, `device_end.c`, `unit.c`, `unit_commands.c`, `unit_commands_mcast.c`, `unit_io.c`, `unit_task.c`, and `genet.device/include/device.h`.
+- Amiga device scaffolding that resembles generic AmigaOS device drivers and also WiFiPi more specifically, kept on the cautious dual-license track:
+	`genet.device/src/device.c`, `device_end.c`, `unit.c`, `unit_task.c`, `netdev_api.c`, `bcmgenet-mib.c`, and `genet.device/include/device.h` (with `genet.device/include/genet/bcmgenet-mib.h`).
 	These files use `MPL-2.0 OR GPL-2.0+`.
 
 - Original repository files, licensed `GPL-2.0+`:
 	`genet.device/src/devtree_parse.c`, `genet.device/include/genet/bcmgenet.h`, and everything under `runtime-config/`.
-
-- Bundled AmigaOS SDK headers, kept under their original notices:
-	`genet.device/include/devices/sana2.h` and `genet.device/include/devices/sana2specialstats.h`.
 
 When redistributing or modifying this repository, follow the SPDX header or original notice on each file you use.

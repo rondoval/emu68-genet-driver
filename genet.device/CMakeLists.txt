@@ -21,28 +21,32 @@ add_compile_options(
     -Wmissing-prototypes
     -Wstrict-prototypes
     -fomit-frame-pointer
-    -fno-tree-loop-distribute-patterns
 )
 
 # Debug-output backend defines (EMU68_DEBUG_BACKEND, see emu68-common).
-emu68_debug_backend_definitions()
+emu68_debug_definitions()
+
+# cache_ops.h LVO-fallback define (EMU68_FORCE_LVO_CACHE_OPS, see emu68-common).
+emu68_cache_ops_definitions()
 
 # Sources
 add_executable(genet.device
     src/device.c
-    src/device_beginio.c
-    src/device_abortio.c
     src/devtree_parse.c
     src/unit.c
     src/unit_task.c
-    src/unit_commands.c
-    src/unit_commands_mcast.c
-    src/unit_io.c
+    src/netdev_api.c
     src/bcmgenet.c
+    src/bcmgenet-rx.c
     src/bcmgenet-tx.c
+    src/bcmgenet-dma.c
+    src/bcmgenet-mac.c
+    src/bcmgenet-link.c
     src/bcmgenet-irq.c
-    src/bcmgenet_mib.c
+    src/bcmgenet-mib.c
     src/phy.c
+    src/phy_mdio.c
+    src/phy_bcm54xx.c
     src/phy_interface.c
     src/device_end.c
 )
@@ -55,18 +59,6 @@ target_compile_definitions(genet.device
         DEVICE_NAME="${PROJECT_NAME}"
 )
 
-# Add shared include path for SANA-II headers
-target_include_directories(genet.device
-    PRIVATE
-	    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-
-option(GENET_QUICK_READ  "Enable inline quick path for CMD_READ" ON)
-
-if(GENET_QUICK_READ)
-    target_compile_definitions(genet.device PRIVATE GENET_QUICK_READ)
-endif()
-
 target_include_directories(genet.device
     PRIVATE
         include
@@ -77,6 +69,7 @@ target_link_libraries(genet.device
         runtime-config
         Emu68Common::common
         GIC400::gic400_headers
+        Netdev::netdev_headers
 )
 
 # ROM-able: no writable .data/.bss may sneak in. For the serial backend this

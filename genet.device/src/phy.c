@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Generic PHY Management code
+ * Generic PHY management. Ported from U-Boot's phylib (drivers/net/phy/phy.c),
+ * which is itself derived from Linux's phy_device.c. The MDIO transport and the
+ * Broadcom vendor layer live in phy_mdio.c and phy_bcm54xx.c.
  *
  * Copyright 2011 Freescale Semiconductor, Inc.
  * author Andy Fleming
- *
- * Based loosely off of Linux's PHY Lib
  */
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
@@ -17,7 +17,6 @@
 
 #include <debug.h>
 #include <bits.h>
-#include <byteorder.h>
 #include <errors.h>
 #include <iomem.h>
 #include <timing.h>
@@ -25,98 +24,9 @@
 #include <device.h>
 
 #include <genet/phy.h>
+#include <genet/phy_priv.h>
 #include <genet/mii.h>
-
-/**
- * wait_for_bit_x()	waits for bit set/cleared in register
- *
- * Function polls register waiting for specific bit(s) change
- * (either 0->1 or 1->0). It can fail under two conditions:
- * - Timeout
- * Function succeeds only if all bits of masked register are set/cleared
- * (depending on set option).
- *
- * @param reg		Register that will be read (using read_x())
- * @param mask		Bit(s) of register that must be active
- * @param set		Selects wait condition (bit set or clear)
- * @param timeout_ms	Timeout (in milliseconds)
- * Return:		0 on success, ETIMEDOUT on failure
- */
-static inline s32 wait_for_bit_32(APTR reg,
-								  const u32 mask,
-								  const BOOL set,
-								  const u32 timeout_ms)
-{
-	// Kprintf("[genet] %s: reg=%ld mask=0x%lx set=%ld timeout=%ld\n", __func__, reg, mask, set, timeout_ms);
-	u32 start = le32(*(volatile u32 *)0xf2003004); // TODO get from device tree
-	u32 end = start + timeout_ms * 1000u;
-
-	while (1)
-	{
-		u32 val = mmio_read32(reg);
-
-		if (!set)
-			val = ~val;
-
-		if ((val & mask) == mask)
-			return 0;
-
-		if (end < le32(*(volatile u32 *)0xf2003004))
-			break;
-
-		delay_us(1);
-		// schedule();
-	}
-
-	// Kprintf("[genet] %s: Timeout (reg=%ld mask=0x%lx wait_set=%ld)\n", __func__, reg, mask, set);
-	return -ETIMEDOUT;
-}
-
-static inline void mdio_start(struct GenetUnit *unit)
-{
-	// Kprintf("%s\n", __func__);
-	mmio_set32(unit->genetBase + MDIO_CMD, MDIO_START_BUSY);
-}
-
-static s32 mdio_write(struct phy_device *phy, u8 reg, u16 value)
-{
-	// Kprintf("[genet] %s: phy=%ld reg=%ld value=0x%04lx\n", __func__, phy->addr, reg, value);
-	struct GenetUnit *unit = phy->unit;
-
-	/* Prepare the read operation */
-	u32 val = MDIO_WR | ((u32)phy->addr << MDIO_PMD_SHIFT) |
-			  ((u32)reg << MDIO_REG_SHIFT) | ((u32)value & 0xffffU);
-	mmio_write32(val, unit->genetBase + MDIO_CMD);
-
-	/* Start MDIO transaction */
-	mdio_start(unit);
-
-	return wait_for_bit_32(unit->genetBase + MDIO_CMD,
-						   MDIO_START_BUSY, FALSE, 20);
-}
-
-static s32 mdio_read(struct phy_device *phy, u8 reg)
-{
-	// Kprintf("[genet] %s: phy=%ld reg=%ld\n", __func__, phy->addr, reg);
-	struct GenetUnit *unit = phy->unit;
-
-	/* Prepare the read operation */
-	u32 val = MDIO_RD | ((u32)phy->addr << MDIO_PMD_SHIFT) | ((u32)reg << MDIO_REG_SHIFT);
-	mmio_write32(val, unit->genetBase + MDIO_CMD);
-
-	/* Start MDIO transaction */
-	mdio_start(unit);
-
-	s32 ret = wait_for_bit_32(unit->genetBase + MDIO_CMD,
-							  MDIO_START_BUSY, FALSE, 20);
-	if (ret)
-		return ret;
-
-	val = mmio_read32(unit->genetBase + MDIO_CMD);
-	// Kprintf("[genet] %s: phy=%ld reg=%ld value=0x%lx\n", __func__, phy->addr, reg, val);
-
-	return val & 0xffff;
-}
+#include <genet/brcmphy.h>
 
 /**
  * genphy_config_advert - sanitize and advertise auto-negotiation parameters
@@ -129,7 +39,7 @@ static s32 mdio_read(struct phy_device *phy, u8 reg)
  */
 static s32 genphy_config_advert(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld autoneg=%lu\n", __func__, phydev->addr, (ULONG)phydev->autoneg);
+	KprintfT("[genet] %s: phy=%ld autoneg=%lu\n", __func__, phydev->addr, (ULONG)phydev->autoneg);
 	s32 changed = 0;
 
 	/* Only allow advertising what this PHY supports */
@@ -159,10 +69,6 @@ static s32 genphy_config_advert(struct phy_device *phydev)
 		adv |= ADVERTISE_PAUSE_CAP;
 	if (advertise & ADVERTISED_Asym_Pause)
 		adv |= ADVERTISE_PAUSE_ASYM;
-	if (advertise & ADVERTISED_1000baseX_Half)
-		adv |= ADVERTISE_1000XHALF;
-	if (advertise & ADVERTISED_1000baseX_Full)
-		adv |= ADVERTISE_1000XFULL;
 
 	if (adv != oldadv)
 	{
@@ -220,11 +126,17 @@ static s32 genphy_config_advert(struct phy_device *phydev)
  *
  * Description: Configures MII_BMCR to force speed/duplex
  *   to the values in phydev. Assumes that the values are valid.
+ *
+ * The blind write is what disables autonegotiation: BMCR_ANENABLE is simply not
+ * among the bits set. BMCR_ANRESTART must stay out of it too — it only
+ * self-clears while autonegotiation is enabled, and genphy_update_link() reads
+ * a set ANRESTART as "negotiating, link not yet meaningful", which would pin a
+ * forced link to down forever.
  */
 static s32 genphy_setup_forced(struct phy_device *phydev)
 {
 	Kprintf("[genet] %s: phy=%ld speed=%lu duplex=%lu\n", __func__, phydev->addr, (ULONG)phydev->speed, (ULONG)phydev->duplex);
-	u16 ctl = BMCR_ANRESTART;
+	u16 ctl = 0;
 
 	if (phydev->speed == SPEED_1000)
 		ctl |= BMCR_SPEED1000;
@@ -243,7 +155,7 @@ static s32 genphy_setup_forced(struct phy_device *phydev)
  */
 static s32 genphy_restart_aneg(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	s32 ctl_read = mdio_read(phydev, MII_BMCR);
 
 	if (ctl_read < 0)
@@ -269,7 +181,7 @@ static s32 genphy_restart_aneg(struct phy_device *phydev)
  */
 s32 genphy_config_aneg(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld autoneg=%lu\n", __func__, phydev->addr, (ULONG)phydev->autoneg);
+	KprintfT("[genet] %s: phy=%ld autoneg=%lu\n", __func__, phydev->addr, (ULONG)phydev->autoneg);
 
 	if (phydev->autoneg != AUTONEG_ENABLE)
 		return genphy_setup_forced(phydev);
@@ -307,67 +219,63 @@ s32 genphy_config_aneg(struct phy_device *phydev)
 /**
  * genphy_update_link - update link status in @phydev
  * @phydev: target phy_device struct
+ * @polling: TRUE from the periodic poll, FALSE from the link interrupt
  *
- * Description: Update the value in phydev->link to reflect the
- *   current link value.  In order to do this, we need to read
- *   the status register twice, keeping the second value.
+ * Description: Update phydev->link to reflect the current link state.
+ *   Never blocks: this runs from the unit task, so it must not wait for
+ *   autonegotiation to finish (a stalled poll would stall RX and TX with it).
+ *   An incomplete negotiation simply reports link down; the next poll picks it
+ *   up. Mirrors Linux genphy_update_link().
  */
-static s32 genphy_update_link(struct phy_device *phydev)
+static s32 genphy_update_link(struct phy_device *phydev, BOOL polling)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	s32 bmcr = mdio_read(phydev, MII_BMCR);
+	if (bmcr < 0)
+		return bmcr;
 
-	/*
-	 * Wait if the link is up, and autonegotiation is in progress
-	 * (ie - we're capable and it's not done)
-	 */
-	s32 mii_reg = mdio_read(phydev, MII_BMSR);
-
-	/*
-	 * If we already saw the link up, and it hasn't gone down, then
-	 * we don't need to wait for autoneg again
-	 */
-	if (phydev->link && mii_reg & BMSR_LSTATUS)
+	/* Autoneg is being restarted, so BMSR is meaningless — report down. */
+	if (bmcr & BMCR_ANRESTART)
+	{
+		phydev->link = FALSE;
 		return 0;
-
-	if ((phydev->autoneg == AUTONEG_ENABLE) &&
-		!(mii_reg & BMSR_ANEGCOMPLETE))
-	{
-		u32 i = 0;
-
-		Kprintf("[genet] %s: Waiting for PHY auto negotiation to complete", __func__);
-		while (!(mii_reg & BMSR_ANEGCOMPLETE))
-		{
-			/*
-			 * Timeout reached ?
-			 */
-			if (i > (CONFIG_PHY_ANEG_TIMEOUT / 50))
-			{
-				Kprintf(" TIMEOUT !\n");
-				phydev->link = FALSE;
-				return -ETIMEDOUT;
-			}
-
-			if ((i++ % 10) == 0)
-			{
-				Kprintf(".");
-			}
-
-			mii_reg = mdio_read(phydev, MII_BMSR);
-			delay_ms(50);
-		}
-		Kprintf(" done\n");
-		phydev->link = TRUE;
 	}
-	else
-	{
-		/* Read the link a second time to clear the latched state */
-		mii_reg = mdio_read(phydev, MII_BMSR);
 
-		if (mii_reg & BMSR_LSTATUS)
-			phydev->link = TRUE;
-		else
-			phydev->link = FALSE;
+	/*
+	 * BMSR_LSTATUS latches low, so a drop since the previous read is still
+	 * visible in the next one. Which of the two readings we want depends on why
+	 * we are here:
+	 *
+	 *   polling  — take the latched value. It is the only way a drop shorter
+	 *              than the poll period is ever seen at all.
+	 *   interrupt — discard the latch and read again for the current state.
+	 *              The interrupt already reported that something changed; a
+	 *              drop that has since recovered must not be published as a
+	 *              link-down the next poll would have to undo.
+	 *
+	 * Either way, a link that was already down needs the second read: the first
+	 * carries nothing but old news.
+	 */
+	s32 status;
+	if (!polling || !phydev->link)
+	{
+		status = mdio_read(phydev, MII_BMSR);
+		if (status < 0)
+			return status;
+		if (status & BMSR_LSTATUS)
+			goto done;
 	}
+
+	status = mdio_read(phydev, MII_BMSR);
+	if (status < 0)
+		return status;
+
+done:
+	phydev->link = (status & BMSR_LSTATUS) ? TRUE : FALSE;
+
+	/* Autoneg may have restarted with ANEGCOMPLETE already cleared but
+	 * LSTATUS not yet — do not report a link we cannot describe. */
+	if (phydev->autoneg == AUTONEG_ENABLE && !(status & BMSR_ANEGCOMPLETE))
+		phydev->link = FALSE;
 
 	return 0;
 }
@@ -379,12 +287,14 @@ static s32 genphy_update_link(struct phy_device *phydev)
  * capabilities.  If autonegotiation is disabled, we use the
  * appropriate bits in the control register.
  *
- * Stolen from Linux's mii.c and phy_device.c
+ * Ported from U-Boot's genphy_parse_link().
  */
 static s32 genphy_parse_link(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	s32 mii_reg = mdio_read(phydev, MII_BMSR);
+	if (mii_reg < 0)
+		return mii_reg;
 
 	/* We're using autonegotiation */
 	if (phydev->autoneg == AUTONEG_ENABLE)
@@ -404,7 +314,16 @@ static s32 genphy_parse_link(struct phy_device *phydev)
 				Kprintf("[genet] %s: Could not read MII_STAT1000. Ignoring gigabit capability\n", __func__);
 				gblpa = 0;
 			}
-			gblpa &= mdio_read(phydev, MII_CTRL1000) << 2;
+			s32 ctrl1000 = mdio_read(phydev, MII_CTRL1000);
+			if (ctrl1000 < 0)
+			{
+				Kprintf("[genet] %s: Could not read MII_CTRL1000. Ignoring gigabit capability\n", __func__);
+				gblpa = 0;
+			}
+			else
+			{
+				gblpa &= ctrl1000 << 2;
+			}
 		}
 
 		/* Set the baseline so we only have to set them
@@ -464,11 +383,10 @@ static s32 genphy_parse_link(struct phy_device *phydev)
 			estatus = (u32)estatus_read;
 		}
 
-		if (estatus & (ESTATUS_1000_XFULL | ESTATUS_1000_XHALF |
-					   ESTATUS_1000_TFULL | ESTATUS_1000_THALF))
+		if (estatus & (ESTATUS_1000_TFULL | ESTATUS_1000_THALF))
 		{
 			phydev->speed = SPEED_1000;
-			if (estatus & (ESTATUS_1000_XFULL | ESTATUS_1000_TFULL))
+			if (estatus & ESTATUS_1000_TFULL)
 				phydev->duplex = DUPLEX_FULL;
 		}
 	}
@@ -496,9 +414,19 @@ static s32 genphy_parse_link(struct phy_device *phydev)
 
 s32 phy_config(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
-	u32 features = (SUPPORTED_TP | SUPPORTED_MII | SUPPORTED_AUI | SUPPORTED_FIBRE |
-					SUPPORTED_BNC);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+
+	/* Vendor bring-up first: phy_create() has just soft-reset the PHY, which
+	 * clears the shadow registers these settings live in. Nothing below
+	 * resets it again (genphy_config_aneg only sets BMCR_ANRESTART). */
+	if (phy_is_bcm54xx(phydev))
+		bcm54xx_config_init(phydev);
+
+	/* Everything below is discovered from BMSR/ESTATUS; the pause bits are not,
+	 * because pause capability is a property of the MAC and has no status bit
+	 * to read. They are asserted here so the mask at the end of this function
+	 * does not strip an advertisement the driver deliberately made. */
+	u32 features = (SUPPORTED_TP | SUPPORTED_MII | PHY_PAUSE_FEATURES);
 
 	/* Do we support autonegotiation? */
 	s32 val = mdio_read(phydev, MII_BMSR);
@@ -529,10 +457,6 @@ s32 phy_config(struct phy_device *phydev)
 			features |= SUPPORTED_1000baseT_Full;
 		if (val & ESTATUS_1000_THALF)
 			features |= SUPPORTED_1000baseT_Half;
-		if (val & ESTATUS_1000_XFULL)
-			features |= SUPPORTED_1000baseX_Full;
-		if (val & ESTATUS_1000_XHALF)
-			features |= SUPPORTED_1000baseX_Half;
 	}
 
 	phydev->supported &= features;
@@ -541,23 +465,77 @@ s32 phy_config(struct phy_device *phydev)
 	return genphy_config_aneg(phydev);
 }
 
-s32 phy_startup(struct phy_device *phydev)
+/*
+ * Resolve negotiated flow control from the two advertisements, per 802.3 Annex 31B.
+ */
+static s32 genphy_read_pause(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
-	s32 ret = genphy_update_link(phydev);
-	if (ret)
+	phydev->pause_rx = FALSE;
+	phydev->pause_tx = FALSE;
+
+	/* Nothing was negotiated, so nothing is agreed. */
+	if (phydev->autoneg != AUTONEG_ENABLE)
+		return 0;
+
+	s32 adv_read = mdio_read(phydev, MII_ADVERTISE);
+	if (adv_read < 0)
+		return adv_read;
+	s32 lpa_read = mdio_read(phydev, MII_LPA);
+	if (lpa_read < 0)
+		return lpa_read;
+
+	u32 adv = (u32)adv_read;
+	u32 lpa = (u32)lpa_read;
+	u32 both = adv & lpa;
+
+	if (both & ADVERTISE_PAUSE_CAP)
+	{
+		/* Symmetric: each end may pause the other. */
+		phydev->pause_rx = TRUE;
+		phydev->pause_tx = TRUE;
+	}
+	else if (both & ADVERTISE_PAUSE_ASYM)
+	{
+		/* Asymmetric: pause flows only towards whichever end asked to be able
+		 * to send it. */
+		phydev->pause_tx = (lpa & LPA_PAUSE_CAP) ? TRUE : FALSE;
+		phydev->pause_rx = (adv & ADVERTISE_PAUSE_CAP) ? TRUE : FALSE;
+	}
+
+	return 0;
+}
+
+/**
+ * genphy_read_status - refresh link, speed, duplex and pause from the PHY
+ * @phydev: target phy_device struct
+ * @polling: TRUE from the periodic poll, FALSE from the link interrupt
+ *
+ * The authoritative "what is the link doing right now" read, and the only one
+ * the driver uses: both the periodic link poll and the link-change interrupt
+ * funnel through here. Non-blocking, so it is safe from the unit task.
+ * Speed, duplex and pause are only meaningful while the link is up, so they are
+ * read only in that case.
+ */
+s32 genphy_read_status(struct phy_device *phydev, BOOL polling)
+{
+	s32 ret = genphy_update_link(phydev, polling);
+	if (ret < 0)
 		return ret;
 
-	return genphy_parse_link(phydev);
+	if (!phydev->link)
+		return 0;
+
+	ret = genphy_parse_link(phydev);
+	if (ret < 0)
+		return ret;
+
+	return genphy_read_pause(phydev);
 }
 
 static s32 phy_reset(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	u16 timeout = 500;
-
-	if (phydev->flags & PHY_FLAG_BROKEN_RESET)
-		return 0;
 
 	s32 reg = mdio_write(phydev, MII_BMCR, BMCR_RESET);
 	if (reg < 0)
@@ -569,20 +547,21 @@ static s32 phy_reset(struct phy_device *phydev)
 	/*
 	 * Poll the control register for the reset bit to go to 0 (it is
 	 * auto-clearing).  This should happen within 0.5 seconds per the
-	 * IEEE spec.
+	 * IEEE spec.  Every read is checked before it is used as a bitmask: an
+	 * error return is negative, and its sign bit sits where BMCR_RESET does.
 	 */
-	reg = mdio_read(phydev, MII_BMCR);
-	while ((reg & BMCR_RESET) && timeout--)
+	do
 	{
 		reg = mdio_read(phydev, MII_BMCR);
-
 		if (reg < 0)
 		{
 			Kprintf("[genet] %s: PHY status read failed\n", __func__);
 			return reg;
 		}
+		if (!(reg & BMCR_RESET))
+			break;
 		delay_ms(1);
-	}
+	} while (timeout--);
 
 	if (reg & BMCR_RESET)
 	{
@@ -602,7 +581,7 @@ static s32 phy_reset(struct phy_device *phydev)
  */
 static s32 get_phy_id(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	/*
 	 * Grab the bits from PHYIR1, and put them
 	 * in the upper half
@@ -627,17 +606,16 @@ static s32 get_phy_id(struct phy_device *phydev)
 
 struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 {
-	KprintfH("[genet] %s: base=0x%lx phyaddr=%ld\n", __func__, dev->genetBase, dev->phyaddr);
-	struct phy_device *phydev = pool_alloc(dev->metaPool, sizeof(*phydev));
+	KprintfT("[genet] %s: base=0x%lx phyaddr=%ld\n", __func__, dev->genetBase, dev->phyaddr);
+	struct phy_device *phydev = pool_zalloc(dev->metaPool, sizeof(*phydev));
 	if (!phydev)
 	{
 		Kprintf("[genet] %s: Failed to allocate MDIO bus\n", __func__);
 		return NULL;
 	}
-	phydev->features = PHY_GBIT_FEATURES | SUPPORTED_MII |
-					   SUPPORTED_AUI | SUPPORTED_FIBRE |
-					   SUPPORTED_BNC;
+	phydev->features = PHY_GBIT_FEATURES;
 	phydev->unit = dev;
+	phydev->speed = SPEED_10;
 	phydev->duplex = DUPLEX_HALF;
 	phydev->link = FALSE;
 	phydev->interface = PHY_INTERFACE_MODE_NA;
@@ -651,10 +629,19 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 	{
 		if (phydev->phy_id != 0 && (phydev->phy_id & 0x1fffffff) != 0x1fffffff)
 		{
-			KprintfH("[genet] %s: PHY ID: %08lx\n", __func__, phydev->phy_id);
+			KprintfT("[genet] %s: PHY ID: %08lx\n", __func__, phydev->phy_id);
 			phydev->interface = interface;
-			/* Soft Reset the PHY */
-			phy_reset(phydev);
+
+			/* Soft reset the PHY. A failure here leaves the vendor shadow
+			 * registers at whatever the previous session programmed, which
+			 * phy_config()'s bring-up assumes it owns. */
+			result = phy_reset(phydev);
+			if (result < 0)
+			{
+				Kprintf("[genet] %s: PHY reset failed: %ld\n", __func__, result);
+				pool_free(dev->metaPool, phydev);
+				return NULL;
+			}
 
 			return phydev;
 		}
@@ -667,6 +654,6 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 
 void phy_destroy(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	pool_free(phydev->unit->metaPool, phydev);
 }
