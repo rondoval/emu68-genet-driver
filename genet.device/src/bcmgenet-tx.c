@@ -364,14 +364,11 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 		accepted++;
 	}
 
-	if (accepted != 0)
-	{
-		/* close the NoSync clean batch (segments + TSBs) before the
-		 * hardware is told to read them */
-		emu68_barrier();
-		mmio_write32(ring->tx_prod_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
-	}
-	else if (count != 0)
+	/* The doorbell is deferred: staged descriptors (tx_prod_index advanced,
+	 * segments/TSBs cleaned NoSync) are published later by a single
+	 * bcmgenet_netdev_tx_kick() per burst — one barrier + one TDMA_PROD_INDEX
+	 * write for the whole locked run instead of one per frame. */
+	if (accepted == 0 && count != 0)
 		unit->internalStats.tx_rejected++; /* ring full */
 
 	if (unlikely(kick) && txdone_pending(unit, ring->hw_cons_cache))
@@ -379,4 +376,14 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 
 	PERF_ADD(&unit->gu_Perf, GP_TX_SUBMIT, t_submit);
 	return (LONG)accepted;
+}
+
+/* Publish every descriptor staged by prior bcmgenet_netdev_tx_submit() calls:
+ * close the accumulated DMAF_NoSync clean batch with one barrier, then hand the
+ * producer index to the hardware. Idempotent — re-writing the current index is
+ * harmless, so this is safe to call with nothing staged (STOP backstop). */
+void bcmgenet_netdev_tx_kick(struct GenetUnit *unit)
+{
+	emu68_barrier();
+	mmio_write32(unit->tx_ring.tx_prod_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
 }

@@ -310,6 +310,12 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Stopping GENET\n", __func__);
 
+	/* Publish any TX batch the stack staged but has not kicked, before the DMA
+	 * is disabled below — otherwise those frames would be completed as dropped
+	 * without ever reaching the wire. The stack normally kicks at the unlock
+	 * preceding STOP, so this is an idempotent backstop. */
+	bcmgenet_netdev_tx_kick(unit);
+
 	bcmgenet_reset_quiesce(unit);
 
 	if (unit->irq0_installed)

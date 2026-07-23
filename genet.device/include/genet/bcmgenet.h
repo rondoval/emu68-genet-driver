@@ -50,6 +50,7 @@ void bcmgenet_perf_tick(struct GenetUnit *unit);
 
 /* TX functions */
 LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc *descs, ULONG count);
+void bcmgenet_netdev_tx_kick(struct GenetUnit *unit);	 /* publish the staged TX batch (doorbell) */
 void bcmgenet_tx_harvest(struct GenetUnit *unit);		 /* unit task */
 void bcmgenet_netdev_tx_quiesce(struct GenetUnit *unit); /* unit task, DMA off */
 

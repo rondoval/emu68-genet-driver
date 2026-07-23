@@ -168,6 +168,15 @@ static LONG genet_ndo_txsubmit(APTR drvctx, const struct NetDevTxDesc *descs, UL
     return accepted;
 }
 
+/* Ring the deferred TX doorbell for the batch staged by genet_ndo_txsubmit
+ * calls since the last kick. No ndTxBusy guard: it queues no cookies, just
+ * publishes the producer index, so it cannot extend the STOP quiesce. */
+static VOID genet_ndo_txkick(APTR drvctx)
+{
+    struct GenetUnit *unit = drvctx;
+    bcmgenet_netdev_tx_kick(unit);
+}
+
 static VOID genet_ndo_rxrelease(APTR drvctx, APTR cookie)
 {
     struct GenetUnit *unit = drvctx;
@@ -196,6 +205,7 @@ static VOID genet_ndo_dmafree(APTR drvctx, APTR ptr, ULONG size)
 
 static const struct NetDevDrvOps genet_netdev_ops = {
     genet_ndo_txsubmit,
+    genet_ndo_txkick,
     genet_ndo_rxrelease,
     genet_ndo_dmaalloc,
     genet_ndo_dmafree,
