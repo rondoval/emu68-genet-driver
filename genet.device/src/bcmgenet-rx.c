@@ -60,7 +60,7 @@ static void netdev_rx_flush(struct GenetUnit *unit, struct NetDevRxDesc *batch, 
 	}
 }
 
-s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 budget)
+s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 {
 	/* Released buffers become swap candidates before anything else — this
 	 * runs on every unit-task wakeup, so the pool is replenished (and the
@@ -95,13 +95,13 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 budget)
 	}
 
 	PERF_T0(t_drain);
-	struct NetDevRxDesc batch[ND_RX_BATCH];
+	struct NetDevRxDesc *batch = unit->ndRxBatchDescs; /* ndRxBatch entries, ATTACH-allocated */
 	ULONG batched = 0;
 
 	u16 rx_cons_index = unit->rx_ring.rx_cons_index;
 	u16 to_process = (u16)((u32)(rx_prod_index - rx_cons_index) & DMA_C_INDEX_MASK);
-	if (to_process > budget)
-		to_process = budget;
+	if (to_process > limit)
+		to_process = limit;
 	rx_prod_index = (u16)((u32)(rx_cons_index + to_process) & DMA_C_INDEX_MASK);
 	while (rx_cons_index != rx_prod_index)
 	{
@@ -208,7 +208,7 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 budget)
 			rx_cb->data_buffer = (dma_addr_t)fresh;
 			mmio_write32((u32)(dma_addr_t)fresh, desc_base + DMA_DESC_ADDRESS_LO);
 
-			if (batched == ND_RX_BATCH)
+			if (batched == unit->ndRxBatch)
 			{
 				netdev_rx_flush(unit, batch, batched);
 				batched = 0;

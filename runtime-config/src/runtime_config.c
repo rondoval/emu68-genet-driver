@@ -83,7 +83,6 @@ static void ApplyDefaults(struct GenetRuntimeConfig *config)
 {
     config->unit_task_priority = DEFAULT_UNIT_TASK_PRIORITY;
     config->unit_stack_bytes = DEFAULT_UNIT_STACK_BYTES;
-    config->budget = DEFAULT_BUDGET;
     config->periodic_task_ms = DEFAULT_PERIODIC_TASK_MS;
     config->link_poll_ms = DEFAULT_LINK_POLL_MS;
     config->rx_coalesce_usecs = DEFAULT_RX_COALESCE_USECS;
@@ -142,14 +141,6 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
             if (config->unit_stack_bytes < 4096)
                 config->unit_stack_bytes = 4096; /* floor */
             config->unit_stack_bytes &= ~3u;    /* 32-bit align */
-        }
-        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "BUDGET") == 0)
-        {
-            /* Floored at the RX batch size: below it the batch can
-             * never fill in one drain pass, so every hand-up to the
-             * stack costs a lock acquisition for a part-full batch. */
-            if (StrToLong((STRPTR)val, &parsed) && parsed > 0)
-                config->budget = (u16)(parsed < MIN_BUDGET ? MIN_BUDGET : parsed);
         }
         else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "PERIODIC_TASK_MS") == 0)
         {
@@ -239,12 +230,11 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
 #ifdef DEBUG
 void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config)
 {
-    Kprintf("[genet] config: pri=%ld stack_bytes=%lu periodic_task_ms=%lu link_poll_ms=%lu budget=%lu rx_coalesce_usecs=%lu rx_coalesce_frames=%lu tx_coalesce_frames=%lu rx_pool_bufs=%lu\n",
+    Kprintf("[genet] config: pri=%ld stack_bytes=%lu periodic_task_ms=%lu link_poll_ms=%lu rx_coalesce_usecs=%lu rx_coalesce_frames=%lu tx_coalesce_frames=%lu rx_pool_bufs=%lu\n",
             (LONG)config->unit_task_priority,
             (ULONG)config->unit_stack_bytes,
             (ULONG)config->periodic_task_ms,
             (ULONG)config->link_poll_ms,
-            (ULONG)config->budget,
             (ULONG)config->rx_coalesce_usecs,
             (ULONG)config->rx_coalesce_frames,
             (ULONG)config->tx_coalesce_frames,

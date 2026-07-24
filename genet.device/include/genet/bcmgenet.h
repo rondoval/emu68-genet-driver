@@ -38,7 +38,7 @@ void bcmgenet_link_poll(struct GenetUnit *unit, BOOL polling);
 void bcmgenet_phy_refresh_forced(struct GenetUnit *unit);
 
 /* RX functions (unit task context) */
-s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 budget);
+s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit);
 
 /* Periodic datapath perf report — profile tier only, and the only work the
  * housekeeping tick does beyond the PHY poll. */

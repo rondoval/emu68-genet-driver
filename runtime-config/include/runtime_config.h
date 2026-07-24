@@ -10,13 +10,6 @@
 #define DEFAULT_UNIT_STACK_BYTES 65536UL /* 64 KB */
 
 #define DEFAULT_PERIODIC_TASK_MS 200
-/* Descriptors the unit task drains, and commands it processes, per wakeup.
- * The floor is the driver's RX batch size (ND_RX_BATCH): a smaller budget
- * cannot fill a batch in one pass, so every hand-up to the stack costs a lock
- * acquisition for a part-full batch. device.h checks the two agree. */
-#define DEFAULT_BUDGET 64
-#define MIN_BUDGET 64
-
 /* PHY link poll period. GENET v5 (BCM2711) does not reliably raise the
  * link-up interrupt at 10 Mbps, so the link state is only trustworthy if it
  * is polled; the interrupt is just a latency optimisation. Matches Linux
@@ -73,7 +66,6 @@ struct GenetRuntimeConfig
 {
     s8 unit_task_priority;
     u32 unit_stack_bytes;
-    u16 budget;
     u32 periodic_task_ms;
     u32 link_poll_ms;
     u32 rx_coalesce_usecs;

@@ -72,7 +72,6 @@ open — bring the stack down and up.
 |---|---|---|
 | `UNIT_TASK_PRIORITY` | `10` | Exec priority of the driver's unit task. Keep it above dynamic-scheduler ranges (e.g. Executive's, ≤ 5) or a busy application can starve the driver. |
 | `UNIT_STACK_SIZE` | `65536` | Unit-task stack in bytes (floor 4096). |
-| `BUDGET` | `64` | Maximum requests the unit task processes per wake-up before rescheduling itself. Floored at the RX batch size (`ND_RX_BATCH` = 64): a smaller value cannot fill a batch in one drain pass. |
 | `PERIODIC_TASK_MS` | `200` | Housekeeping-timer interval in ms (interrupt watchdog; paces the PHY poll). |
 | `LINK_POLL_MS` | `1000` | How often the PHY is polled for link state, in ms. The poll — not the interrupt — is what converges a 10 Mbps link, which GENET v5 fails to signal. |
 | `RX_COALESCE_USECS` | `500` | Target latency in µs before hardware raises an RX interrupt if the frame threshold is not met. |

@@ -240,6 +240,11 @@ static void netdev_teardown_pool(struct GenetUnit *unit)
         pool_free(unit->metaPool, unit->ndTxDone);
         unit->ndTxDone = NULL;
     }
+    if (unit->ndRxBatchDescs != NULL)
+    {
+        pool_free(unit->metaPool, unit->ndRxBatchDescs);
+        unit->ndRxBatchDescs = NULL;
+    }
     unit->ndRxFreeCount = 0;
     unit->ndRxPoolTotal = 0;
     unit->ndRxHeld = 0;
@@ -303,6 +308,14 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
             pool_bufs = RX_POOL_BUFS_MAX;
     }
 
+    /* Flush granularity: our per-nso_RxInput batch = the stack's declared array
+     * capacity (nda_RxBatch), so a whole batch lands in one stack lock hold. The
+     * marshalling buffer (ndRxBatchDescs) is allocated to this below. Clamp to
+     * RX_DESCS — a batch can't exceed one drain pass, bounded by the ring; 0 or
+     * oversize means no/bad request, default to a full ring's worth. */
+    unit->ndRxBatch = (u16)((att->nda_RxBatch != 0 && att->nda_RxBatch <= RX_DESCS)
+                                ? att->nda_RxBatch : RX_DESCS);
+
     /* RX buffer pool, TX status blocks, and the SPSC rings. The recycle
      * ring is a power of two covering the whole pool (a buffer is in
      * flight at most once, and the free-running SPSC indices tolerate a
@@ -318,8 +331,9 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
     unit->ndRxFree = pool_alloc(unit->metaPool, pool_bufs * sizeof(APTR));
     unit->ndRecycle = pool_alloc(unit->metaPool, recycle_n * sizeof(APTR));
     unit->ndTxDone = pool_alloc(unit->metaPool, ND_TXDONE_RING_N * sizeof(struct GenetTxDone));
+    unit->ndRxBatchDescs = pool_alloc(unit->metaPool, unit->ndRxBatch * sizeof(struct NetDevRxDesc));
     if (unit->ndRxSlab == NULL || unit->ndTxTsb == NULL || unit->ndRxFree == NULL ||
-        unit->ndRecycle == NULL || unit->ndTxDone == NULL)
+        unit->ndRecycle == NULL || unit->ndTxDone == NULL || unit->ndRxBatchDescs == NULL)
     {
         Kprintf("[genet] %s: pool alloc failed (%lu bufs, %lu KB slab)\n",
                 __func__, (ULONG)pool_bufs, (ULONG)(pool_bufs * RX_BUF_LENGTH / 1024));
@@ -373,7 +387,7 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
     caps->ndc_TxRingSlots = TX_DESCS;
     caps->ndc_RxRingSlots = RX_DESCS;
     caps->ndc_TxAlign = 0;
-    caps->ndc_Pad = 0;
+    caps->ndc_TxInFlightMax = ND_TXDONE_RING_N; /* our completion-FIFO depth */
     caps->ndc_RxPoolBufs = pool_bufs;
     for (u32 i = 0; i < 3; i++)
         caps->ndc_Reserved[i] = 0;

@@ -22,6 +22,11 @@
 #include <runtime_config.h>
 #include <driver_task.h>
 
+/* Max IO commands drained per wakeup — a defensive cap so a command flood
+ * can't starve the datapath. Commands are rare and reply-gated, so the value
+ * only matters under abuse; if hit, the loop re-signals to finish next wakeup. */
+#define CMD_DRAIN_MAX 64u
+
 /*
  * The unit task: netdev command processing, interrupt bottom half (RX
  * delivery, TX-done), periodic housekeeping. It is the ONLY context that
@@ -122,7 +127,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
          *         the stack's memory sooner.
          *   RX  — polled only when its own interrupt says so. Handing frames
          *         up takes the stack's core lock, so the batch size IS the
-         *         lock cadence (see ND_RX_BATCH) and it is also the GRO merge
+         *         lock cadence (see unit->ndRxBatch) and it is also the GRO merge
          *         window. The hardware coalescer (frames + usecs) is the
          *         policy that decides when a batch is worth that; draining on
          *         unrelated wakeups just shreds it into single-frame handups
@@ -140,8 +145,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
             if (sigset & (1UL << unit->rx_signal))
             {
-                u16 budget = unit->budget;
-                if (likely(bcmgenet_netdev_rx(unit, budget) != (s32)budget))
+                /* Poll one negotiated batch. If the ring still held a full
+                 * batch we re-signal to poll again, so TX harvest and commands
+                 * get a turn between batches instead of RX draining the whole
+                 * ring in one hold. */
+                if (likely(bcmgenet_netdev_rx(unit, unit->ndRxBatch) != (s32)unit->ndRxBatch))
                     rearm |= UMAC_IRQ_RXDMA_DONE;
                 else
                     Signal(unit->task, 1UL << unit->rx_signal); /* still behind */
@@ -153,13 +161,15 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         // IO queue got a new message
         if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
         {
-            u16 budget = unit->budget;
+            u16 remaining = CMD_DRAIN_MAX;
             struct IOStdReq *io;
-            /* Drain the command queue, bounded. */
+            /* Drain the command queue, bounded so a command flood can't starve
+             * the datapath. Commands are rare and reply-gated, so this is only a
+             * defensive cap; re-signal to finish next wakeup if we hit it. */
             while ((io = (struct IOStdReq *)GetMsg(&unit->unit.unit_MsgPort)) != NULL)
             {
                 ProcessCommand(io);
-                if (--budget == 0)
+                if (--remaining == 0)
                 {
                     Signal(unit->task, 1UL << unit->unit.unit_MsgPort.mp_SigBit);
                     break;

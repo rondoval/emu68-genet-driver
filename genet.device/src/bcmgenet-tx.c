@@ -227,6 +227,9 @@ static BOOL tx_desc_ok(struct GenetUnit *unit, const struct NetDevTxDesc *d)
 	for (UWORD s = 0; s < d->ntd_NumSegs; s++)
 	{
 		const struct NetDevSg *sg = &d->ntd_Segs[s];
+		/* per-segment ceiling: RX_BUF_LENGTH (2048) is a generous sanity bound
+		 * that holds only because MTU is negotiated at ETH_DATA_LEN (1500) — no
+		 * stack segment approaches it. Revisit (tie to ndc_Mtu) if jumbo lands. */
 		if (sg->nsg_Len == 0 || sg->nsg_Len > RX_BUF_LENGTH ||
 		    !dma_addr_reachable(&unit->dma_ctx, sg->nsg_Data, sg->nsg_Len))
 			return FALSE;

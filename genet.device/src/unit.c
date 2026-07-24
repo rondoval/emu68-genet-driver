@@ -55,7 +55,6 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags)
 
 	unit->state = STATE_UNCONFIGURED;
 	unit->unitNumber = unitNumber;
-	unit->budget = unit->device->runtimeConfig.budget;
 	unit->ndRxPoolBufs = unit->device->runtimeConfig.rx_pool_bufs;
 
 	/* Coalescing starts at the prefs defaults; NETDEV_CMD_SET_COALESCE

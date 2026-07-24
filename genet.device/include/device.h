@@ -77,15 +77,6 @@ enum GenetProfSlot
 #define ND_TXDONE_RING_N 512u
 #define ND_TXDONE_RING_MASK (ND_TXDONE_RING_N - 1u)
 
-/* Frames handed to the stack per nso_RxInput call. This and `budget` are the
- * RX lock-cadence knobs: the stack takes one netstack_lock() per batch, so a
- * larger batch means fewer lock acquisitions but a longer single hold. It also
- * bounds the stack's GRO merge window — one batch is one lock hold is one
- * merge run. Two constraints: budget >= ND_RX_BATCH, or the batch cannot fill
- * in one drain pass; and ND_RX_BATCH <= NDIF_RX_CHUNK, or the stack re-locks
- * mid-batch. Measure a change with the [genet] rx_drain/rx_flush perf slots. */
-#define ND_RX_BATCH 64u
-NETDEV_ABI_ASSERT(MIN_BUDGET >= ND_RX_BATCH);
 /* Auto-pool headroom over ring + stack budget: buffers parked in the SPSC
  * recycle ring between a stack release and the unit-task drain. */
 #define ND_RX_RECLAIM_SLACK 64u
@@ -204,7 +195,11 @@ struct GenetUnit
 	/* config */
 	u32 unitNumber;
 	u8 currentMacAddress[6];
-	u16 budget;
+	u16 ndRxBatch;      /* frames handed up per nso_RxInput call = one stack lock
+	                       hold = one GRO merge run; the capacity of ndRxBatchDescs,
+	                       and the RX poll weight (one batch drained per wakeup).
+	                       Negotiated at ATTACH from the stack's nda_RxBatch, clamped
+	                       to RX_DESCS (a batch can't exceed the ring). */
 
 	/* unit/task state */
 	UnitState state;
@@ -317,6 +312,11 @@ struct GenetUnit
 	struct GenetTxDone *ndTxDone;
 	volatile u32 ndTxDoneProd;
 	volatile u32 ndTxDoneCons;
+
+	/* RX marshalling buffer: the drain fills it with up to ndRxBatch
+	 * NetDevRxDesc and hands it to nso_RxInput. CPU-only (metaPool), sized
+	 * at ATTACH to the negotiated ndRxBatch. */
+	struct NetDevRxDesc *ndRxBatchDescs;
 
 	struct NetDevLinkState ndLink;
 };
