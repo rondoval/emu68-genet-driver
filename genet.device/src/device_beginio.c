@@ -15,11 +15,11 @@
 static inline void Do_CMD_WRITE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: CMD_WRITE\n", __func__);
+    KprintfT("[genet] %s: CMD_WRITE\n", __func__);
 
     if (io->ios2_Req.io_Command == S2_BROADCAST)
     {
-        KprintfH("[genet] %s: CMD_WRITE with S2_BROADCAST flag, treating as broadcast\n", __func__);
+        KprintfT("[genet] %s: CMD_WRITE with S2_BROADCAST flag, treating as broadcast\n", __func__);
         // Set destination MAC to broadcast address
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
@@ -50,7 +50,7 @@ void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6")
 
     if (cmd == CMD_WRITE || cmd == S2_BROADCAST || cmd == S2_MULTICAST)
     {
-        KprintfH("[genet] %s: Quick CMD_WRITE\n", __func__);
+        KprintfT("[genet] %s: Quick CMD_WRITE\n", __func__);
         Do_CMD_WRITE(io);
         return;
     }
@@ -80,16 +80,16 @@ void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6")
             opener->readRing.entries[p & OPENER_READ_RING_MASK] = io;
             asm volatile("nop");
             opener->readRing.producer = p + 1u;
-            KprintfH("[genet] %s: SPSC push cmd=%04lx\n", __func__, (ULONG)cmd);
+            KprintfT("[genet] %s: SPSC push cmd=%04lx\n", __func__, (ULONG)cmd);
             return;
         }
 
         /* Ring full — fall back to MsgPort. The task's Do_CMD_READ /
          * Do_S2_READORPHAN drain the ring before AddTail to preserve FIFO. */
-        KprintfH("[genet] %s: SPSC ring full, falling back to MsgPort\n", __func__);
+        KprintfT("[genet] %s: SPSC ring full, falling back to MsgPort\n", __func__);
     }
 
-    KprintfH("[genet] %s: Queuing %04lx\n", __func__, (ULONG)cmd);
+    KprintfT("[genet] %s: Queuing %04lx\n", __func__, (ULONG)cmd);
     io->ios2_Req.io_Error = S2ERR_NO_ERROR;
     io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
     PutMsg(&unit->unit.unit_MsgPort, (struct Message *)io);

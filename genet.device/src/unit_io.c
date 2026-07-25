@@ -14,13 +14,12 @@
 #include <device.h>
 #include <types.h>
 #include <debug.h>
-#include <minlist.h>
 #include <runtime_config.h>
 
 static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLength, u16 dma_flags)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: Copying packet of length %lu\n", __func__, (ULONG)packetLength);
+    KprintfT("[genet] %s: Copying packet of length %lu\n", __func__, (ULONG)packetLength);
     struct Opener *opener = io->ios2_BufferManagement;
 
     /* Copy Ethernet header: DST (6), SRC (6), EtherType (2)
@@ -35,13 +34,13 @@ static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
     *(UWORD *)(io->ios2_SrcAddr + 4) = *(const UWORD *)(packet + 10);
     io->ios2_PacketType = *(const UWORD *)(packet + 12);
 #pragma GCC diagnostic pop
-    KprintfH("[genet] %s: Source address: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__,
+    KprintfT("[genet] %s: Source address: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__,
              io->ios2_SrcAddr[0], io->ios2_SrcAddr[1], io->ios2_SrcAddr[2],
              io->ios2_SrcAddr[3], io->ios2_SrcAddr[4], io->ios2_SrcAddr[5]);
-    KprintfH("[genet] %s: Destination address: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__,
+    KprintfT("[genet] %s: Destination address: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__,
              io->ios2_DstAddr[0], io->ios2_DstAddr[1], io->ios2_DstAddr[2],
              io->ios2_DstAddr[3], io->ios2_DstAddr[4], io->ios2_DstAddr[5]);
-    KprintfH("[genet] %s: Packet type: 0x%lx\n", __func__, io->ios2_PacketType);
+    KprintfT("[genet] %s: Packet type: 0x%lx\n", __func__, io->ios2_PacketType);
 
     /* Clear broadcast and multicast flags */
     io->ios2_Req.io_Flags &= (UBYTE) ~(SANA2IOF_BCAST | SANA2IOF_MCAST);
@@ -49,12 +48,12 @@ static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
     /* If dest address is FF:FF:FF:FF:FF:FF then it is a broadcast */
     if (dma_flags & DMA_RX_MULT)
     {
-        KprintfH("[genet] %s: Packet is a multicast (DMA flag)\n", __func__);
+        KprintfT("[genet] %s: Packet is a multicast (DMA flag)\n", __func__);
         io->ios2_Req.io_Flags |= SANA2IOF_MCAST;
     }
     else if (dma_flags & DMA_RX_BRDCAST)
     {
-        KprintfH("[genet] %s: Packet is a broadcast (DMA flag)\n", __func__);
+        KprintfT("[genet] %s: Packet is a broadcast (DMA flag)\n", __func__);
         io->ios2_Req.io_Flags |= SANA2IOF_BCAST;
     }
 
@@ -66,7 +65,7 @@ static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
     */
     if (!(io->ios2_Req.io_Flags & SANA2IOF_RAW))
     {
-        KprintfH("[genet] %s: Copying only data part of the packet\n", __func__);
+        KprintfT("[genet] %s: Copying only data part of the packet\n", __func__);
         /* Copy only data part of the packet */
         packet += ETH_HLEN;
         packetLength -= ETH_HLEN;
@@ -76,7 +75,7 @@ static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
     BOOL packetFiltered = FALSE;
     if (opener->packetFilter && io->ios2_Req.io_Command == CMD_READ && !CallHookPkt(opener->packetFilter, io, packet))
     {
-        KprintfH("[genet] %s: Packet filtered by hook\n", __func__);
+        KprintfT("[genet] %s: Packet filtered by hook\n", __func__);
         packetFiltered = TRUE;
     }
 
@@ -86,7 +85,7 @@ static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
         u32 copyLen = unit->use_miami_workaround ? ((packetLength + 3u) & ~3u) : packetLength;
         if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, copyLen) == 0)
         {
-            KprintfH("[genet] %s: Failed to copy packet data to buffer\n", __func__);
+            KprintfT("[genet] %s: Failed to copy packet data to buffer\n", __func__);
             unit->internalStats.rx_buffer_errors++;
             io->ios2_WireError = S2WERR_BUFF_ERROR;
             io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
@@ -97,7 +96,7 @@ static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
         io->ios2_DataLength = packetLength;
 
         ReplyMsg((struct Message *)io);
-        KprintfH("[genet] %s: Packet copied and request replied\n", __func__);
+        KprintfT("[genet] %s: Packet copied and request replied\n", __func__);
     }
 }
 
@@ -174,7 +173,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
 #pragma GCC diagnostic pop
     BOOL orphan = TRUE;
     BOOL activity = FALSE;
-    KprintfH("[genet] %s: Received packet of length %lu with type 0x%lx\n", __func__, (ULONG)packetLength, (ULONG)packetType);
+    KprintfT("[genet] %s: Received packet of length %lu with type 0x%lx\n", __func__, (ULONG)packetLength, (ULONG)packetType);
 
     /* MinLists are pre-drained by UnitTask before bcmgenet_gmac_eth_rx. */
 
@@ -214,7 +213,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
                 // 802.3 has no packet type but just length
                 if (io->ios2_PacketType == packetType || (packetType <= 1500 && io->ios2_PacketType <= 1500))
                 {
-                    KprintfH("[genet] %s: Found opener for packet type 0x%lx\n", __func__, (ULONG)packetType);
+                    KprintfT("[genet] %s: Found opener for packet type 0x%lx\n", __func__, (ULONG)packetType);
                     Remove((struct Node *)io);
                     /* Match, copy packet, break loop for this opener */
                     CopyPacket(io, packet, packetLength, dma_flags);
@@ -241,7 +240,7 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
             struct IOSana2Req *io = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue);
             if (unlikely(io != NULL))
             {
-                KprintfH("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, (ULONG)packetType);
+                KprintfT("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, (ULONG)packetType);
                 CopyPacket(io, packet, packetLength, dma_flags);
                 activity = TRUE;
             }

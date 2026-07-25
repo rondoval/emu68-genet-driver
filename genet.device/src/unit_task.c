@@ -127,7 +127,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     /* Signal parent that Unit task is up and running now */
     Signal(parent, SIGBREAKF_CTRL_F);
 
-    KprintfH("[genet] %s: Entering main unit task loop\n", __func__);
+    KprintfT("[genet] %s: Entering main unit task loop\n", __func__);
 
     ULONG sigset;
     ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
@@ -139,7 +139,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     do
     {
         sigset = Wait(waitMask);
-        KprintfH("[genet] %s: Woke up, sigset=0x%08lx\n", __func__, sigset);
+        KprintfT("[genet] %s: Woke up, sigset=0x%08lx\n", __func__, sigset);
         u16 budget;
 
         // IO queue got a new message
@@ -199,7 +199,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         /* process IRQ0 events */
         if (sigset & (1UL << unit->irq0_signal))
         {
-            KprintfH("[genet] %s: Interrupt bottom-half processing, status=0x%08lx\n", __func__, unit->irq0_status);
+            KprintfT("[genet] %s: Interrupt bottom-half processing, status=0x%08lx\n", __func__, unit->irq0_status);
             u32 status = unit->irq0_status;
             unit->irq0_status = 0;
 
@@ -236,7 +236,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             /* Receive processing */
             if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {
-                KprintfH("[genet] %s: RX signal received, processing packets\n", __func__);
+                KprintfT("[genet] %s: RX signal received, processing packets\n", __func__);
                 for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
                     DrainReadRing((struct Opener *)node);
                 budget = unit->budget;
@@ -245,7 +245,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 {
                     budget = (u16)(budget - res);
                 }
-                KprintfH("[genet] %s: Remaining budget: %ld\n", __func__, budget);
+                KprintfT("[genet] %s: Remaining budget: %ld\n", __func__, budget);
                 if (budget == 0)
                 {
                     // Still more to process, signal ourselves again
@@ -283,7 +283,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
         if (unlikely(sigset & SIGBREAKF_CTRL_C))
         {
-            KprintfH("[genet] %s: Received SIGBREAKF_CTRL_C, stopping genet task\n", __func__);
+            KprintfT("[genet] %s: Received SIGBREAKF_CTRL_C, stopping genet task\n", __func__);
             AbortIO(&packetTimerReq->tr_node);
             WaitIO(&packetTimerReq->tr_node);
         }
@@ -305,7 +305,7 @@ free_signals:
 
 u32 UnitTaskStart(struct GenetUnit *unit)
 {
-    KprintfH("[genet] %s: genet task starting\n", __func__);
+    KprintfT("[genet] %s: genet task starting\n", __func__);
 	const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
 
     // Get all memory we need for the receiver task
@@ -362,13 +362,13 @@ u32 UnitTaskStart(struct GenetUnit *unit)
     }
 
     Wait(SIGBREAKF_CTRL_F);
-    KprintfH("[genet] %s: genet task started\n", __func__);
+    KprintfT("[genet] %s: genet task started\n", __func__);
     return S2ERR_NO_ERROR;
 }
 
 void UnitTaskStop(struct GenetUnit *unit)
 {
-    KprintfH("[genet] %s: genet task stopping\n", __func__);
+    KprintfT("[genet] %s: genet task stopping\n", __func__);
 
     struct MsgPort *timerPort = CreateMsgPort();
     struct timerequest *timerReq = CreateIORequest(timerPort, sizeof(struct timerequest));
@@ -398,5 +398,5 @@ void UnitTaskStop(struct GenetUnit *unit)
     DeleteIORequest(&timerReq->tr_node);
     DeleteMsgPort(timerPort);
 
-    KprintfH("[genet] %s: genet task stopped\n", __func__);
+    KprintfT("[genet] %s: genet task stopped\n", __func__);
 }

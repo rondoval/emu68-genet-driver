@@ -18,7 +18,6 @@
 #include <debug.h>
 #include <memory.h>
 #include <types.h>
-#include <minlist.h>
 
 #include <genet/bcmgenet_mib.h>
 #include <genet/genet_specialstats.h>
@@ -60,7 +59,7 @@ static const u16 GENET_SupportedCommands[] = {
 /* Report events to this unit */
 void ReportEvents(struct GenetUnit *unit, u32 eventSet)
 {
-    KprintfH("[genet] %s: Reporting events %08lx\n", __func__, (ULONG)eventSet);
+    KprintfT("[genet] %s: Reporting events %08lx\n", __func__, (ULONG)eventSet);
 
     /* Report event to every listener of every opener accepting the mask */
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
@@ -83,7 +82,7 @@ void ReportEvents(struct GenetUnit *unit, u32 eventSet)
             }
         }
     }
-    KprintfH("[genet] %s: Reporting done\n", __func__);
+    KprintfT("[genet] %s: Reporting done\n", __func__);
 }
 
 void UnitCancelEvent(struct IOSana2Req *io)
@@ -145,7 +144,7 @@ BOOL UnitCancelThroughput(struct GenetUnit *unit, struct IOSana2Req *io)
 static u32 Do_S2_GETGLOBALSTATS(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
+    KprintfT("[genet] %s: S2_GETGLOBALSTATS\n", __func__);
     struct Sana2DeviceStats *stats = (struct Sana2DeviceStats *)io->ios2_StatData;
     stats->PacketsReceived      = (ULONG)unit->internalStats.rx_packets;
     stats->PacketsSent          = (ULONG)unit->internalStats.tx_packets;
@@ -165,7 +164,7 @@ static u32 Do_S2_GETGLOBALSTATS(struct IOSana2Req *io)
 static u32 Do_S2_GETEXTENDEDGLOBALSTATS(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: S2_GETEXTENDEDGLOBALSTATS\n", __func__);
+    KprintfT("[genet] %s: S2_GETEXTENDEDGLOBALSTATS\n", __func__);
     struct Sana2ExtDeviceStats *xs = (struct Sana2ExtDeviceStats *)io->ios2_StatData;
     if (xs == NULL)
     {
@@ -224,7 +223,7 @@ static ULONG emit_ss(struct Sana2SpecialStatRecord *rec, ULONG max, ULONG idx,
 static u32 Do_S2_GETSPECIALSTATS(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: S2_GETSPECIALSTATS\n", __func__);
+    KprintfT("[genet] %s: S2_GETSPECIALSTATS\n", __func__);
 
     struct Sana2SpecialStatHeader *hdr = (struct Sana2SpecialStatHeader *)io->ios2_StatData;
     if (hdr == NULL)
@@ -308,7 +307,7 @@ static u32 Do_S2_SAMPLE_THROUGHPUT(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     struct throughput_stats *throughput = &unit->throughputStats;
-    KprintfH("[genet] %s: S2_SAMPLE_THROUGHPUT\n", __func__);
+    KprintfT("[genet] %s: S2_SAMPLE_THROUGHPUT\n", __func__);
 
     if (io->ios2_StatData == NULL)
     {
@@ -371,7 +370,7 @@ static u32 Do_S2_SAMPLE_THROUGHPUT(struct IOSana2Req *io)
 static u32 Do_S2_ONEVENT(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
+    KprintfT("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
 
     /* If any unsupported events are requested, report an error */
     if (io->ios2_WireError & ~(EVENT_MASK))
@@ -387,13 +386,13 @@ static u32 Do_S2_ONEVENT(struct IOSana2Req *io)
     /* If expected flags match preset, return back (almost) immediately */
     if (io->ios2_WireError & preset)
     {
-        KprintfH("[genet] %s: Event preset %08lx matches requested %08lx, returning immediately\n", __func__, preset, io->ios2_WireError);
+        KprintfT("[genet] %s: Event preset %08lx matches requested %08lx, returning immediately\n", __func__, preset, io->ios2_WireError);
         io->ios2_WireError &= preset;
         return COMMAND_PROCESSED;
     }
     else
     {
-        KprintfH("[genet] %s: Adding to event listener list, preset %08lx\n", __func__, preset);
+        KprintfT("[genet] %s: Adding to event listener list, preset %08lx\n", __func__, preset);
         /* Remove QUICK flag and put message on event listener list */
         struct Opener *opener = io->ios2_BufferManagement;
         AddTailMinList(&opener->eventQueue, (struct MinNode *)io);
@@ -404,7 +403,7 @@ static u32 Do_S2_ONEVENT(struct IOSana2Req *io)
 static u32 Do_CMD_FLUSH(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: CMD_FLUSH\n", __func__);
+    KprintfT("[genet] %s: CMD_FLUSH\n", __func__);
 
     struct IOSana2Req *req;
     /* Flush and cancel all requests */
@@ -458,14 +457,14 @@ static u32 Do_CMD_FLUSH(struct IOSana2Req *io)
             ReplyMsg((struct Message *)req);
         }
     }
-    KprintfH("[genet] %s: Flush completed\n", __func__);
+    KprintfT("[genet] %s: Flush completed\n", __func__);
 
     return COMMAND_PROCESSED;
 }
 
 static u32 Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
 {
-    KprintfH("[genet] %s: NSCMD_DEVICEQUERY\n", __func__);
+    KprintfT("[genet] %s: NSCMD_DEVICEQUERY\n", __func__);
     struct NSDeviceQueryResult *dq = io->io_Data;
 
     /* Fill out structure */
@@ -490,7 +489,7 @@ static u32 Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
 static inline u32 Do_CMD_READ(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: CMD_READ for packet type 0x%lx\n", __func__, io->ios2_PacketType);
+    KprintfT("[genet] %s: CMD_READ for packet type 0x%lx\n", __func__, io->ios2_PacketType);
 
     if (unlikely(unit->state != STATE_ONLINE))
     {
@@ -507,14 +506,14 @@ static inline u32 Do_CMD_READ(struct IOSana2Req *io)
     io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
     AddTailMinList(GetPacketTypeQueue(opener, packetType), (struct MinNode *)io);
 
-    KprintfH("[genet] %s: Queued CMD_READ request for packet type 0x%lx\n", __func__, (ULONG)packetType);
+    KprintfT("[genet] %s: Queued CMD_READ request for packet type 0x%lx\n", __func__, (ULONG)packetType);
     return COMMAND_SCHEDULED;
 }
 
 static inline u32 Do_S2_READORPHAN(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: S2_READORPHAN\n", __func__);
+    KprintfT("[genet] %s: S2_READORPHAN\n", __func__);
 
     if (unlikely(unit->state != STATE_ONLINE))
     {
@@ -533,7 +532,7 @@ static inline u32 Do_S2_READORPHAN(struct IOSana2Req *io)
 
 static u32 Do_S2_DEVICEQUERY(struct IOSana2Req *io)
 {
-    KprintfH("[genet] %s: S2_DEVICEQUERY\n", __func__);
+    KprintfT("[genet] %s: S2_DEVICEQUERY\n", __func__);
 
     struct Sana2DeviceQuery *info = io->ios2_StatData;
 
@@ -555,7 +554,7 @@ static u32 Do_S2_DEVICEQUERY(struct IOSana2Req *io)
 static u32 Do_S2_ONLINE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: S2_ONLINE\n", __func__);
+    KprintfT("[genet] %s: S2_ONLINE\n", __func__);
 
     if (unit->state == STATE_UNCONFIGURED)
     {
@@ -582,7 +581,7 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
         if (unitTimerBase != NULL)
         {
             GetSysTime(&unit->internalStats.last_start);
-            KprintfH("[genet] %s: statistics zeroed, LastStart: %ld\n", __func__, unit->internalStats.last_start.tv_secs);
+            KprintfT("[genet] %s: statistics zeroed, LastStart: %ld\n", __func__, unit->internalStats.last_start.tv_secs);
         }
         else
         {
@@ -599,7 +598,7 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
         }
         else
         {
-            KprintfH("[genet] %s: Unit online, about to report events\n", __func__);
+            KprintfT("[genet] %s: Unit online, about to report events\n", __func__);
             ReportEvents(unit, S2EVENT_ONLINE);
         }
     }
@@ -610,12 +609,12 @@ static u32 Do_S2_ONLINE(struct IOSana2Req *io)
 static u32 Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
-    KprintfH("[genet] %s: S2_CONFIGINTERFACE\n", __func__);
+    KprintfT("[genet] %s: S2_CONFIGINTERFACE\n", __func__);
 
     if (unit->state == STATE_UNCONFIGURED)
     {
         CopyMem(io->ios2_SrcAddr, unit->currentMacAddress, sizeof(unit->currentMacAddress));
-        KprintfH("[genet] %s: Setting current MAC address to %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
+        KprintfT("[genet] %s: Setting current MAC address to %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
                  __func__,
                  unit->currentMacAddress[0], unit->currentMacAddress[1],
                  unit->currentMacAddress[2], unit->currentMacAddress[3],
@@ -637,7 +636,7 @@ static u32 Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
     }
     else
     {
-        KprintfH("[genet] %s: Unit already configured\n", __func__);
+        KprintfT("[genet] %s: Unit already configured\n", __func__);
         io->ios2_Req.io_Error = S2ERR_BAD_STATE;
         io->ios2_WireError = S2WERR_IS_CONFIGURED;
         ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
@@ -704,7 +703,7 @@ void ProcessCommand(struct IOSana2Req *io)
             break;
 
         case S2_GETSTATIONADDRESS:
-            KprintfH("[genet] %s: S2_GETSTATIONADDRESS\n", __func__);
+            KprintfT("[genet] %s: S2_GETSTATIONADDRESS\n", __func__);
             CopyMem(unit->localMacAddress, io->ios2_DstAddr, 6);
             CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, 6);
             io->ios2_Req.io_Error = S2ERR_NO_ERROR;

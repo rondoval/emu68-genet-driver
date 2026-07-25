@@ -15,7 +15,7 @@
 LONG abortIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6") __attribute__((unused)))
 {
     /* AbortIO is a *wish* call. Someone would like to abort current IORequest */
-    KprintfH("[genet] %s: Aborting IO request %lx\n", __func__, io);
+    KprintfT("[genet] %s: Aborting IO request %lx\n", __func__, io);
 
     if (io->ios2_Req.io_Unit != NULL)
     {
@@ -52,7 +52,7 @@ LONG abortIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6")
                     io->ios2_Req.io_Error = IOERR_ABORTED;
                     io->ios2_WireError    = S2WERR_GENERIC_ERROR;
                     Permit();
-                    KprintfH("[genet] %s: Marked IO %lx in SPSC ring as aborted\n", __func__, io);
+                    KprintfT("[genet] %s: Marked IO %lx in SPSC ring as aborted\n", __func__, io);
                     return 0;
                 }
             }
@@ -70,6 +70,6 @@ LONG abortIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6")
         }
         Permit();
     }
-    KprintfH("[genet] %s: IO request %lx aborted\n", __func__, io);
+    KprintfT("[genet] %s: IO request %lx aborted\n", __func__, io);
     return 0;
 }

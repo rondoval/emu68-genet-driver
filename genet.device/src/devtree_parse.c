@@ -58,11 +58,11 @@ u32 DevTreeParse(struct GenetUnit *unit)
 		return S2ERR_NO_RESOURCES;
 	}
 
-	KprintfH("[genet] %s: compatible: %s\n", __func__, unit->compatible);
+	KprintfT("[genet] %s: compatible: %s\n", __func__, unit->compatible);
 	Kprintf("[genet] %s: local-mac-address: %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n", __func__, unit->localMacAddress[0], unit->localMacAddress[1], unit->localMacAddress[2], unit->localMacAddress[3], unit->localMacAddress[4], unit->localMacAddress[5]);
-	KprintfH("[genet] %s: phy-handle: %08lx\n", __func__, (ULONG)phy_handle);
-	KprintfH("[genet] %s: phy-mode: %s\n", __func__, phy_string_for_interface(unit->phy_interface));
-	KprintfH("[genet] %s: register base: %08lx\n", __func__, unit->genetBase);
+	KprintfT("[genet] %s: phy-handle: %08lx\n", __func__, (ULONG)phy_handle);
+	KprintfT("[genet] %s: phy-mode: %s\n", __func__, phy_string_for_interface(unit->phy_interface));
+	KprintfT("[genet] %s: register base: %08lx\n", __func__, unit->genetBase);
 
 	s32 irq0 = DT_GetInterrupt(key, 0);
 	s32 irq1 = DT_GetInterrupt(key, 1);
@@ -79,7 +79,7 @@ u32 DevTreeParse(struct GenetUnit *unit)
 	APTR phy_key = DT_FindByPHandle(key, phy_handle);
 	if (phy_key)
 	{
-		KprintfH("[genet] %s: Found phy key: %s\n", __func__, DT_GetKeyName(phy_key));
+		KprintfT("[genet] %s: Found phy key: %s\n", __func__, DT_GetKeyName(phy_key));
 		u32 phyaddr = DT_GetPropertyValueULONG(phy_key, "reg", 1, FALSE);
 		if (phyaddr > 0xffU)
 		{
@@ -88,7 +88,7 @@ u32 DevTreeParse(struct GenetUnit *unit)
 			return S2ERR_NO_RESOURCES;
 		}
 		unit->phyaddr = (u8)phyaddr;
-		KprintfH("[genet] %s: phy-addr: %lx\n", __func__, unit->phyaddr);
+		KprintfT("[genet] %s: phy-addr: %lx\n", __func__, unit->phyaddr);
 	}
 	else
 	{

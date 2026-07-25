@@ -129,7 +129,7 @@ static s32 mdio_read(struct phy_device *phy, u8 reg)
  */
 static s32 genphy_config_advert(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld autoneg=%lu\n", __func__, phydev->addr, (ULONG)phydev->autoneg);
+	KprintfT("[genet] %s: phy=%ld autoneg=%lu\n", __func__, phydev->addr, (ULONG)phydev->autoneg);
 	s32 changed = 0;
 
 	/* Only allow advertising what this PHY supports */
@@ -243,7 +243,7 @@ static s32 genphy_setup_forced(struct phy_device *phydev)
  */
 static s32 genphy_restart_aneg(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	s32 ctl_read = mdio_read(phydev, MII_BMCR);
 
 	if (ctl_read < 0)
@@ -269,7 +269,7 @@ static s32 genphy_restart_aneg(struct phy_device *phydev)
  */
 s32 genphy_config_aneg(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld autoneg=%lu\n", __func__, phydev->addr, (ULONG)phydev->autoneg);
+	KprintfT("[genet] %s: phy=%ld autoneg=%lu\n", __func__, phydev->addr, (ULONG)phydev->autoneg);
 
 	if (phydev->autoneg != AUTONEG_ENABLE)
 		return genphy_setup_forced(phydev);
@@ -314,7 +314,7 @@ s32 genphy_config_aneg(struct phy_device *phydev)
  */
 static s32 genphy_update_link(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 
 	/*
 	 * Wait if the link is up, and autonegotiation is in progress
@@ -383,7 +383,7 @@ static s32 genphy_update_link(struct phy_device *phydev)
  */
 static s32 genphy_parse_link(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	s32 mii_reg = mdio_read(phydev, MII_BMSR);
 
 	/* We're using autonegotiation */
@@ -496,7 +496,7 @@ static s32 genphy_parse_link(struct phy_device *phydev)
 
 s32 phy_config(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	u32 features = (SUPPORTED_TP | SUPPORTED_MII | SUPPORTED_AUI | SUPPORTED_FIBRE |
 					SUPPORTED_BNC);
 
@@ -543,7 +543,7 @@ s32 phy_config(struct phy_device *phydev)
 
 s32 phy_startup(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	s32 ret = genphy_update_link(phydev);
 	if (ret)
 		return ret;
@@ -553,7 +553,7 @@ s32 phy_startup(struct phy_device *phydev)
 
 static s32 phy_reset(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	u16 timeout = 500;
 
 	if (phydev->flags & PHY_FLAG_BROKEN_RESET)
@@ -602,7 +602,7 @@ static s32 phy_reset(struct phy_device *phydev)
  */
 static s32 get_phy_id(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	/*
 	 * Grab the bits from PHYIR1, and put them
 	 * in the upper half
@@ -627,7 +627,7 @@ static s32 get_phy_id(struct phy_device *phydev)
 
 struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 {
-	KprintfH("[genet] %s: base=0x%lx phyaddr=%ld\n", __func__, dev->genetBase, dev->phyaddr);
+	KprintfT("[genet] %s: base=0x%lx phyaddr=%ld\n", __func__, dev->genetBase, dev->phyaddr);
 	struct phy_device *phydev = pool_alloc(dev->metaPool, sizeof(*phydev));
 	if (!phydev)
 	{
@@ -651,7 +651,7 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 	{
 		if (phydev->phy_id != 0 && (phydev->phy_id & 0x1fffffff) != 0x1fffffff)
 		{
-			KprintfH("[genet] %s: PHY ID: %08lx\n", __func__, phydev->phy_id);
+			KprintfT("[genet] %s: PHY ID: %08lx\n", __func__, phydev->phy_id);
 			phydev->interface = interface;
 			/* Soft Reset the PHY */
 			phy_reset(phydev);
@@ -667,6 +667,6 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 
 void phy_destroy(struct phy_device *phydev)
 {
-	KprintfH("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	pool_free(phydev->unit->metaPool, phydev);
 }
