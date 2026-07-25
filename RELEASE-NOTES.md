@@ -2,8 +2,8 @@
 
 genet.device 4.0 is a rewrite built for **lwip-amiga**, a new, much faster TCP/IP stack
 for AmigaOS. Packets now move between the driver and the stack with no copying and no
-locking on the busy path, which is where the bulk of the speed gain comes from — see
-lwip-amiga's own release notes for the numbers.
+locking on the busy path — together with lwip-amiga's own send-path work, TCP upload
+reaches 906 Mb/s (see lwip-amiga's own release notes for the full numbers).
 
 ## Breaking change: this is not a SANA-II driver
 
@@ -24,6 +24,11 @@ lwip-amiga's own `netstack.prefs` instead, and use `netdev-stats` in place of
   back and forth, and the hardware calculates checksums instead of the CPU.
 - The busy send/receive path never has to wait on a lock, so throughput holds up better
   under load.
+- **Transmit doorbell batched.** The driver starts the hardware transmitting once per
+  burst of packets the stack hands it, instead of once per packet — one fewer slow
+  register write per packet on the busy send path.
+- RX-path cache maintenance was trimmed, and the periodic link/PHY check now returns early
+  when nothing has changed.
 
 ## Hardware checksum offload
 
@@ -52,7 +57,7 @@ for troubleshooting. It can be run at any time without restarting the network.
 
 ## Requirements
 
-- lwip-amiga (SANA-II users want the 3.x variant instead).
+- lwip-amiga 1.1 or newer (SANA-II users want the 3.x variant instead).
 - `gic400.library` at runtime.
 - A reasonably current Emu68 build; see the [README](README.md) for the exact version
   and a fallback option for older builds.
