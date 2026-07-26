@@ -1,3 +1,35 @@
+# Release notes — genet.device 3.13
+
+Changes since 3.12.
+
+A build-portability release. No functional change.
+
+---
+
+## Breaking changes
+
+None.
+
+---
+
+## Build & tooling
+
+### GCC 16.1 build portability
+
+`genet.device` now builds cleanly under GCC 16.1. No behavior change:
+
+- `-ffreestanding` moved from link options to compile options, where it
+  actually affects code generation — as a link-only flag it was silently
+  inert.
+- `-fno-tree-loop-distribute-patterns` dropped: it was there to stop GCC's
+  loop-idiom recognition from rewriting hand-written loops into `memcpy`/
+  `strlen` calls with no libc to satisfy them — unlike a standalone ROM
+  resource, `genet.device` links `emu68-common`'s freestanding `memset`/
+  `memcpy`/`memmove`/`memcmp`, so any such call GCC synthesises resolves
+  fine, and the workaround isn't needed here.
+
+---
+
 # Release notes — genet.device 3.12
 
 Changes since 3.11.
