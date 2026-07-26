@@ -21,6 +21,7 @@
 #include <types.h>
 #include <runtime_config.h>
 #include <driver_task.h>
+#include <drv_timer.h>
 
 /* Max IO commands drained per wakeup — a defensive cap so a command flood
  * can't starve the datapath. Commands are rare and reply-gated, so the value
@@ -46,17 +47,12 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     unit->link_signal = -1;
 
     // Initialize the built in msg port, we'll receive commands here
-    _NewMinList((struct MinList *)&unit->unit.unit_MsgPort.mp_MsgList);
-    unit->unit.unit_MsgPort.mp_SigTask = FindTask(NULL);
-    BYTE msg_sigbit = AllocSignal(-1);
+    BYTE msg_sigbit = drv_unit_msgport_init(&unit->unit);
     if (msg_sigbit == -1)
     {
         Kprintf("[genet] %s: Failed to allocate unit message signal\n", __func__);
         goto free_signals;
     }
-    unit->unit.unit_MsgPort.mp_SigBit = (UBYTE)msg_sigbit;
-    unit->unit.unit_MsgPort.mp_Flags = PA_SIGNAL;
-    unit->unit.unit_MsgPort.mp_Node.ln_Type = NT_MSGPORT;
 
     // Allocate signals for interrupt handlers
     unit->rx_signal = AllocSignal(-1);
@@ -69,28 +65,13 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
     }
 
     // Create a timer, we'll use it to poll the PHY and do housekeeping
-    struct MsgPort *microHZTimerPort = CreateMsgPort();
-    struct timerequest *packetTimerReq = CreateIORequest(microHZTimerPort, sizeof(struct timerequest));
-    if (microHZTimerPort == NULL || packetTimerReq == NULL)
+    struct drv_timer tick;
+    if (!drv_timer_open(&tick))
     {
-        Kprintf("[genet] %s: Failed to create timer msg port or request\n", __func__);
-        goto free_ports;
+        Kprintf("[genet] %s: Failed to open timer device\n", __func__);
+        goto free_signals;
     }
-
-    BYTE ret = OpenDevice((CONST_STRPTR)TIMERNAME, UNIT_MICROHZ, (struct IORequest *)packetTimerReq, LIB_MIN_VERSION);
-    if (ret)
-    {
-        Kprintf("[genet] %s: Failed to open timer device ret=%ld\n", __func__, ret);
-        goto free_ports;
-    }
-
-    unit->timerBase = packetTimerReq->tr_node.io_Device;
-
-    // Start the timer
-    packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
-    packetTimerReq->tr_time.tv_secs = 0;
-    packetTimerReq->tr_time.tv_micro = config->periodic_task_ms * 1000;
-    SendIO(&packetTimerReq->tr_node);
+    drv_timer_arm_ms(&tick, config->periodic_task_ms);
 
     unit->task = FindTask(NULL);
     /* Signal parent that Unit task is up and running now */
@@ -107,7 +88,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
     ULONG sigset;
     ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
-                     (1UL << microHZTimerPort->mp_SigBit) |
+                     drv_timer_sigmask(&tick) |
                      (1UL << unit->rx_signal) |
                      (1UL << unit->tx_signal) |
                      (1UL << unit->link_signal) |
@@ -196,12 +177,9 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         }
 
         // Timer expired: housekeeping
-        if (sigset & (1UL << microHZTimerPort->mp_SigBit))
+        if (sigset & drv_timer_sigmask(&tick))
         {
-            if (CheckIO(&packetTimerReq->tr_node))
-            {
-                WaitIO(&packetTimerReq->tr_node);
-            }
+            drv_timer_consume(&tick);
 
             if (unit->state == STATE_ONLINE)
             {
@@ -218,25 +196,17 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
 
             /* Re-arm timer */
-            packetTimerReq->tr_node.io_Command = TR_ADDREQUEST;
-            packetTimerReq->tr_time.tv_secs = 0;
-            packetTimerReq->tr_time.tv_micro = config->periodic_task_ms * 1000;
-            SendIO(&packetTimerReq->tr_node);
+            drv_timer_arm_ms(&tick, config->periodic_task_ms);
         }
 
         if (unlikely(sigset & SIGBREAKF_CTRL_C))
         {
             KprintfT("[genet] %s: Received SIGBREAKF_CTRL_C, stopping genet task\n", __func__);
-            AbortIO(&packetTimerReq->tr_node);
-            WaitIO(&packetTimerReq->tr_node);
+            drv_timer_cancel(&tick);
         }
     } while ((sigset & SIGBREAKF_CTRL_C) == 0);
 
-    CloseDevice(&packetTimerReq->tr_node);
-    unit->timerBase = NULL;
-free_ports:
-    DeleteIORequest(&packetTimerReq->tr_node);
-    DeleteMsgPort(microHZTimerPort);
+    drv_timer_close(&tick);
 free_signals:
     /* Reachable before every signal exists — freeing an unallocated -1 (or
      * worse, the cleared struct's bit 0, which belongs to Exec) must not
@@ -250,12 +220,10 @@ free_signals:
     if (msg_sigbit != -1)
         FreeSignal(msg_sigbit);
 
-    /* CTRL_F reports a running task, CTRL_C a task that never got there. Both
-     * paths land here, so the distinction is which signal is sent: unit->task
-     * is set only once the loop is entered, and cleared on the way out. */
-    BOOL wasRunning = (unit->task != NULL);
-    unit->task = NULL;
-    Signal(parent, wasRunning ? SIGBREAKF_CTRL_F : SIGBREAKF_CTRL_C);
+    /* drv_task_exit clears the liveness slot first (drv_task_join polls it),
+     * then reports CTRL_F for a task that ran / CTRL_C for one that never got
+     * to its loop (unit->task is set only once the loop is entered). */
+    drv_task_exit(&unit->task, parent, unit->task != NULL);
 }
 
 u32 UnitTaskStart(struct GenetUnit *unit)

@@ -204,7 +204,6 @@ struct GenetUnit
 	/* unit/task state */
 	UnitState state;
 	struct Task *task;
-	struct Device *timerBase;
 
 	/* stats */
 	struct internal_stats internalStats;
