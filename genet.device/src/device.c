@@ -18,6 +18,7 @@
 #include <devices/newstyle.h>
 
 #include <device.h>
+#include <emu68_features.h>
 #include <minlist.h>
 #include <debug.h>
 #include <runtime_config.h>
@@ -168,6 +169,15 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     (void)_SysBase;
     /* the id string carries the build date — the log's deploy beacon */
     Kprintf("[genet] %s: %s\n", __func__, (ULONG)deviceIdString);
+
+    if (!emu68_has_dcache_range_ops())
+    {
+        Kprintf("[genet] %s: rangeops build, but Emu68 lacks dcache-range-ops rev 1 - refusing to load. Install the standard driver package or update Emu68.\n", __func__);
+        ULONG size = (ULONG)base->device.dd_Library.lib_NegSize + base->device.dd_Library.lib_PosSize;
+        FreeMem((APTR)((ULONG)base - base->device.dd_Library.lib_NegSize), size);
+        return NULL;
+    }
+
     base->segList = segList;
     base->device.dd_Library.lib_Revision = DEVICE_REVISION;
     base->unit = NULL;
