@@ -84,7 +84,7 @@ void netdev_drain_recycle(struct GenetUnit *unit)
 
 #ifdef DEBUG
         /* a poisoned ring entry must not reach the cache op (a wild-range
-         * civac clean writes stale lines over foreign memory) */
+         * invalidate discards foreign dirty lines */
         if (!netdev_rx_buf_ok(unit, buffer))
         {
             Kprintf("[genet] %s: RX-POOL-GUARD: recycle rejected buf=%lx\n",
@@ -94,21 +94,25 @@ void netdev_drain_recycle(struct GenetUnit *unit)
         }
 #endif
 
-        /* MANDATORY clean+invalidate before the buffer is re-armed for RX DMA
-         * (same pre-arm contract as nvme_cache_flush(to_device=FALSE) and
-         * xhci's IN-transfer flush). RX pbufs are NOT read-only: lwIP writes
-         * into them — ip4_reass overlays its ip_reass_helper on the IP header
-         * of every queued fragment — leaving DIRTY lines. A dirty line at DMA
-         * time corrupts the frame no matter what runs afterwards: natural
-         * eviction writes it back over the DMA'd payload, and the post-DMA
-         * invalidate itself does too (ARMv8 permits, and Cortex-A cores
-         * implement, dc ivac on a dirty line as clean+invalidate). Eliding
-         * this corrupts fragmented-UDP RX; the pre-arm clean is mandatory.
+        /* MANDATORY pre-arm op before the buffer is re-armed for RX DMA (same
+         * contract as nvme's and xhci's IN-transfer pre-arm). RX pbufs are NOT
+         * read-only: lwIP writes into them — ip4_reass overlays its
+         * ip_reass_helper on the IP header of every queued fragment — leaving
+         * DIRTY lines, and a dirty line evicted during DMA lands its stale
+         * bytes on top of the payload; nothing done afterwards can undo that.
+         * Eliding this corrupts fragmented-UDP RX.
+         *
+         * DMA_WriteToRAM makes the op an INVALIDATE rather than a clean:
+         * whatever lwIP scribbled is disposable — GENET fully overwrites
+         * RSB+frame, and completion is signaled via the MMIO producer index,
+         * not in-buffer — so the dirty lines are dropped instead of paying a
+         * DRAM writeback for content the device is about to replace.
          *
          * The batch pays ONE closing barrier: every op but the last carries
          * DMAF_NoSync (cache_ops.h); the ring is re-armed only later via MMIO,
          * well after the final op's dsb. */
-        cache_pre_dma(buffer, RX_BUF_LENGTH, (cons != prod) ? DMAF_NoSync : 0);
+        cache_pre_dma(buffer, RX_BUF_LENGTH,
+                      ((cons != prod) ? DMAF_NoSync : 0) | DMA_WriteToRAM);
 
         netdev_rx_push(unit, buffer);
         unit->ndRxHeld--;

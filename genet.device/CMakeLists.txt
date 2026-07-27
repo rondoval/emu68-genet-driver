@@ -3,7 +3,6 @@ project(genet.device VERSION ${CMAKE_PROJECT_VERSION})
 
 # Toolchain and compile options
 add_link_options(
-    -ffreestanding
     -nostdlib
     -nostartfiles
     -s
@@ -13,6 +12,8 @@ add_link_options(
 add_compile_options(
     -O3
     -m68040
+    -ffreestanding
+    -fomit-frame-pointer
     -Wall
     -Wextra
     -Wconversion
@@ -20,7 +21,6 @@ add_compile_options(
     -Wshadow
     -Wmissing-prototypes
     -Wstrict-prototypes
-    -fomit-frame-pointer
 )
 
 # Debug-output backend defines (EMU68_DEBUG_BACKEND, see emu68-common).

@@ -1,3 +1,54 @@
+# Release notes — genet.device 4.1
+
+Changes since v4.0.
+
+A portability and internal-cleanup release.
+
+---
+
+## Breaking changes
+
+None.
+
+---
+
+## Reliability
+
+### Firmware gate for rangeops builds
+
+Builds using the inline Emu68 range cache opcodes (`EMU68_FORCE_LVO_CACHE_OPS`
+off — the `-rangeops` stack archives) now check the `/emu68` device-tree
+node's `dcache-range-ops` capability at init and refuse to load on firmware
+that would Line-F trap on those opcodes, instead of crashing. Standard (LVO)
+builds are unaffected.
+
+---
+
+## Build & tooling
+
+### GCC 16.1 build portability
+
+`genet.device` now builds cleanly under GCC 16.1. No behavior change:
+
+- `-ffreestanding` moved from link options to compile options, where it
+  actually affects code generation — as a link-only flag it was silently
+  inert.
+
+### `UnitTask` adopts the shared driver-task helpers
+
+Message-port setup, the periodic housekeeping timer, and the task-exit
+sequence now use `emu68-common`'s `drv_unit_msgport_init()` / `drv_timer` /
+`drv_task_exit()` instead of hand-rolled `AllocSignal` / `CreateMsgPort` /
+`CreateIORequest` / `OpenDevice` calls. Same periodic-tick semantics, same
+exit signalling. No functional change.
+
+### Dependencies
+
+Building now requires **`emu68-common` 1.9.0** or later (`drv_timer.h`,
+`driver_task.h`).
+
+---
+
 # Release notes — genet.device 4.0
 
 genet.device 4.0 is a rewrite built for **lwip-amiga**, a new, much faster TCP/IP stack
