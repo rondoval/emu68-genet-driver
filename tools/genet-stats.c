@@ -18,9 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 
-struct ExecBase      *SysBase;
 struct IntuitionBase *IntuitionBase;
-struct DosLibrary    *DOSBase;
 struct Library       *ListBrowserBase;
 
 static const char verstag[] __attribute__((used)) = VERSTAG;
@@ -298,8 +296,6 @@ int main(int argc, char **argv)
 
     (void)argc; (void)argv;
 
-    SysBase         = *(struct ExecBase **)4UL;
-    DOSBase         = (struct DosLibrary    *)OpenLibrary((CONST_STRPTR)"dos.library",       37);
     IntuitionBase   = (struct IntuitionBase *)OpenLibrary((CONST_STRPTR)"intuition.library",  37);
     ListBrowserBase =                         OpenLibrary((CONST_STRPTR)"gadgets/listbrowser.gadget", 0);
     if (!IntuitionBase || !ListBrowserBase) goto cleanup;
@@ -438,6 +434,5 @@ cleanup:
     if (devPort)        DeleteMsgPort(devPort);
     if (ListBrowserBase) CloseLibrary(ListBrowserBase);
     if (IntuitionBase)  CloseLibrary((struct Library *)IntuitionBase);
-    if (DOSBase)        CloseLibrary((struct Library *)DOSBase);
     return rc;
 }
