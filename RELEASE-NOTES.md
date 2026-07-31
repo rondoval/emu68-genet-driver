@@ -1,3 +1,56 @@
+# Release notes — genet.device 3.14
+
+Changes since 3.13.
+
+A build-correctness release: one latent ABI bug that GCC 16.1 turns into a
+crash, plus two toolchain-flag fixes.
+
+---
+
+## Breaking changes
+
+None.
+
+---
+
+## Bug fixes
+
+### Interrupt handler compiled with the wrong calling convention under GCC 16.1
+
+`bcmgenet_isr0()` takes its arguments in registers (`a6` / `a1` / `d0`) because
+that is how Exec's interrupt dispatcher calls it — the unit pointer arrives in
+`a1`.  `bcmgenet.h` carried a second, stale declaration of it (together with
+`bcmgenet_irq0_enable()` and `bcmgenet_intr_disable()`) at a point where
+`struct GenetUnit` was still only forward-declared.  GCC 16.1 silently drops
+`asm("aN")` register bindings when the prototype's struct type is incomplete,
+so that stale prototype — included before `device.h` in `bcmgenet-irq.c` —
+compiled the handler for the stack calling convention.  The handler then read
+whatever happened to sit on the stack as its unit pointer and drove GENET MMIO
+through it on the first interrupt.  Earlier compilers honoured the binding, so
+the duplicate declaration was harmless until now.
+
+The duplicate declarations are gone.  `genet/bcmgenet-irq.h`, which includes
+`device.h` and therefore sees the complete type, is now the only place the
+interrupt entry points are declared, and `bcmgenet-irq.c` includes it instead
+of `bcmgenet.h`.  The stack build gates every component on
+`scripts/check-regargs.py`, which catches this class of register/stack ABI
+mismatch.
+
+---
+
+## Build & tooling
+
+### Component builds no longer override the toolchain's CPU selection
+
+`genet.device` and the `runtime-config` library each hardcoded `-m68040` and
+`-fomit-frame-pointer` in their own `add_compile_options()`.  Those are emitted
+after `CMAKE_C_FLAGS`, so they silently overrode the toolchain file's
+`M68K_CPU` / `M68K_FPU` knobs: a build configured for a different CPU still
+produced 68040 code.  Both flags now come from the toolchain only, which is
+where they were already set.
+
+---
+
 # Release notes — genet.device 3.13
 
 Changes since 3.12.

@@ -9,7 +9,7 @@
 
 #include <iomem.h>
 #include <debug.h>
-#include <genet/bcmgenet.h>
+#include <genet/bcmgenet-irq.h>
 #include <genet/bcmgenet-regs.h>
 #include <device.h>
 
