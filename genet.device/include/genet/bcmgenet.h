@@ -19,6 +19,13 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit); /* Updates PROMISC flag and s
 /* RX functions */
 s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget);
 
+/* Periodic [genet] datapath perf report — profile tier only. */
+#ifdef PROFILE
+void bcmgenet_perf_tick(struct GenetUnit *unit);
+#else
+#define bcmgenet_perf_tick(unit) ((void)0)
+#endif
+
 /* TX functions */
 u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit);
 void bcmgenet_tx_reclaim(struct GenetUnit *unit, u16 budget);

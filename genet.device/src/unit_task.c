@@ -279,6 +279,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             SendIO(&packetTimerReq->tr_node);
 
             UpdateThroughputStats(unit);
+            bcmgenet_perf_tick(unit);
         }
 
         if (unlikely(sigset & SIGBREAKF_CTRL_C))

@@ -16,6 +16,7 @@
 #include <bcm_gpio.h>
 #include <slab.h>
 #include <dma_mem.h>
+#include <perf.h>
 #include <reset_guard.h>
 
 #include <genet/phy.h>
@@ -44,6 +45,16 @@
 /* Lazy-reclaim watermark: only read TDMA_CONS_INDEX when free slots fall
  * below this. Must exceed max descriptors per packet (2 for DMA path). */
 #define TX_RECLAIM_THRESHOLD 16U
+
+/* Datapath perf slots (emu68-common <perf.h>), reported as [genet] by
+ * bcmgenet_perf_tick(). Order must match genet_perf_names[] in device.c. */
+enum GenetProfSlot
+{
+	GP_RX_DRAIN,   /* whole bcmgenet_gmac_eth_rx ring walk */
+	GP_TX_SUBMIT,  /* bcmgenet_xmit: staging + copy + cache prime + ring writes */
+	GP_TX_PUBLISH, /* closing barrier + TDMA_PROD_INDEX doorbell */
+	GP_SLOT_COUNT
+};
 
 /* Generic TODOs
 cleanup mcast handling
@@ -206,6 +217,12 @@ struct GenetUnit
 	struct internal_stats internalStats;
 	struct throughput_stats throughputStats; /* throughput sampling state (S2_SAMPLE_THROUGHPUT) */
 	u32 reconfigurations;	   /* count of S2_ONLINE after the first; persists across (re)online */
+
+	/* Datapath perf instance (emu68-common <perf.h>). Probes compile away
+	 * below the PROFILE tier; the fields stay so the layout never varies. */
+	struct perf_counter perfSlots[GP_SLOT_COUNT];
+	struct perf perf;
+	u32 perfTicks;
 
 	/* Unit-control requests from foreign tasks. */
 	struct MsgPort *controlPort; /* created in unit task */
