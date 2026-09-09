@@ -31,6 +31,7 @@
 #include <exec/types.h>
 #include <limits.h>
 
+#include <cache_ops.h>
 #include <debug.h>
 #include <bits.h>
 #include <errors.h>
@@ -140,6 +141,7 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 
 s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 {
+	PERF_T0(t_drain);
 	u32 rx_prod_reg = mmio_read32(BCMGENET_REG(unit, RDMA_PROD_INDEX));
 	u16 discards = (u16)((rx_prod_reg >> DMA_P_INDEX_DISCARD_CNT_SHIFT) & DMA_P_INDEX_DISCARD_CNT_MASK);
 	u16 rx_prod_index = (u16)(rx_prod_reg & DMA_P_INDEX_MASK);
@@ -177,8 +179,6 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 		length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
 		u8 *addr = (u8 *)rx_cb->data_buffer;
 
-		ULONG cache_len = length; /* ULONG* for CachePostDMA on any NDK (length is reused below) */
-		CachePostDMA(addr, &cache_len, 0);
 		KprintfT("[genet] %s: packet=%08lx length=%lu\n", __func__, addr + RX_BUF_OFFSET, (ULONG)(length - RX_BUF_OFFSET));
 
 		if (unlikely(length > RX_BUF_LENGTH))
@@ -221,6 +221,11 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 			goto next;
 		} /* error packet */
 
+		/* Invalidate only after the descriptor passed the sanity checks: the
+		 * inline op drops whole lines with no end-of-range concession, so a
+		 * corrupt length must never widen it — and rejected frames are never
+		 * read, so they need no invalidate at all. */
+		cache_post_dma(addr, length, 0);
 		ReceiveFrame(unit, addr + RX_BUF_OFFSET, length - RX_BUF_OFFSET, dma_flags);
 	next:
 		rx_cons_index++;
@@ -229,8 +234,22 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 	unit->rx_ring.rx_cons_index = rx_cons_index;
 	mmio_write32(rx_cons_index, BCMGENET_REG(unit, RDMA_CONS_INDEX));
 
+	PERF_ADD(&unit->perf, GP_RX_DRAIN, t_drain);
 	return to_process;
 }
+
+/* Periodic [genet] datapath perf report, ~2 s at the default 200 ms tick;
+ * lines feed emu68-common/scripts/perf-report.py. */
+#ifdef PROFILE
+void bcmgenet_perf_tick(struct GenetUnit *unit)
+{
+	if (++unit->perfTicks >= 10)
+	{
+		unit->perfTicks = 0;
+		perf_report(&unit->perf);
+	}
+}
+#endif /* PROFILE */
 
 static void bcmgenet_set_rx_coalesce(struct GenetUnit *unit, u32 usecs, u32 pkts)
 {
@@ -567,8 +586,7 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 		goto rx_buf_allocated;
 	}
 
-	ULONG rxlen = RX_TOTAL_BUFSIZE;
-	CachePreDMA((APTR)unit->rxbuffer, &rxlen, 0);
+	cache_pre_dma((APTR)unit->rxbuffer, RX_TOTAL_BUFSIZE, 0);
 
 	bcmgenet_umac_reset(unit);
 
