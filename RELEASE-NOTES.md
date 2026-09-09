@@ -1,3 +1,22 @@
+# Release notes — genet.device 4.2
+
+Changes since v4.1.
+
+---
+
+## Breaking changes
+
+None.
+
+---
+
+## Build & tooling
+
+- Hardcoded `-m68040` removed — it overrode the toolchain's `M68K_CPU`, so
+  non-68040 builds produced 68040 code.
+
+---
+
 # Release notes — genet.device 4.1
 
 Changes since v4.0.
