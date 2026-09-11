@@ -229,13 +229,13 @@ static struct Opener *createOpener(struct TagItem *tags, struct Library *Utility
     KprintfT("[genet] %s: S2_Log %lx\n", __func__, GetTagData(S2_Log, NULL, tags));
 
     opener->packetFilter = (struct Hook *)GetTagData(S2_PacketFilter, NULL, tags);
-    opener->CopyToBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyToBuff32, S2_CopyToBuff16, S2_CopyToBuff);
-    opener->CopyFromBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyFromBuff32, S2_CopyFromBuff16, S2_CopyFromBuff);
+    opener->CopyToBuff = (S2CopyBuffFunc)getBufferFunction(tags, S2_CopyToBuff32, S2_CopyToBuff16, S2_CopyToBuff);
+    opener->CopyFromBuff = (S2CopyBuffFunc)getBufferFunction(tags, S2_CopyFromBuff32, S2_CopyFromBuff16, S2_CopyFromBuff);
 
     if (config->use_dma)
     {
-        opener->DMACopyToBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyToBuff32, NULL, tags);
-        opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);
+        opener->DMACopyToBuff = (S2DMACopyFunc)GetTagData(S2_DMACopyToBuff32, NULL, tags);
+        opener->DMACopyFromBuff = (S2DMACopyFunc)GetTagData(S2_DMACopyFromBuff32, NULL, tags);
     }
 
     KprintfT("[genet] %s: CopyToBuff=%lx, CopyFromBuff=%lx, PacketFilter=%lx\n",

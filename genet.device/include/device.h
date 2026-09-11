@@ -79,6 +79,9 @@ typedef enum
 	STATE_OFFLINE
 } UnitState;
 
+typedef BOOL (*S2CopyBuffFunc)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
+typedef APTR (*S2DMACopyFunc)(APTR cookie asm("a0"));
+
 struct Opener
 {
 	struct MinNode node;
@@ -111,10 +114,10 @@ struct Opener
 	 */
 	struct Hook *packetFilter;
 	/* result TRUE - success; FALSE - error */
-	BOOL (*CopyToBuff)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
-	BOOL (*CopyFromBuff)(APTR to asm("a0"), APTR from asm("a1"), ULONG len asm("d0"));
-	APTR (*DMACopyToBuff)(APTR cookie asm("a0"));
-	APTR (*DMACopyFromBuff)(APTR cookie asm("a0"));
+	S2CopyBuffFunc CopyToBuff;
+	S2CopyBuffFunc CopyFromBuff;
+	S2DMACopyFunc DMACopyToBuff;
+	S2DMACopyFunc DMACopyFromBuff;
 };
 
 struct MulticastRange
