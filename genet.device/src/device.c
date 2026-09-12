@@ -20,6 +20,7 @@
 #include <devices/sana2specialstats.h>
 
 #include <device.h>
+#include <emu68_features.h>
 #include <minlist.h>
 #include <debug.h>
 #include <runtime_config.h>
@@ -65,6 +66,11 @@ extern const UBYTE endOfCode;
 static const char deviceName[] = DEVICE_NAME;
 static const char deviceIdString[] = DEVICE_IDSTRING;
 static const APTR initTable[4];
+
+/* [genet] perf slot names — rodata; order matches enum GenetProfSlot. */
+static const char *const genet_perf_names[GP_SLOT_COUNT] = {
+    "rx_drain", "tx_submit", "tx_publish",
+};
 
 /*
     Resident structure describing the object. RTF_AUTOINIT means the rt_Init field
@@ -169,6 +175,15 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
 {
     (void)_SysBase;
     KprintfT("[genet] %s: Initializing device\n", __func__);
+
+    if (!emu68_has_dcache_range_ops())
+    {
+        Kprintf("[genet] %s: rangeops build, but Emu68 lacks dcache-range-ops rev 1 - refusing to load. Install the standard driver package or update Emu68.\n", __func__);
+        ULONG size = (ULONG)base->device.dd_Library.lib_NegSize + base->device.dd_Library.lib_PosSize;
+        FreeMem((APTR)((ULONG)base - base->device.dd_Library.lib_NegSize), size);
+        return NULL;
+    }
+
     base->segList = segList;
     base->device.dd_Library.lib_Revision = DEVICE_REVISION;
     base->unit = NULL;
@@ -214,13 +229,13 @@ static struct Opener *createOpener(struct TagItem *tags, struct Library *Utility
     KprintfT("[genet] %s: S2_Log %lx\n", __func__, GetTagData(S2_Log, NULL, tags));
 
     opener->packetFilter = (struct Hook *)GetTagData(S2_PacketFilter, NULL, tags);
-    opener->CopyToBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyToBuff32, S2_CopyToBuff16, S2_CopyToBuff);
-    opener->CopyFromBuff = (BOOL (*)(APTR, APTR, ULONG))getBufferFunction(tags, S2_CopyFromBuff32, S2_CopyFromBuff16, S2_CopyFromBuff);
+    opener->CopyToBuff = (S2CopyBuffFunc)getBufferFunction(tags, S2_CopyToBuff32, S2_CopyToBuff16, S2_CopyToBuff);
+    opener->CopyFromBuff = (S2CopyBuffFunc)getBufferFunction(tags, S2_CopyFromBuff32, S2_CopyFromBuff16, S2_CopyFromBuff);
 
     if (config->use_dma)
     {
-        opener->DMACopyToBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyToBuff32, NULL, tags);
-        opener->DMACopyFromBuff = (APTR (*)(APTR))GetTagData(S2_DMACopyFromBuff32, NULL, tags);
+        opener->DMACopyToBuff = (S2DMACopyFunc)GetTagData(S2_DMACopyToBuff32, NULL, tags);
+        opener->DMACopyFromBuff = (S2DMACopyFunc)GetTagData(S2_DMACopyFromBuff32, NULL, tags);
     }
 
     KprintfT("[genet] %s: CopyToBuff=%lx, CopyFromBuff=%lx, PacketFilter=%lx\n",
@@ -278,6 +293,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
             return;
         }
         base->unit->device = base;
+        base->unit->perf = (struct perf){
+            "genet", genet_perf_names, base->unit->perfSlots, GP_SLOT_COUNT};
         createdUnit = TRUE;
     }
 

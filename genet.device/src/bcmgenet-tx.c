@@ -12,6 +12,7 @@
 #include <proto/exec.h>
 #endif
 
+#include <cache_ops.h>
 #include <iomem.h>
 #include <types.h>
 #include <debug.h>
@@ -117,6 +118,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: unit %lu, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
 
+	PERF_T0(t_submit);
 	struct Opener *opener = io->ios2_BufferManagement;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 	BOOL is_raw = (io->ios2_Req.io_Flags & SANA2IOF_RAW) != 0;
@@ -135,7 +137,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	 */
 	APTR hdr_staging = NULL, body_staging = NULL;
 	dma_addr_t hdr_dma = 0, body_dma = 0;
-	ULONG hdr_len = 0, body_len = 0; /* ULONG so &hdr_len/&body_len match CachePreDMA on any NDK */
+	ULONG hdr_len = 0, body_len = 0;
 	u8 bds_required;
 	BOOL is_dma_path = FALSE;
 
@@ -169,8 +171,8 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			hdr_dma = (dma_addr_t)hdr_staging;
 			hdr_len = ETH_HLEN;
 			body_len = io->ios2_DataLength;
-			CachePreDMA((APTR)hdr_dma, &hdr_len, DMA_ReadFromRAM);
-			CachePreDMA((APTR)body_dma, &body_len, DMA_ReadFromRAM);
+			cache_pre_dma((APTR)hdr_dma, hdr_len, DMA_ReadFromRAM | DMAF_NoSync);
+			cache_pre_dma((APTR)body_dma, body_len, DMA_ReadFromRAM | DMAF_NoSync);
 			is_dma_path = TRUE;
 			bds_required = 2;
 		}
@@ -198,7 +200,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 
 			body_dma = (dma_addr_t)body_staging;
 			body_len = ETH_HLEN + io->ios2_DataLength;
-			CachePreDMA((APTR)body_dma, &body_len, DMA_ReadFromRAM);
+			cache_pre_dma((APTR)body_dma, body_len, DMA_ReadFromRAM | DMAF_NoSync);
 			bds_required = 1;
 		}
 	}
@@ -236,14 +238,15 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			body_dma = (dma_addr_t)body_staging;
 		}
 		body_len = io->ios2_DataLength;
-		CachePreDMA((APTR)body_dma, &body_len, DMA_ReadFromRAM);
+		cache_pre_dma((APTR)body_dma, body_len, DMA_ReadFromRAM | DMAF_NoSync);
 		bds_required = 1;
 	}
 
 	/*
 	 * Phase 2 — under the ring lock: free-BD check, optional lazy reclaim,
 	 * descriptor writes, prod-index advance, MMIO kick. No memcpy, no
-	 * CachePreDMA, no user callbacks here.
+	 * cache ops (the pre-doorbell barrier closes phase 1's NoSync cleans),
+	 * no user callbacks here.
 	 */
 	KprintfT("[genet] %s: pre: tx_prod_index %ld, write_ptr %ld\n", __func__, ring->tx_prod_index, ring->write_ptr);
 	Forbid();
@@ -308,8 +311,12 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	unit->internalStats.tx_packets++;
 
 	KprintfT("[genet] %s: Scheduled, tx_prod_index %ld\n", __func__, ring->tx_prod_index);
+	PERF_T0(t_pub);
+	emu68_barrier(); /* closes phase 1's DMAF_NoSync clean batch (cache_ops.h pattern 2) */
 	mmio_write32(ring->tx_prod_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
+	PERF_ADD(&unit->perf, GP_TX_PUBLISH, t_pub);
 	Permit();
+	PERF_ADD(&unit->perf, GP_TX_SUBMIT, t_submit);
 	return COMMAND_PROCESSED;
 
 err_no_buf:
@@ -317,5 +324,6 @@ err_no_buf:
 	io->ios2_WireError = S2WERR_BUFF_ERROR;
 	io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
 	UnitSubmitControlAsync(unit, UNIT_CTRL_EVENT_REPORT, (union UnitControlPayload){.eventSet = S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR});
+	PERF_ADD(&unit->perf, GP_TX_SUBMIT, t_submit);
 	return COMMAND_PROCESSED;
 }

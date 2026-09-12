@@ -27,6 +27,9 @@ add_compile_options(
 # Debug-output backend defines (EMU68_DEBUG_BACKEND, see emu68-common).
 emu68_debug_definitions()
 
+# Cache-op flavor (EMU68_FORCE_LVO_CACHE_OPS, see emu68-common cache_ops.h).
+emu68_cache_ops_definitions()
+
 # Sources
 add_executable(genet.device
     src/device.c

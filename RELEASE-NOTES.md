@@ -1,3 +1,40 @@
+# Release notes — genet.device 3.15
+
+Changes since 3.14.
+
+---
+
+## Breaking changes
+
+None.
+
+---
+
+## New features
+
+### The SANA-II line now benefits from the `-rangeops` archives
+
+The datapath uses the stack's shared cache operations, so a `-rangeops` build of
+this driver uses Emu68's fast inline cache instructions like the rest of the
+stack already did. Standard archives are unchanged.
+
+### Firmware gate for rangeops builds
+
+Builds using the inline Emu68 range cache opcodes (the `-rangeops` stack
+archives) now check the `/emu68` device-tree node's `dcache-range-ops`
+capability at init and refuse to load on firmware that would Line-F trap on
+those opcodes, instead of crashing. Standard (LVO) builds are unaffected.
+
+---
+
+## Reliability
+
+A malformed receive descriptor could make the driver invalidate cache lines past
+the end of the receive buffer. It now does that only after the descriptor has
+passed its checks.
+
+---
+
 # Release notes — genet.device 3.14
 
 Changes since 3.13.
