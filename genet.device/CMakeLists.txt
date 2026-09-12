@@ -9,11 +9,12 @@ add_link_options(
     -Wl,-e,_doNotExecute
 )
 
+# CPU/FPU/frame-pointer flags come from the stack toolchain (cmake/toolchain.cmake,
+# knobs M68K_CPU / M68K_FPU) and must not be repeated here: a hardcoded -m68040 is
+# emitted after CMAKE_C_FLAGS and would silently override M68K_CPU.
 add_compile_options(
     -O3
-    -m68040
     -ffreestanding
-    -fomit-frame-pointer
     -Wall
     -Wextra
     -Wconversion
