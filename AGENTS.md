@@ -2,12 +2,19 @@
 
 ## Build
 
-- Required companion packages: `devicetree.resource`, `emu68-common`, and `emu68-gic400-library`.
-- The README examples use an out-of-tree `build/` directory with `cmake ..`, `make`, and `make install`.
-- Equivalent configure/build flow is acceptable, but do not assume `build/` already exists.
-- The repo-local `compile` task expects an existing `build/` directory. If it is missing, configure first with `cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain.cmake -DCMAKE_PREFIX_PATH=/path/to/prefix -DCMAKE_INSTALL_PREFIX=/path/to/prefix`.
-- Debug backend: pass `-DEMU68_DEBUG_BACKEND=serial` (default `pistorm` | `serial` | `off`); selected stack-wide via `emu68-common`, `serial` links `debug.lib` and is not ROM-able.
-- Version string handling now follows the same pattern as `emu68-xhci-driver`: the top-level `CMakeLists.txt` defines `VERSTRING` from project version plus date, and `genet.device/CMakeLists.txt` only consumes it.
+Required packages: `emu68-common` and `emu68-gic400-library`. `devicetree.resource` is
+a runtime resource, not a build-time package.
+
+Build through the superbuild's container wrapper from the stack root — never host
+`cmake` (build trees are configured at `/work` inside the toolchain container):
+
+```sh
+./scripts/docker-build.sh --target emu68-genet-driver-sana2
+```
+
+- Debug backend: `EMU68_CONFIGURE_ARGS="-DEMU68_DEBUG_BACKEND=serial" ./scripts/docker-build.sh` (default `pistorm` | `serial` | `off`); selected stack-wide via `emu68-common`, `serial` links `debug.lib` and is not ROM-able.
+- The stack installs this flavor under `Storage/`, so the driver lands in `install/Storage/DEVS/Networks/genet.device` — beside, not on top of, the netdev flavor's `install/DEVS/Networks/genet.device`.
+- Version string handling follows the same pattern as `emu68-xhci-driver`: the top-level `CMakeLists.txt` defines `VERSTRING` from project version plus date, and `genet.device/CMakeLists.txt` only consumes it.
 
 ## Runtime Notes
 
@@ -31,5 +38,5 @@
 
 - Changes to runtime config parsing should be checked in `runtime-config/` and at least one driver build.
 - Interface changes in shared headers or install outputs should be validated through `emu68-driver-stack`.
-- Pure documentation or AGENTS updates usually only need a Problems check; code or CMake changes should be followed by at least `cmake --build build` once configured.
+- Pure documentation or AGENTS updates usually only need a Problems check; code or CMake changes should be followed by `./scripts/docker-build.sh --target emu68-genet-driver-sana2` from the stack root.
 
