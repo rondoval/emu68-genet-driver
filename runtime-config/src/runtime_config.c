@@ -86,7 +86,13 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
                 if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_TASK_PRIORITY") == 0)
                 {
                     if (StrToLong((STRPTR)val, &parsed))
+                    {
+                        if (parsed < UNIT_TASK_PRIORITY_MIN)
+                            parsed = UNIT_TASK_PRIORITY_MIN;
+                        if (parsed > UNIT_TASK_PRIORITY_MAX)
+                            parsed = UNIT_TASK_PRIORITY_MAX;
                         config->unit_task_priority = (s8)parsed;
+                    }
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_STACK_SIZE") == 0)
                 {

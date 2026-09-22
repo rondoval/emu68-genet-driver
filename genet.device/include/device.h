@@ -240,6 +240,7 @@ struct GenetUnit
 	u32 irq0_number, irq1_number; /* IRQ numbers from Device Tree */
 	u32 irq0_status;			  /* status bits of irq0*/
 	BYTE irq0_signal;			  /* signals used to wake bottom-half */
+	BOOL irq0_installed;		  /* irq0_isr is on the server chain (start..stop) */
 	struct Interrupt irq0_isr;
 
 	/* PHY */

@@ -16,7 +16,12 @@
 #include <debug.h>
 #include <runtime_config.h>
 
-static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLength, u16 dma_flags)
+/* Deliver one frame to one request. TRUE when the request was consumed
+ * (replied, with the frame or with an error); FALSE when the opener's
+ * S2_PacketFilter declined the frame, in which case the request is untouched
+ * and the caller must put it back where it came from: a filtered frame leaves
+ * the CMD_READ pending. */
+static inline BOOL CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLength, u16 dma_flags)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfT("[genet] %s: Copying packet of length %lu\n", __func__, (ULONG)packetLength);
@@ -72,32 +77,29 @@ static inline void CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
     }
 
     /* Filter packet if CMD_READ and filter hook is set */
-    BOOL packetFiltered = FALSE;
     if (opener->packetFilter && io->ios2_Req.io_Command == CMD_READ && !CallHookPkt(opener->packetFilter, io, packet))
     {
         KprintfT("[genet] %s: Packet filtered by hook\n", __func__);
-        packetFiltered = TRUE;
+        return FALSE;
     }
 
     /* Packet not filtered. Send it now and reply request. */
-    if (likely(!packetFiltered))
+    u32 copyLen = unit->use_miami_workaround ? ((packetLength + 3u) & ~3u) : packetLength;
+    if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, copyLen) == 0)
     {
-        u32 copyLen = unit->use_miami_workaround ? ((packetLength + 3u) & ~3u) : packetLength;
-        if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, copyLen) == 0)
-        {
-            KprintfT("[genet] %s: Failed to copy packet data to buffer\n", __func__);
-            unit->internalStats.rx_buffer_errors++;
-            io->ios2_WireError = S2WERR_BUFF_ERROR;
-            io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
-            ReportEvents(unit, S2EVENT_BUFF | S2EVENT_RX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
-        }
-
-        /* Set number of bytes received */
-        io->ios2_DataLength = packetLength;
-
-        ReplyMsg((struct Message *)io);
-        KprintfT("[genet] %s: Packet copied and request replied\n", __func__);
+        KprintfT("[genet] %s: Failed to copy packet data to buffer\n", __func__);
+        unit->internalStats.rx_buffer_errors++;
+        io->ios2_WireError = S2WERR_BUFF_ERROR;
+        io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
+        ReportEvents(unit, S2EVENT_BUFF | S2EVENT_RX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
     }
+
+    /* Set number of bytes received */
+    io->ios2_DataLength = packetLength;
+
+    ReplyMsg((struct Message *)io);
+    KprintfT("[genet] %s: Packet copied and request replied\n", __func__);
+    return TRUE;
 }
 
 /* Drain the per-opener SPSC ring into per-type MinLists.
@@ -188,9 +190,17 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
 
             if (likely(io != NULL))
             {
-                CopyPacket(io, packet, packetLength, dma_flags);
-                orphan = FALSE;
-                activity = TRUE;
+                if (likely(CopyPacket(io, packet, packetLength, dma_flags)))
+                {
+                    orphan = FALSE;
+                    activity = TRUE;
+                }
+                else
+                {
+                    /* declined by the opener's filter: back to the head, so it
+                     * keeps its place in line for the next frame */
+                    AddHeadMinList(queue, (struct MinNode *)io);
+                }
                 /* Continue to deliver to other openers */
             }
         }
@@ -216,11 +226,18 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
                     KprintfT("[genet] %s: Found opener for packet type 0x%lx\n", __func__, (ULONG)packetType);
                     Remove((struct Node *)io);
                     /* Match, copy packet, break loop for this opener */
-                    CopyPacket(io, packet, packetLength, dma_flags);
-
-                    /* The packet is sent at least to one opener, not an orphan anymore */
-                    orphan = FALSE;
-                    activity = TRUE;
+                    if (likely(CopyPacket(io, packet, packetLength, dma_flags)))
+                    {
+                        /* The packet is sent at least to one opener, not an orphan anymore */
+                        orphan = FALSE;
+                        activity = TRUE;
+                    }
+                    else
+                    {
+                        /* declined by the filter: it was the first of its type,
+                         * and at the head it stays the first of its type */
+                        AddHeadMinList(&opener->readQueue, (struct MinNode *)io);
+                    }
                     break;
                 }
             }
@@ -241,7 +258,8 @@ BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_
             if (unlikely(io != NULL))
             {
                 KprintfT("[genet] %s: Found opener for orphan packet type 0x%lx\n", __func__, (ULONG)packetType);
-                CopyPacket(io, packet, packetLength, dma_flags);
+                /* always consumed: the filter hook applies to CMD_READ only */
+                (void)CopyPacket(io, packet, packetLength, dma_flags);
                 activity = TRUE;
             }
             /* Continue to offer to other openers with orphan requests */

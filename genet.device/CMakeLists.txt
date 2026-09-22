@@ -46,6 +46,7 @@ add_executable(genet.device
     src/bcmgenet-irq.c
     src/bcmgenet_mib.c
     src/phy.c
+    src/phy_bcm54xx.c
     src/phy_interface.c
     src/device_end.c
 )

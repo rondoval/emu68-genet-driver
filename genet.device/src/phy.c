@@ -25,6 +25,7 @@
 #include <device.h>
 
 #include <genet/phy.h>
+#include <genet/phy_priv.h>
 #include <genet/mii.h>
 
 /**
@@ -78,7 +79,7 @@ static inline void mdio_start(struct GenetUnit *unit)
 	mmio_set32(unit->genetBase + MDIO_CMD, MDIO_START_BUSY);
 }
 
-static s32 mdio_write(struct phy_device *phy, u8 reg, u16 value)
+s32 mdio_write(struct phy_device *phy, u8 reg, u16 value)
 {
 	// Kprintf("[genet] %s: phy=%ld reg=%ld value=0x%04lx\n", __func__, phy->addr, reg, value);
 	struct GenetUnit *unit = phy->unit;
@@ -95,7 +96,7 @@ static s32 mdio_write(struct phy_device *phy, u8 reg, u16 value)
 						   MDIO_START_BUSY, FALSE, 20);
 }
 
-static s32 mdio_read(struct phy_device *phy, u8 reg)
+s32 mdio_read(struct phy_device *phy, u8 reg)
 {
 	// Kprintf("[genet] %s: phy=%ld reg=%ld\n", __func__, phy->addr, reg);
 	struct GenetUnit *unit = phy->unit;
@@ -497,6 +498,13 @@ static s32 genphy_parse_link(struct phy_device *phydev)
 s32 phy_config(struct phy_device *phydev)
 {
 	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+
+	/* Vendor bring-up first: phy_create() has just soft-reset the PHY, which
+	 * clears the shadow registers these settings live in. Nothing below
+	 * resets it again (genphy_config_aneg only sets BMCR_ANRESTART). */
+	if (phy_is_bcm54xx(phydev))
+		bcm54xx_config_init(phydev);
+
 	u32 features = (SUPPORTED_TP | SUPPORTED_MII | SUPPORTED_AUI | SUPPORTED_FIBRE |
 					SUPPORTED_BNC);
 

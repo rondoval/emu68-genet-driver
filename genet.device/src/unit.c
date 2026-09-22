@@ -145,7 +145,9 @@ u32 UnitOnline(struct GenetUnit *unit)
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to start UMAC: %ld\n", __func__, result);
-		bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
+		/* Unwinds whichever stages the start reached; the unit stays
+		 * configured, so a retried S2_ONLINE needs no reconfiguration. */
+		bcmgenet_gmac_eth_stop(unit);
 		return result;
 	}
 
@@ -157,7 +159,7 @@ void UnitOffline(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Stopping UMAC\n", __func__);
 	unit->state = STATE_OFFLINE;
-	bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
+	bcmgenet_gmac_eth_stop(unit);
 }
 
 u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
@@ -173,6 +175,9 @@ u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 			UnitOffline(unit);
 		}
 		UnitTaskStop(unit);
+		/* After the task is gone: its IRQ bottom half dereferences the PHY,
+		 * and a status word latched before the stop could still be pending. */
+		bcmgenet_eth_unconfigure(unit);
 		dma_pool_delete(unit->dmaPool);
 		unit->dmaPool = NULL;
 		DeletePool(unit->metaPool);

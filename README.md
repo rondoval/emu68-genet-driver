@@ -17,37 +17,6 @@ The hardware-facing GENET and PHY implementation is based primarily on [Das U-Bo
 
 - None currently known.
 
-## What's new
-3.10:
-- Added a reset guard: the driver now quiesces GENET DMA before the Amiga resets (both Ctrl-Amiga-Amiga and `ColdReboot()` / `C:Reboot`).
-- Reworked unit memory management to use separate pools: DMA buffers are allocated from a region-restricted pool in Pistorm RAM that the GENET DMA engine can reach, while CPU-only metadata uses an ordinary Exec pool. DMA reachability is now decided by an explicit predicate instead of a hardcoded address check.
-- Added a `CachePreDMA()` call for the RX buffer to ensure cache coherency before the controller starts writing into it.
-
-3.8:
-- TX and RX memory handling reworked again: the TX path now uses the common slab allocator, RX ring buffers use `dma_zalloc()`, and TX completion handling no longer depends on TX IRQs.
-- Request flow is more robust under load: `CMD_READ` uses an SPSC ring, `CMD_WRITE` is handled only in user context, and TX reclaim runs in the bottom half.
-- Added `S2_SAMPLE_THROUGHPUT` support and a small `genet-stats` viewer tool.
-- Added richer throughput and internal driver counters.
-- Added hardware MIB counter support.
-- Added `S2_GETSPECIALSTATS` and `S2_GETEXTENDEDGLOBALSTATS` support.
-- Exposed GENET-specific counters such as IRQ activity, RX/TX error buckets, and MAC/MIB statistics.
-- Aligned the driver to the current `emu68-common` support library.
-- Switched to `DT_GetInterrupt()` / improved IRQ decoding and cleaned up several type-safety issues.
-- General internal cleanup across PHY, unit, TX/RX, and command handling paths.
-
-2.2:
-- Fix an issue where the driver will attempt to process an S2_ONLINE request while unconfigured and crash.
-
-2.1:
-- Fix for issue #14: Driver crashes when gic400.library is not present. Now it doesn't.
-
-2.0:
-- No more pooling: interrupts used via the GIC-400 controller
-- Confg reload does not require flush of the driver - just bring the interface down and up
-- The controller's base address is translated through the /scb branch of the device tree as per spec. This requires Emu68 PR#306, as without it doesn't expose correct /scb memory mappings.
-- genet.prefs settings added (interrupt coalescing related) and removed (pooling related)
-- Bugfixes
-
 ## Features
 
 - SANA-II rev 3.1
@@ -133,7 +102,7 @@ At startup the driver looks for `ENV:genet.prefs` (plain text). Each line is a `
 Default values (current):
 
 ```text
-UNIT_TASK_PRIORITY=5
+UNIT_TASK_PRIORITY=15
 UNIT_STACK_SIZE=65536
 USE_DMA=0
 USE_MIAMI_WORKAROUND=0
@@ -146,7 +115,7 @@ TX_COALESCE_FRAMES=32
 
 Setting descriptions:
 
-- `UNIT_TASK_PRIORITY`  Exec task priority of the driver unit task (higher = runs sooner). 0 is neutral.
+- `UNIT_TASK_PRIORITY`  Exec priority of the driver's unit task, the bottom half of the receive interrupt. Clamped to 6–19. Exec does not preempt among equals, so at the priority of the AmigaDOS handler processes (10) a busy handler keeps it off the CPU for milliseconds; keep it above them and above your stack's own task, and below `input.device` (20).
 - `UNIT_STACK_SIZE`  Stack size in bytes for the unit task. Minimum enforced is 4096.
 - `USE_DMA`  Leave at 0. Not supported: SANA-II does not guarantee the alignment Genet's DMA needs; enabling can result with instability or packets missing on TX. (DMA is still used internally, but the data is copied to/from internal, aligned buffers)
 - `USE_MIAMI_WORKAROUND`  1 enables length round up quirk for Miami DX stack; 0 disables.
