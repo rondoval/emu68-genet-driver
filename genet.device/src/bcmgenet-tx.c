@@ -21,6 +21,15 @@
  *                object the two contexts share.
  *
  * nso_TxDone is called from the unit task only, never from a submitter.
+ *
+ * WHEN cookies are harvested: on every unit-task wakeup, whatever caused it.
+ * Receive traffic, the submit path's own kicks below and the housekeeping
+ * tick provide those; the TX-done interrupt does not run in steady state,
+ * because an interrupt plus a task wakeup per transmitted frame costs far
+ * more than anything a prompt completion buys — nothing waits for one, with
+ * a single exception: a stack whose ndo_TxSubmit came back short has been
+ * told to retry after the next nso_TxDone. That case is counted here
+ * (ndTxRefused) and answered by the unit task, with the interrupt if needed.
  */
 #ifdef __INTELLISENSE__
 #include <clib/exec_protos.h>
@@ -37,6 +46,7 @@
 #include <device.h>
 
 #include <genet/bcmgenet.h>
+#include <genet/bcmgenet-irq.h>
 #include <genet/bcmgenet-regs.h>
 #include <dma_mem.h>
 
@@ -108,6 +118,16 @@ static inline void txdone_push(struct GenetUnit *unit, APTR cookie, u16 end, u16
 	unit->ndTxDoneProd = prod + 1;
 }
 
+/* ndo_TxSubmit is about to return short. The ABI tells the stack to retry
+ * after the next nso_TxDone, so it is owed one without delay: count the
+ * refusal and wake the unit task, which harvests whatever has completed and
+ * arms the TX-done interrupt if that was nothing. Producer side. */
+static inline void tx_refused(struct GenetUnit *unit)
+{
+	unit->ndTxRefused++;
+	Signal(unit->task, 1UL << unit->tx_signal);
+}
+
 /*
  * Deliver every TX cookie the hardware has finished with. Unit task only.
  *
@@ -118,23 +138,24 @@ static inline void txdone_push(struct GenetUnit *unit, APTR cookie, u16 end, u16
  * (the FIFO holds at most ND_TXDONE_RING_N packets of ND_TX_MAX_SEGS + 1
  * BDs each, i.e. well under 32768 BDs of producer advance).
  */
-void bcmgenet_tx_harvest(struct GenetUnit *unit)
+ULONG bcmgenet_tx_harvest(struct GenetUnit *unit)
 {
 	u32 cons = unit->ndTxDoneCons;
 	if (cons == unit->ndTxDoneProd)
-		return; /* nothing outstanding: no MMIO, no work */
+		return 0; /* nothing outstanding: no MMIO, no work */
 	if (unlikely(unit->ndStackOps == NULL))
 	{
 		/* Detached with entries still queued — a close that skipped DETACH.
 		 * Retire them silently; there is no longer a stack to tell. */
 		unit->ndTxDoneCons = unit->ndTxDoneProd;
-		return;
+		return 0;
 	}
 
 	PERF_T0(t_harvest);
 	u16 hw_cons = (u16)(mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK);
 
 	APTR batch[TX_DONE_BATCH];
+	ULONG delivered = 0;
 	for (;;)
 	{
 		ULONG n = 0;
@@ -162,8 +183,35 @@ void bcmgenet_tx_harvest(struct GenetUnit *unit)
 		asm volatile("" ::: "memory");
 		unit->ndTxDoneCons = cons;
 		unit->ndStackOps->nso_TxDone(unit->ndStackCtx, batch, n);
+		delivered += n;
 	}
 	PERF_ADD(&unit->gu_Perf, GP_TX_HARVEST, t_harvest);
+	return delivered;
+}
+
+/*
+ * Ask the hardware for ONE TX-done interrupt: the ISR masks the source again
+ * when it fires. Unit task only, which keeps every interrupt-mask write that
+ * is not the ISR's own in the task that also runs STOP — a submitter arming
+ * it could race the teardown and unmask a line nobody serves any more.
+ *
+ * The source has been masked, so its status bit holds history. Clear it, then
+ * unmask; a completion that fell between the caller's harvest and the clear
+ * has just lost its interrupt, so look at the hardware once more and let the
+ * task come round again if there is something to collect.
+ */
+void bcmgenet_tx_done_arm(struct GenetUnit *unit)
+{
+	if (unit->ndTxDoneCons == unit->ndTxDoneProd)
+		return; /* nothing in flight: no completion to wait for */
+
+	unit->internalStats.tx_irq_arms++;
+	bcmgenet_irq0_clear(unit, UMAC_IRQ_TXDMA_DONE);
+	bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
+
+	u16 hw_cons = (u16)(mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK);
+	if (txdone_pending(unit, hw_cons))
+		Signal(unit->task, 1UL << unit->tx_signal);
 }
 
 /*
@@ -265,6 +313,7 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 	PERF_T0(t_submit); /* driver-internal submit: validate + cache prime + ring writes + doorbell */
 	ULONG accepted = 0;
 	BOOL kick = FALSE;
+	BOOL full = FALSE;
 
 	while (accepted < count)
 	{
@@ -280,7 +329,10 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 			if (accepted != 0)
 				break;
 			if (txdone_free(unit) == 0)
+			{
+				tx_refused(unit);
 				return 0; /* no room to report it — retry after the next harvest */
+			}
 			Kprintf("[genet] %s: BAD SG in head descriptor (segs %lu, seg0 data 0x%08lx len %lu) — frame dropped\n",
 					__func__, (ULONG)d->ntd_NumSegs,
 					(ULONG)d->ntd_Segs[0].nsg_Data, (ULONG)d->ntd_Segs[0].nsg_Len);
@@ -303,13 +355,16 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 			free_bds = tx_free_bds(ring);
 			/* Space came back straight off the hardware index, so the unit
 			 * task may not have been woken for any of it: TXDMA_DONE needs
-			 * TX_COALESCE_FRAMES buffers, which a bursty low-rate stream can
+			 * coalTxFrames buffers, which a bursty low-rate stream can
 			 * go a long time without reaching. Wake it, or those cookies —
 			 * and the stack's pbufs — wait for the housekeeping tick. */
 			kick = TRUE;
 		}
 		if (free_bds <= need_bds || txdone_free(unit) == 0)
-			break; /* full — the stack retries after nso_TxDone */
+		{
+			full = TRUE; /* the stack retries after nso_TxDone */
+			break;
+		}
 
 		/* Validated and known to fit: prime the segments for DMA. */
 		for (u16 s = 0; s < need; s++)
@@ -374,7 +429,9 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 	if (accepted == 0 && count != 0)
 		unit->internalStats.tx_rejected++; /* ring full */
 
-	if (unlikely(kick) && txdone_pending(unit, ring->hw_cons_cache))
+	if (unlikely(full))
+		tx_refused(unit);
+	else if (unlikely(kick) && txdone_pending(unit, ring->hw_cons_cache))
 		Signal(unit->task, 1UL << unit->tx_signal);
 
 	PERF_ADD(&unit->gu_Perf, GP_TX_SUBMIT, t_submit);

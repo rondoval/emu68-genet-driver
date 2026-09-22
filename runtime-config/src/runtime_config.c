@@ -82,12 +82,6 @@ static BOOL ParseBool(const char *val, u8 *out)
 static void ApplyDefaults(struct GenetRuntimeConfig *config)
 {
     config->unit_task_priority = DEFAULT_UNIT_TASK_PRIORITY;
-    config->unit_stack_bytes = DEFAULT_UNIT_STACK_BYTES;
-    config->periodic_task_ms = DEFAULT_PERIODIC_TASK_MS;
-    config->link_poll_ms = DEFAULT_LINK_POLL_MS;
-    config->rx_coalesce_usecs = DEFAULT_RX_COALESCE_USECS;
-    config->rx_coalesce_frames = DEFAULT_RX_COALESCE_FRAMES;
-    config->tx_coalesce_frames = DEFAULT_TX_COALESCE_FRAMES;
     config->rx_pool_bufs = DEFAULT_RX_POOL_BUFS;
     config->link_speed = DEFAULT_LINK_SPEED;
     config->link_duplex = DEFAULT_LINK_DUPLEX;
@@ -132,40 +126,13 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
         if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_TASK_PRIORITY") == 0)
         {
             if (StrToLong((STRPTR)val, &parsed))
+            {
+                if (parsed < UNIT_TASK_PRIORITY_MIN)
+                    parsed = UNIT_TASK_PRIORITY_MIN;
+                if (parsed > UNIT_TASK_PRIORITY_MAX)
+                    parsed = UNIT_TASK_PRIORITY_MAX;
                 config->unit_task_priority = (s8)parsed;
-        }
-        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_STACK_SIZE") == 0)
-        {
-            if (StrToLong((STRPTR)val, &parsed) && parsed > 0)
-                config->unit_stack_bytes = (u32)parsed;
-            if (config->unit_stack_bytes < 4096)
-                config->unit_stack_bytes = 4096; /* floor */
-            config->unit_stack_bytes &= ~3u;    /* 32-bit align */
-        }
-        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "PERIODIC_TASK_MS") == 0)
-        {
-            if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                config->periodic_task_ms = (u32)parsed;
-        }
-        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "LINK_POLL_MS") == 0)
-        {
-            if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                config->link_poll_ms = (u32)parsed;
-        }
-        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_USECS") == 0)
-        {
-            if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                config->rx_coalesce_usecs = (u32)parsed;
-        }
-        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_FRAMES") == 0)
-        {
-            if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                config->rx_coalesce_frames = (u32)parsed;
-        }
-        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "TX_COALESCE_FRAMES") == 0)
-        {
-            if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                config->tx_coalesce_frames = (u32)parsed;
+            }
         }
         else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "LINK_MODE") == 0)
         {
@@ -230,14 +197,8 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
 #ifdef DEBUG
 void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config)
 {
-    Kprintf("[genet] config: pri=%ld stack_bytes=%lu periodic_task_ms=%lu link_poll_ms=%lu rx_coalesce_usecs=%lu rx_coalesce_frames=%lu tx_coalesce_frames=%lu rx_pool_bufs=%lu\n",
+    Kprintf("[genet] config: pri=%ld rx_pool_bufs=%lu\n",
             (LONG)config->unit_task_priority,
-            (ULONG)config->unit_stack_bytes,
-            (ULONG)config->periodic_task_ms,
-            (ULONG)config->link_poll_ms,
-            (ULONG)config->rx_coalesce_usecs,
-            (ULONG)config->rx_coalesce_frames,
-            (ULONG)config->tx_coalesce_frames,
             (ULONG)config->rx_pool_bufs);
     Kprintf("[genet] config: link_speed=%lu link_duplex=%s link_autoneg=%lu flow_control=%lu\n",
             (ULONG)config->link_speed,

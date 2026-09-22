@@ -57,11 +57,14 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags)
 	unit->unitNumber = unitNumber;
 	unit->ndRxPoolBufs = unit->device->runtimeConfig.rx_pool_bufs;
 
-	/* Coalescing starts at the prefs defaults; NETDEV_CMD_SET_COALESCE
-	 * replaces them for the lifetime of the open. */
-	unit->coalTxFrames = unit->device->runtimeConfig.tx_coalesce_frames;
-	unit->coalRxFrames = unit->device->runtimeConfig.rx_coalesce_frames;
-	unit->coalRxUsecs = unit->device->runtimeConfig.rx_coalesce_usecs;
+	/* Coalescing starts at the compiled-in seeds, which are in range by
+	 * construction; NETDEV_CMD_SET_COALESCE replaces them, validated there,
+	 * for the lifetime of the open. */
+	unit->coalTxFrames = GENET_COAL_TX_FRAMES;
+	unit->coalRxFrames = GENET_COAL_RX_FRAMES;
+	unit->coalRxUsecs = GENET_COAL_RX_USECS;
+	unit->coalPinned = FALSE;
+	unit->rxProfile = NDRP_UNSTATED;
 
 	/* DMA buffers (rings, rx buffer, tx staging) must live in Emu68 (Pi-DRAM) RAM the
 	 * GENET DMA engine can reach, so the DMA pool is region-restricted; with no device

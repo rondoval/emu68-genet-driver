@@ -8,6 +8,7 @@
 
 /* Interrupt enable/disable */
 void bcmgenet_irq0_enable(struct GenetUnit *unit, u32 irq_mask);
+void bcmgenet_irq0_clear(struct GenetUnit *unit, u32 irq_mask);
 void bcmgenet_intr_disable(struct GenetUnit *unit);
 
 /* The link sources worth an interrupt, which depends on whether the PHY is

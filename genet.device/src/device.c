@@ -64,7 +64,22 @@ static const APTR initTable[4];
 
 /* [genet] perf slot names — rodata; order matches enum GenetProfSlot. */
 static const char *const genet_perf_names[GP_SLOT_COUNT] = {
-    "rx_drain", "rx_flush", "tx_submit", "tx_harvest",
+    "rx_drain", "rx_flush", "tx_submit", "tx_harvest", "rx_wake",
+};
+
+/* perf_hist bounds — rodata. Frames: fine around the default timeout's worth of
+ * line-rate frames (~41) and around the 64-frame threshold, which is also the
+ * poll batch. Gap: fine around the default 500 us timeout. */
+static const u32 genet_rx_pending_bounds[GENET_RX_PENDING_BOUNDS] = {
+    1, 2, 4, 8, 16, 24, 32, 40, 44, 48, 56, 63, 64,
+};
+static const u32 genet_rx_irq_gap_bounds[GENET_RX_IRQ_GAP_BOUNDS] = {
+    100, 200, 300, 400, 480, 520, 560, 640, 800, 1000, 2000, 5000, 20000,
+};
+/* Held: around one and two poll batches (the ladder's "consumer is behind"
+ * limit is two) and a 256 KB reply (180 frames). */
+static const u32 genet_rx_held_bounds[GENET_RX_HELD_BOUNDS] = {
+    0, 8, 16, 32, 64, 96, 128, 160, 192, 256, 384, 512, 1024,
 };
 
 /*
@@ -225,6 +240,15 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
         base->unit->device = base;
         base->unit->gu_Perf = (struct perf){
             "genet", genet_perf_names, base->unit->gu_PerfSlots, GP_SLOT_COUNT};
+        base->unit->gu_RxPendingHist = (struct perf_hist){
+            "genet", "rx_pending", genet_rx_pending_bounds,
+            base->unit->gu_RxPendingBuckets, GENET_RX_PENDING_BOUNDS};
+        base->unit->gu_RxIrqGapHist = (struct perf_hist){
+            "genet", "rx_irq_gap_us", genet_rx_irq_gap_bounds,
+            base->unit->gu_RxIrqGapBuckets, GENET_RX_IRQ_GAP_BOUNDS};
+        base->unit->gu_RxHeldHist = (struct perf_hist){
+            "genet", "rx_held_at_quiet", genet_rx_held_bounds,
+            base->unit->gu_RxHeldBuckets, GENET_RX_HELD_BOUNDS};
         createdUnit = TRUE;
     }
 

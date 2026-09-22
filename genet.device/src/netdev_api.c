@@ -387,7 +387,7 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
     /* no NDCF_RX_CSUM_VALID: with RBUF_L3_PARSE_DIS the RXCHK block never
      * issues per-frame verdicts, only the raw sum */
     caps->ndc_Features = NDCF_COALESCE | NDCF_LINK_EVENTS | NDCF_MCAST_FILTER |
-                         NDCF_TX_L4CSUM | NDCF_RX_CSUM_RAW;
+                         NDCF_TX_L4CSUM | NDCF_RX_CSUM_RAW | NDCF_RX_PROFILE;
     caps->ndc_TxRingSlots = TX_DESCS;
     caps->ndc_RxRingSlots = RX_DESCS;
     caps->ndc_TxAlign = 0;
@@ -423,6 +423,7 @@ static BYTE Do_NETDEV_DETACH(struct GenetUnit *unit, struct IOStdReq *io)
     unit->ndStackOps = NULL;
     unit->ndStackCtx = NULL;
     unit->ndOwnerPort = NULL;
+    unit->rxProfile = NDRP_UNSTATED; /* the next stack speaks for itself */
     Kprintf("[genet] %s: netdev stack detached\n", __func__);
     return 0;
 }
@@ -504,7 +505,6 @@ static BYTE Do_NETDEV_SET_RXFILTER(struct GenetUnit *unit, struct IOStdReq *io)
 static BYTE Do_NETDEV_SET_COALESCE(struct GenetUnit *unit, struct IOStdReq *io)
 {
     const struct NetDevCoalesce *coal = io->io_Data;
-    const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
 
     if (coal == NULL || io->io_Length < sizeof(struct NetDevCoalesce))
         return NDERR_BADPARAMS;
@@ -512,9 +512,9 @@ static BYTE Do_NETDEV_SET_COALESCE(struct GenetUnit *unit, struct IOStdReq *io)
         return NDERR_NOTATTACHED;
 
     /* 0 = keep the driver default */
-    u32 tx_frames = coal->ndcl_TxMaxFrames ? coal->ndcl_TxMaxFrames : config->tx_coalesce_frames;
-    u32 rx_frames = coal->ndcl_RxMaxFrames ? coal->ndcl_RxMaxFrames : config->rx_coalesce_frames;
-    u32 rx_usecs = coal->ndcl_RxUsecs ? coal->ndcl_RxUsecs : config->rx_coalesce_usecs;
+    u32 tx_frames = coal->ndcl_TxMaxFrames ? coal->ndcl_TxMaxFrames : GENET_COAL_TX_FRAMES;
+    u32 rx_frames = coal->ndcl_RxMaxFrames ? coal->ndcl_RxMaxFrames : GENET_COAL_RX_FRAMES;
+    u32 rx_usecs = coal->ndcl_RxUsecs ? coal->ndcl_RxUsecs : GENET_COAL_RX_USECS;
 
     if (bcmgenet_coalesce_valid(tx_frames, rx_frames, rx_usecs) != GENET_OK)
         return NDERR_BADPARAMS;
@@ -522,11 +522,36 @@ static BYTE Do_NETDEV_SET_COALESCE(struct GenetUnit *unit, struct IOStdReq *io)
     unit->coalTxFrames = tx_frames;
     unit->coalRxFrames = rx_frames;
     unit->coalRxUsecs = rx_usecs;
+    /* Explicit RX values are an operator's experiment: they hold, whatever
+     * profile the stack states, until an all-default RX setting lets go. */
+    unit->coalPinned = coal->ndcl_RxUsecs != 0 || coal->ndcl_RxMaxFrames != 0;
 
     /* Stopped, the values are only stored: ring init programs them at the next
      * START, so a setting made between STOP and START is not lost. */
     if (unit->state == STATE_ONLINE)
         bcmgenet_apply_coalesce(unit);
+    return 0;
+}
+
+/* Frequent by design - the stack follows its conversations - so it is quiet
+ * and touches the RX half only. */
+static BYTE Do_NETDEV_SET_RX_PROFILE(struct GenetUnit *unit, struct IOStdReq *io)
+{
+    const struct NetDevRxProfile *prof = io->io_Data;
+
+    if (prof == NULL || io->io_Length < sizeof(struct NetDevRxProfile) ||
+        prof->ndrp_Profile > NDRP_LATENCY)
+        return NDERR_BADPARAMS;
+    if (unit->ndStackOps == NULL)
+        return NDERR_NOTATTACHED;
+
+    if (unit->rxProfile != prof->ndrp_Profile)
+    {
+        unit->rxProfile = prof->ndrp_Profile;
+        /* Stopped, it is only stored: ring init programs it at the next START. */
+        if (unit->state == STATE_ONLINE)
+            bcmgenet_rx_moderation_reset(unit);
+    }
     return 0;
 }
 
@@ -618,9 +643,10 @@ static BYTE Do_NETDEV_SET_MAC(struct GenetUnit *unit, struct IOStdReq *io)
         return NDERR_BADPARAMS; /* set before START; applied by UMAC bring-up */
 
     CopyMem(io->io_Data, unit->currentMacAddress, sizeof(unit->currentMacAddress));
-    /* The stack read ndc_Mac at ATTACH and there is no way to re-announce it,
-     * so a change after that would leave it building frames from the old
-     * address. Setting it before ATTACH is the supported order. */
+    /* Supported order: ATTACH, SET_MAC, START. Before the first ATTACH is
+     * useless — that ATTACH configures the unit and reloads the factory
+     * address — and the stack has already read ndc_Mac at ATTACH, so it
+     * patches its own copy when SET_MAC succeeds. */
     if (unit->ndStackOps != NULL)
         Kprintf("[genet] %s: MAC changed while attached; the stack keeps the address it read at ATTACH\n",
                 __func__);
@@ -636,6 +662,7 @@ static const UWORD GENET_SupportedCommands[] = {
     NETDEV_CMD_STOP,
     NETDEV_CMD_SET_RXFILTER,
     NETDEV_CMD_SET_COALESCE,
+    NETDEV_CMD_SET_RX_PROFILE,
     NETDEV_CMD_GET_STATS,
     NETDEV_CMD_GET_COUNTERS,
     NETDEV_CMD_GET_LINK,
@@ -691,6 +718,9 @@ void ProcessCommand(struct IOStdReq *io)
         break;
     case NETDEV_CMD_SET_COALESCE:
         error = Do_NETDEV_SET_COALESCE(unit, io);
+        break;
+    case NETDEV_CMD_SET_RX_PROFILE:
+        error = Do_NETDEV_SET_RX_PROFILE(unit, io);
         break;
     case NETDEV_CMD_GET_STATS:
         error = Do_NETDEV_GET_STATS(unit, io);

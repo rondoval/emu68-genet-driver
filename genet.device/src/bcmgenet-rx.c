@@ -100,6 +100,7 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 
 	u16 rx_cons_index = unit->rx_ring.rx_cons_index;
 	u16 to_process = (u16)((u32)(rx_prod_index - rx_cons_index) & DMA_C_INDEX_MASK);
+	PERF_HIST_ADD(&unit->gu_RxPendingHist, to_process); /* before the clamp: what the coalescer let build up */
 	if (to_process > limit)
 		to_process = limit;
 	rx_prod_index = (u16)((u32)(rx_cons_index + to_process) & DMA_C_INDEX_MASK);
@@ -260,10 +261,9 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 		mmio_write32(len_stat, descriptor_address + DMA_DESC_LENGTH_STATUS);
 	}
 
-	/* cannot init RDMA_PROD_INDEX to 0, so align RDMA_CONS_INDEX on it instead */
-	ring->rx_cons_index = mmio_read32(BCMGENET_REG(unit, RDMA_PROD_INDEX)) & DMA_P_INDEX_MASK;
-	mmio_write32(ring->rx_cons_index, BCMGENET_REG(unit, RDMA_CONS_INDEX));
-	KprintfT("[genet] %s: rx_cons_index=%lu\n", __func__, (ULONG)unit->rx_ring.rx_cons_index);
+	mmio_write32(0, BCMGENET_REG(unit, RDMA_PROD_INDEX));
+	mmio_write32(0, BCMGENET_REG(unit, RDMA_CONS_INDEX));
+	ring->rx_cons_index = 0;
 
 	mmio_write32((RX_DESCS << DMA_RING_SIZE_SHIFT) | RX_BUF_LENGTH, unit->genetBase + RDMA_RING_REG_BASE + DMA_RING_BUF_SIZE);
 	mmio_write32((DMA_FC_THRESH_LO << DMA_XOFF_THRESHOLD_SHIFT) | DMA_FC_THRESH_HI, unit->genetBase + RDMA_XON_XOFF_THRESH);

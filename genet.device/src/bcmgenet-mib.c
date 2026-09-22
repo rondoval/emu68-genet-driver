@@ -178,6 +178,14 @@ static const struct genet_sw_counter genet_sw_counters[] = {
 	SW_U32("drv_irq0_rx", internalStats.irq0_rx_count, 0),
 	SW_U32("drv_irq0_tx", internalStats.irq0_tx_count, 0),
 	SW_U32("drv_irq0_other", internalStats.irq0_other_count, 0),
+	SW_U32("drv_tx_irq_arms", internalStats.tx_irq_arms, 0),
+	/* RX moderation by profile: NDRP_* as stated by the stack (0 = nothing
+	 * stated, 1 throughput, 2 latency), the burst ladder's level now, and how
+	 * often it moved */
+	SW_U32("drv_rx_profile", rxProfile, NDCNTF_GAUGE),
+	SW_U32("drv_rx_level", rxLevel, NDCNTF_GAUGE),
+	SW_U32("drv_rx_level_changes", internalStats.rx_level_changes, 0),
+	SW_U32("drv_rx_bulk_arms", internalStats.rx_bulk_arms, 0),
 	/* RX buffer pool, right now */
 	SW_U32("drv_rx_pool_free", ndRxFreeCount, NDCNTF_GAUGE),
 	SW_U32("drv_rx_held", ndRxHeld, NDCNTF_GAUGE),

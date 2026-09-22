@@ -61,7 +61,10 @@ void bcmgenet_umac_reset(struct GenetUnit *unit)
 
 	mmio_write32(ENET_MAX_MTU_SIZE, BCMGENET_REG(unit, UMAC_MAX_FRAME_LEN));
 
-	/* Status blocks on, both directions: RX frames arrive with a 64-byte
+	/* The RBUF/TBUF control registers survive CMD_SW_RESET and a warm reboot,
+	 * so they hold whatever ran before us.
+	 *
+	 * Status blocks on, both directions: RX frames arrive with a 64-byte
 	 * RSB (RXCHK checksum), TX frames carry a 64-byte TSB (checksum
 	 * offload parameters). ALIGN_2B is deliberately OFF with the RSB: the
 	 * 2-byte IP-alignment pad would make the frame offset 66. */
@@ -70,7 +73,7 @@ void bcmgenet_umac_reset(struct GenetUnit *unit)
 	reg &= ~(u32)RBUF_ALIGN_2B;
 	mmio_write32(reg, BCMGENET_REG(unit, RBUF_CTRL));
 
-	mmio_set32(BCMGENET_REG(unit, TBUF_CTRL), TBUF_64B_EN);
+	mmio_write32(TBUF_64B_EN, BCMGENET_REG(unit, TBUF_CTRL));
 
 	/* EEE and buffer-block power management off in both directions. These
 	 * registers survive CMD_SW_RESET, so their state is whatever ran before us;
@@ -82,7 +85,7 @@ void bcmgenet_umac_reset(struct GenetUnit *unit)
 	 * Ethernet header into the RSB (CHECKSUM_COMPLETE style) — the raw
 	 * sum the netdev RX contract expects. The UMAC strips the FCS
 	 * (CMD_CRC_FWD unset), so no RBUF_SKIP_FCS. */
-	mmio_set32(BCMGENET_REG(unit, RBUF_CHK_CTRL), RBUF_RXCHK_EN | RBUF_L3_PARSE_DIS);
+	mmio_write32(RBUF_RXCHK_EN | RBUF_L3_PARSE_DIS, BCMGENET_REG(unit, RBUF_CHK_CTRL));
 	Kprintf("[genet] %s: RBUF_CHK_CTRL 0x%08lx\n", __func__,
 			mmio_read32(BCMGENET_REG(unit, RBUF_CHK_CTRL)));
 

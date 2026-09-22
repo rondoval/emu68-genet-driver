@@ -70,13 +70,7 @@ open — bring the stack down and up.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `UNIT_TASK_PRIORITY` | `10` | Exec priority of the driver's unit task. Keep it above dynamic-scheduler ranges (e.g. Executive's, ≤ 5) or a busy application can starve the driver. |
-| `UNIT_STACK_SIZE` | `65536` | Unit-task stack in bytes (floor 4096). |
-| `PERIODIC_TASK_MS` | `200` | Housekeeping-timer interval in ms (interrupt watchdog; paces the PHY poll). |
-| `LINK_POLL_MS` | `1000` | How often the PHY is polled for link state, in ms. The poll — not the interrupt — is what converges a 10 Mbps link, which GENET v5 fails to signal. |
-| `RX_COALESCE_USECS` | `500` | Target latency in µs before hardware raises an RX interrupt if the frame threshold is not met. |
-| `RX_COALESCE_FRAMES` | `64` | Received frames that trigger an RX interrupt. |
-| `TX_COALESCE_FRAMES` | `32` | Transmitted frames that trigger a TX interrupt. |
+| `UNIT_TASK_PRIORITY` | `15` | Exec priority of the driver's unit task, the bottom half of the receive interrupt. Exec does not preempt among equals, so at the priority of the AmigaDOS handler processes (10) a busy handler keeps it off the CPU for milliseconds; keep it above them, below `input.device` (20), and far above dynamic-scheduler ranges (e.g. Executive's, ≤ 5). |
 | `RX_POOL_BUFS` | `0` (auto) | Total RX buffers: the first fill the hardware ring, the rest cover frames the stack holds in socket receive queues. `0` autonegotiates at attach from the stack's declared hold budget; an explicit value is an operator override, clamped to 512–4096. Each buffer costs 2 KB of DMA memory; too few shows up as the `netdev-stats` pool-dry counter under load. |
 | `LINK_MODE` | `auto` | Narrows the advertisement to one mode — `auto`, `10hd`, `10fd`, `100hd`, `100fd`, `1000fd`. Autonegotiation stays on, so this is the standards-clean way to pin a link. |
 | `AUTONEG` | `on` | `off` forces `LINK_MODE`'s speed/duplex outright, for a partner that will not negotiate. Requires a `LINK_MODE` speed, and is refused for `1000fd` (1000BASE-T settles master/slave through negotiation). |

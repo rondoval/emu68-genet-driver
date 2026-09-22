@@ -25,6 +25,15 @@ void bcmgenet_irq0_enable(struct GenetUnit *unit, u32 irq_mask)
 		   BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_CLEAR));
 }
 
+/* Drop latched status. A masked source keeps latching, so whoever unmasks one
+ * that has been off for a while clears it first, or takes an interrupt for
+ * history instead of for the next event. */
+void bcmgenet_irq0_clear(struct GenetUnit *unit, u32 irq_mask)
+{
+	mmio_write32(irq_mask,
+		   BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
+}
+
 /* Link sources worth an interrupt. UMAC_IRQ_PHY_DET_R only matters with
  * autonegotiation off — a PHY that reset has to have its forced settings
  * pushed again; with autoneg on there is nothing to do about it, and asking
@@ -99,7 +108,16 @@ ULONG bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit 
 	if (status & UMAC_IRQ_TXDMA_DONE)
 		unit->internalStats.irq0_tx_count++;
 	if (status & UMAC_IRQ_RXDMA_DONE)
+	{
 		unit->internalStats.irq0_rx_count++;
+#ifdef PROFILE
+		u32 now = get_time() | 1; /* 0 means "no stamp" */
+		if (unit->gu_RxIrqLast != 0)
+			PERF_HIST_ADD(&unit->gu_RxIrqGapHist, now - unit->gu_RxIrqLast);
+		unit->gu_RxIrqLast = now;
+		unit->gu_RxIrqPending = now;
+#endif
+	}
 	unit->internalStats.irq0_count++;
 	if (!(status & (UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE)))
 		unit->internalStats.irq0_other_count++;

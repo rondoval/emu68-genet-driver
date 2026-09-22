@@ -23,6 +23,12 @@ void bcmgenet_reset_quiesce(struct GenetUnit *unit);
 u32 bcmgenet_coalesce_valid(u32 tx_max_coalesced_frames, u32 rx_max_coalesced_frames,
 							u32 rx_coalesce_usecs);
 void bcmgenet_apply_coalesce(struct GenetUnit *unit);
+/* RX moderation by profile (unit task context). _reset() re-derives the mode
+ * from the unit's profile, pin and prefs and programs it, quietly: the stack
+ * changes profile often. _moderate() is the burst ladder's step, run when an RX
+ * pass is about to re-arm its interrupt and unit->rxLadder is set. */
+void bcmgenet_rx_moderation_reset(struct GenetUnit *unit);
+void bcmgenet_rx_moderate(struct GenetUnit *unit);
 void bcmgenet_set_rx_mode(struct GenetUnit *unit); /* Updates PROMISC flag and sets up MDF if possible */
 
 /* Link state -> MAC (unit task context). bcmgenet_mac_config() programs the
@@ -51,7 +57,8 @@ void bcmgenet_perf_tick(struct GenetUnit *unit);
 /* TX functions */
 LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc *descs, ULONG count);
 void bcmgenet_netdev_tx_kick(struct GenetUnit *unit);	 /* publish the staged TX batch (doorbell) */
-void bcmgenet_tx_harvest(struct GenetUnit *unit);		 /* unit task */
+ULONG bcmgenet_tx_harvest(struct GenetUnit *unit);		 /* unit task; cookies delivered */
+void bcmgenet_tx_done_arm(struct GenetUnit *unit);		 /* unit task; one TX-done interrupt */
 void bcmgenet_netdev_tx_quiesce(struct GenetUnit *unit); /* unit task, DMA off */
 
 #endif

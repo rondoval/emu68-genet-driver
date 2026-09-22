@@ -4,21 +4,33 @@
 
 #include <types.h>
 
+/*
+ * ENV:genet.prefs — what the machine's owner decides, and nothing else.
+ *
+ * A key belongs here only if a user can hit a problem that this key alone
+ * solves: a switch that will not negotiate (LINK_MODE / AUTONEG /
+ * FLOW_CONTROL), a pool that must be sized before the stack attaches
+ * (RX_POOL_BUFS), a scheduler that starves the unit task (UNIT_TASK_PRIORITY).
+ *
+ * Every key here must be clamped or enumerated on parse. An unvalidated knob
+ * is a way for a user to break their own machine quietly.
+ */
+
 /* Defaults (compile-time fallbacks) */
-/* Above dynamic-scheduler managed bands (Executive reprioritizes pri <= 5 */
-#define DEFAULT_UNIT_TASK_PRIORITY 10
-#define DEFAULT_UNIT_STACK_BYTES 65536UL /* 64 KB */
-
-#define DEFAULT_PERIODIC_TASK_MS 200
-/* PHY link poll period. GENET v5 (BCM2711) does not reliably raise the
- * link-up interrupt at 10 Mbps, so the link state is only trustworthy if it
- * is polled; the interrupt is just a latency optimisation. Matches Linux
- * phylib's PHY_STATE_TIME (1 s). Rounded up to whole PERIODIC_TASK_MS ticks. */
-#define DEFAULT_LINK_POLL_MS 1000
-
-#define DEFAULT_RX_COALESCE_USECS 500
-#define DEFAULT_RX_COALESCE_FRAMES 64
-#define DEFAULT_TX_COALESCE_FRAMES 32
+/* The unit task is the bottom half of the receive interrupt: it has to run
+ * when the interrupt says so. Exec does not preempt among equals, so at the
+ * priority of the AmigaDOS handler processes (10) a handler busy with a packet
+ * kept it off the CPU for milliseconds - late ACKs, late replies, and a ring
+ * that can overrun under a burst. 15 sits above the handlers, below
+ * input.device (20), and far above dynamic-scheduler managed bands (Executive
+ * reprioritizes pri <= 5). */
+#define DEFAULT_UNIT_TASK_PRIORITY 15
+/* Clamped: the field is an s8, so an unclamped 200 would land at
+ * -56 and park the unit task below every dynamic-scheduler band. Below the
+ * floor the driver loses to the handlers it must outrun; above the ceiling it
+ * outranks input.device (20) and the keyboard stops answering. */
+#define UNIT_TASK_PRIORITY_MIN 6
+#define UNIT_TASK_PRIORITY_MAX 19
 
 /* RX buffer pool: the ring uses 256; the rest covers buffers the stack
  * holds in socket receive queues. 0 = auto: sized at netdev ATTACH from
@@ -65,12 +77,6 @@
 struct GenetRuntimeConfig
 {
     s8 unit_task_priority;
-    u32 unit_stack_bytes;
-    u32 periodic_task_ms;
-    u32 link_poll_ms;
-    u32 rx_coalesce_usecs;
-    u32 rx_coalesce_frames;
-    u32 tx_coalesce_frames;
     u32 rx_pool_bufs;
     u16 link_speed;  /* 10, 100, 1000, or LINK_MODE_NONE for auto */
     u8 link_duplex;  /* DUPLEX_*_CFG; meaningful only with link_speed set */

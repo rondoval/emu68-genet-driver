@@ -45,10 +45,12 @@
 #include <genet/bcmgenet-irq.h>
 #include <genet/bcmgenet-priv.h>
 
-/* Datapath timing ([genet] rx_drain/rx_flush/tx_submit/tx_harvest), reported
- * every ~2 s off the ~200 ms housekeeping tick and reduced by
- * emu68-common/scripts/perf-report.py. The MAC counters are not swept here:
- * they are read on demand behind NETDEV_CMD_GET_COUNTERS (bcmgenet-mib.c). */
+/* Datapath timing ([genet] rx_drain/rx_flush/tx_submit/tx_harvest/rx_wake),
+ * reported every ~2 s off the ~200 ms housekeeping tick and reduced by
+ * emu68-common/scripts/perf-report.py, followed by the two RX moderation
+ * histograms (rx_pending, rx_irq_gap_us), which are read as they are. The MAC
+ * counters are not swept here: they are read on demand behind
+ * NETDEV_CMD_GET_COUNTERS (bcmgenet-mib.c). */
 #ifdef PROFILE
 void bcmgenet_perf_tick(struct GenetUnit *unit)
 {
@@ -56,6 +58,9 @@ void bcmgenet_perf_tick(struct GenetUnit *unit)
 	{
 		unit->gu_ProfTicks = 0;
 		perf_report(&unit->gu_Perf);
+		perf_hist_report(&unit->gu_RxPendingHist);
+		perf_hist_report(&unit->gu_RxIrqGapHist);
+		perf_hist_report(&unit->gu_RxHeldHist);
 	}
 }
 #endif /* PROFILE */
@@ -120,13 +125,11 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 		}
 	}
 
-	/* Monitor link, RX and TX-done interrupts. TXDMA_DONE drives nso_TxDone,
-	 * the stack's memory-reclaim and ring-space signal; the MBUF_DONE threshold
-	 * batches it, and the hardware also interrupts when the ring drains, so
-	 * latency is bounded. One MASK_CLEAR write covers the lot.
-	 */
-	bcmgenet_irq0_enable(unit, bcmgenet_link_irq_mask(unit) |
-								   UMAC_IRQ_RXDMA_DONE | UMAC_IRQ_TXDMA_DONE);
+	/* Monitor link and RX interrupts; one MASK_CLEAR write covers both.
+	 * TXDMA_DONE stays masked: completions are harvested on every unit-task
+	 * wakeup, and the task arms that interrupt only when the stack is owed a
+	 * prompt nso_TxDone (see the datapath block in unit_task.c). */
+	bcmgenet_irq0_enable(unit, bcmgenet_link_irq_mask(unit) | UMAC_IRQ_RXDMA_DONE);
 	Kprintf("[genet] %s: UMAC started, link %s\n", __func__,
 			unit->phydev->link ? "up" : "down (waiting for poll)");
 
