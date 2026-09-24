@@ -53,11 +53,14 @@
 /* Cookies delivered per nso_TxDone call. */
 #define TX_DONE_BATCH 32u
 
-/* Combined address + length/status setter */
+/* Combined address + length/status setter. Relaxed stores (iomem.h):
+ * nothing reads a BD back, and the one emu68_barrier() in
+ * bcmgenet_netdev_tx_kick orders every BD of the burst - together with the
+ * DMAF_NoSync cache cleans - ahead of the doorbell. */
 static inline void dmadesc_set(APTR descriptor_address, dma_addr_t addr, u32 val)
 {
-	mmio_write32((u32)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
-	mmio_write32(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
+	mmio_write32_relaxed((u32)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
+	mmio_write32_relaxed(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
 }
 
 /* The ring slot the producer is about to fill. TX_DESCS is 256, so the

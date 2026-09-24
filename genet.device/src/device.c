@@ -64,7 +64,7 @@ static const APTR initTable[4];
 
 /* [genet] perf slot names — rodata; order matches enum GenetProfSlot. */
 static const char *const genet_perf_names[GP_SLOT_COUNT] = {
-    "rx_drain", "rx_flush", "tx_submit", "tx_harvest", "rx_wake",
+    "rx_drain", "rx_scan", "rx_flush", "tx_submit", "tx_harvest", "rx_wake",
 };
 
 /* perf_hist bounds — rodata. Frames: fine around the default timeout's worth of

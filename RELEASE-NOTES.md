@@ -24,7 +24,12 @@ scheduling changes below apply with any stack.
 - **Sending uses less processor time.** The chip used to interrupt the Amiga every time
   it finished sending, even for a single packet nobody was waiting on. Those interrupts
   are gone from normal running; finished packets are cleared up during work the driver
-  was doing anyway.
+  was doing anyway. The descriptor stores of a burst are also no longer each followed
+  by a full memory barrier; the one before the doorbell was always sufficient.
+- **Receiving uses less processor time.** The receive pass now reads every waiting
+  descriptor first and issues the cache invalidates as one batch closed by a single
+  barrier, then hands the frames up; each frame used to pay a synchronous invalidate
+  and two barriered register accesses of its own.
 - **The driver keeps its turn on the processor.** Its task now runs at priority 15
   rather than 10. At 10 it shared a priority with the AmigaDOS file handlers, and the
   Amiga will not interrupt one task for another of the same priority — so a busy

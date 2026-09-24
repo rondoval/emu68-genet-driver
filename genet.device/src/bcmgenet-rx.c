@@ -103,28 +103,50 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 	PERF_HIST_ADD(&unit->gu_RxPendingHist, to_process); /* before the clamp: what the coalescer let build up */
 	if (to_process > limit)
 		to_process = limit;
-	rx_prod_index = (u16)((u32)(rx_cons_index + to_process) & DMA_C_INDEX_MASK);
-	while (rx_cons_index != rx_prod_index)
+	if (to_process > RX_DESCS)
+		to_process = RX_DESCS; /* never more pending than the ring holds; bounds scan[] */
+
+	/*
+	 * Two passes, so a batch pays one barrier each way instead of three per
+	 * frame. Pass 1 reads descriptor status, takes the fresh buffer a delivered
+	 * frame needs, swaps it into the slot and issues that frame's cache
+	 * invalidate as a NoSync batch - NOT ONE BUFFER BYTE IS READ HERE: a load
+	 * is not ordered after a NoSync invalidate until the dsb that ends the
+	 * pass (cache_ops.h, SHARP EDGE), so the RSB is read in pass 2. The
+	 * re-arm stores are relaxed as well: the barrier before RDMA_CONS_INDEX,
+	 * the write that hands the slots back to the DMA, orders them (iomem.h,
+	 * rule 1). Every drop - error, oversize, !ndStarted, pool-dry - keeps its
+	 * buffer, reads nothing and re-arms through the recycle path's pre-DMA
+	 * clean, so it needs no invalidate, as before.
+	 */
+	struct
 	{
-		struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[(u8)rx_cons_index];
+		u32 ls;   /* descriptor status; 0 = nothing to deliver */
+		u8 *addr; /* the buffer that left the ring */
+	} scan[RX_DESCS];
+
+	PERF_T0(t_scan);
+	for (u16 k = 0; k < to_process; k++)
+	{
+		struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[(u8)(rx_cons_index + k)];
 		u8 *desc_base = (u8 *)rx_cb->descriptor_address;
-		u32 length = mmio_read32(desc_base + DMA_DESC_LENGTH_STATUS);
-		u16 dma_flags = length & 0xffffu;
-		length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
-		u8 *addr = (u8 *)rx_cb->data_buffer;
+		u32 ls = mmio_read32_relaxed(desc_base + DMA_DESC_LENGTH_STATUS);
+		u16 dma_flags = ls & 0xffffu;
+		u32 length = (ls >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
+		scan[k].ls = 0;
 
 		if (unlikely(length > RX_BUF_LENGTH))
 		{
 			KprintfT("[genet] %s: len %lu exceeds RX_BUF_LENGTH %lu\n", __func__, (ULONG)length, (ULONG)RX_BUF_LENGTH);
 			unit->internalStats.rx_length_errors++;
-			goto next;
+			continue;
 		}
 
 		if (unlikely(!(dma_flags & DMA_EOP) || !(dma_flags & DMA_SOP)))
 		{
 			KprintfT("[genet] %s: dropping fragmented packet, dma_flags=0x%lx\n", __func__, (ULONG)dma_flags);
 			unit->internalStats.rx_fragmented_errors++;
-			goto next;
+			continue;
 		}
 
 		/* report errors */
@@ -150,79 +172,88 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 							  DMA_RX_LG |
 							  DMA_RX_RXER)) == DMA_RX_RXER)
 				unit->internalStats.rx_other_errors++;
-			goto next;
+			continue;
 		} /* error packet */
 
 		if (unlikely(length <= GENET_STATUS64_LEN))
 		{
 			unit->internalStats.rx_length_errors++;
-			goto next;
+			continue;
 		}
 
-		if (likely(unit->ndStarted))
+		if (unlikely(!unit->ndStarted))
+			continue;
+
+		APTR fresh = netdev_rx_pop(unit);
+		if (unlikely(fresh == NULL))
 		{
-			APTR fresh = netdev_rx_pop(unit);
-			if (unlikely(fresh == NULL))
-			{
-				/* Pool dry — usually releases parked in the recycle ring:
-				 * on one CPU the app frees buffers whenever we block on
-				 * ns_Core mid-flush, after this pass's entry drain. Reclaim
-				 * and retry before declaring a drop, since pool-dry from parked
-				 * releases dominates genuine ring overrun. */
-				netdev_drain_recycle(unit);
-				fresh = netdev_rx_pop(unit);
-			}
-			if (unlikely(fresh == NULL))
-			{
-				/* genuinely exhausted: keep the buffer in the ring, drop
-				 * the frame (the peer is window-limited anyway) */
-				unit->internalStats.rx_dropped++;
-				unit->internalStats.rx_pool_dry++;
-				goto next;
-			}
-
-			/* Invalidate the DMA-written buffer, now that the frame is
-			 * accepted. Every drop above — error, oversize, !ndStarted,
-			 * pool-dry — reads nothing from the buffer and re-arms it via the
-			 * recycle-path pre-DMA clean, so it skips the ~32-line ivac for
-			 * free. Must precede the first buffer read: the RSB below. */
-			cache_post_dma(addr, length, 0);
-
-			/* The 64-byte RSB precedes the frame. RXCHK's result (L3
-			 * parser off) is the PLAIN 1's-complement sum over the frame
-			 * past the Ethernet header, in the low half of the LE word.
-			 * The halfword needs NO further swap. Zero
-			 * means the block produced no result: pass the frame up
-			 * unvalidated (the Ethernet FCS covered the wire). The OK/FR
-			 * bits are L3-parser-only and stay clear in this mode. */
-			const struct genet_status_64 *rsb = (const struct genet_status_64 *)addr;
-			u16 rx_csum = (u16)le32(rsb->rx_csum);
-
-			/* the buffer leaves the ring: hand it up, swap the slot */
-			struct NetDevRxDesc *d = &batch[batched++];
-			d->nrd_Data = addr + GENET_STATUS64_LEN;
-			d->nrd_Len = length - GENET_STATUS64_LEN;
-			d->nrd_Flags = (rx_csum != 0) ? NDRF_CSUM_RAW : 0;
-			d->nrd_CsumRaw = rx_csum;
-			d->nrd_Cookie = addr;
-
-			rx_cb->data_buffer = (dma_addr_t)fresh;
-			mmio_write32((u32)(dma_addr_t)fresh, desc_base + DMA_DESC_ADDRESS_LO);
-
-			if (batched == unit->ndRxBatch)
-			{
-				netdev_rx_flush(unit, batch, batched);
-				batched = 0;
-			}
+			/* Pool dry — usually releases parked in the recycle ring:
+			 * on one CPU the app frees buffers whenever we block on
+			 * ns_Core mid-flush, after this pass's entry drain. Reclaim
+			 * and retry before declaring a drop, since pool-dry from parked
+			 * releases dominates genuine ring overrun. */
+			netdev_drain_recycle(unit);
+			fresh = netdev_rx_pop(unit);
 		}
-	next:
-		rx_cons_index++;
+		if (unlikely(fresh == NULL))
+		{
+			/* genuinely exhausted: keep the buffer in the ring, drop
+			 * the frame (the peer is window-limited anyway) */
+			unit->internalStats.rx_dropped++;
+			unit->internalStats.rx_pool_dry++;
+			continue;
+		}
+
+		u8 *addr = (u8 *)rx_cb->data_buffer;
+		cache_post_dma(addr, length, DMAF_NoSync);
+		scan[k].ls = ls;
+		scan[k].addr = addr;
+
+		/* the buffer leaves the ring: swap the slot */
+		rx_cb->data_buffer = (dma_addr_t)fresh;
+		mmio_write32_relaxed((u32)(dma_addr_t)fresh, desc_base + DMA_DESC_ADDRESS_LO);
+	}
+	emu68_barrier(); /* the one dsb: every invalidate above is complete, buffer bytes may be read from here on */
+	PERF_ADD(&unit->gu_Perf, GP_RX_SCAN, t_scan);
+
+	for (u16 k = 0; k < to_process; k++)
+	{
+		u32 ls = scan[k].ls;
+		if (ls == 0)
+			continue;
+		u8 *addr = scan[k].addr;
+		u32 length = (ls >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
+
+		/* The 64-byte RSB precedes the frame. RXCHK's result (L3
+		 * parser off) is the PLAIN 1's-complement sum over the frame
+		 * past the Ethernet header, in the low half of the LE word.
+		 * The halfword needs NO further swap. Zero
+		 * means the block produced no result: pass the frame up
+		 * unvalidated (the Ethernet FCS covered the wire). The OK/FR
+		 * bits are L3-parser-only and stay clear in this mode. */
+		const struct genet_status_64 *rsb = (const struct genet_status_64 *)addr;
+		u16 rx_csum = (u16)le32(rsb->rx_csum);
+
+		struct NetDevRxDesc *d = &batch[batched++];
+		d->nrd_Data = addr + GENET_STATUS64_LEN;
+		d->nrd_Len = length - GENET_STATUS64_LEN;
+		d->nrd_Flags = (rx_csum != 0) ? NDRF_CSUM_RAW : 0;
+		d->nrd_CsumRaw = rx_csum;
+		d->nrd_Cookie = addr;
+
+		if (batched == unit->ndRxBatch)
+		{
+			netdev_rx_flush(unit, batch, batched);
+			batched = 0;
+		}
 	}
 
 	if (batched != 0)
 		netdev_rx_flush(unit, batch, batched);
 
+	rx_cons_index = (u16)((u32)(rx_cons_index + to_process) & DMA_C_INDEX_MASK);
 	unit->rx_ring.rx_cons_index = rx_cons_index;
+	emu68_barrier(); /* the relaxed re-arm stores land before the DMA is handed the slots */
 	mmio_write32(rx_cons_index, BCMGENET_REG(unit, RDMA_CONS_INDEX));
 
 	PERF_ADD(&unit->gu_Perf, GP_RX_DRAIN, t_drain);

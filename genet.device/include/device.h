@@ -36,6 +36,7 @@
 enum GenetProfSlot
 {
 	GP_RX_DRAIN,  /* whole bcmgenet_netdev_rx ring walk (excl. recycle) */
+	GP_RX_SCAN,   /*   its first pass: status reads, buffer swaps, NoSync invalidates */
 	GP_RX_FLUSH,  /* nso_RxInput hand-up (lock wait + stack work) */
 	GP_TX_SUBMIT, /* bcmgenet_netdev_tx_submit cache-prime + ring writes + doorbell */
 	GP_TX_HARVEST,/* bcmgenet_tx_harvest completion sweep + nso_TxDone */
