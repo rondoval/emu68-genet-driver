@@ -59,7 +59,7 @@ void UnitSubmitControlAsync(struct GenetUnit *unit, UWORD command, union UnitCon
     if (unit == NULL || unit->controlPort == NULL)
         return;
 
-    struct UnitControlMsg *msg = pool_alloc(unit->metaPool, sizeof(struct UnitControlMsg));
+    struct UnitControlMsg *msg = AllocMem(sizeof(struct UnitControlMsg), MEMF_PUBLIC | MEMF_CLEAR);
     if (msg == NULL)
     {
         Kprintf("[genet] %s: Failed to allocate message for async unit control\n", __func__);
@@ -187,7 +187,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 if(cmsg->msg.mn_ReplyPort != NULL)
                     ReplyMsg(&cmsg->msg);
                 else
-                    pool_free(unit->metaPool, cmsg);
+                    FreeMem(cmsg, sizeof(struct UnitControlMsg));
             }
             if (budget == 0)
             {
@@ -223,16 +223,6 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 Kprintf("[genet] %s: PHY link up event\n", __func__);
             }
             
-            /* TX completion processing */
-/*            
-            if (likely((status & UMAC_IRQ_TXDMA_DONE) && unit->state == STATE_ONLINE))
-            {
-                bcmgenet_tx_reclaim(unit, unit->budget);
-                mmio_write32(UMAC_IRQ_TXDMA_DONE,
-                        BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
-                bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
-            }
-*/
             /* Receive processing */
             if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {
@@ -295,6 +285,16 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 free_ports:
     DeleteIORequest(&packetTimerReq->tr_node);
     DeleteMsgPort(microHZTimerPort);
+    /* Whatever arrived after the last loop pass: a waiting submitter gets
+     * its reply, an async message its memory back. */
+    struct UnitControlMsg *cmsg;
+    while ((cmsg = (struct UnitControlMsg *)GetMsg(unit->controlPort)) != NULL)
+    {
+        if (cmsg->msg.mn_ReplyPort != NULL)
+            ReplyMsg(&cmsg->msg);
+        else
+            FreeMem(cmsg, sizeof(struct UnitControlMsg));
+    }
     DeleteMsgPort(unit->controlPort);
 free_signals:
     FreeSignal(unit->irq0_signal);

@@ -32,6 +32,5 @@ void bcmgenet_perf_tick(struct GenetUnit *unit);
 
 /* TX functions */
 u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit);
-void bcmgenet_tx_reclaim(struct GenetUnit *unit, u16 budget);
 
 #endif

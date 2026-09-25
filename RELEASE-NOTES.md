@@ -2,86 +2,61 @@
 
 Changes since 3.15.
 
-A bug-fix release, plus one change of default. Nothing changes in how the driver
-is installed; if you use the 4.x netdev driver with lwip-amiga, this one is not
-for you.
+Sending and receiving a frame costs about half what it did, plus a batch of
+bug fixes. Installation is unchanged.
 
 ---
 
 ## Breaking changes
 
-None. One `ENV:genet.prefs` setting has a new default and a new valid range,
-below; a file that sets `UNIT_TASK_PRIORITY` to a value outside 6–19 now gets
-the nearest end of that range instead.
+`UNIT_TASK_PRIORITY` in `ENV:genet.prefs` now defaults to 15 and is clamped to 6–19.
 
 ---
 
 ## Improvements
 
-### The driver keeps its turn on the processor
+### Faster send and receive
 
-Its task now runs at priority 15 rather than 5, as the 4.x driver has since 4.3.
-At 5 it sat below the AmigaDOS file handlers and below the network stack's own
-task. 15 is above both and still below `input.device` (20), so the keyboard and
-mouse keep their precedence.
+A write now takes one short `Forbid()` instead of three: each ring descriptor
+owns a fixed staging slot, so nothing is allocated or freed per frame, and one
+barrier before the doorbell replaces a barrier per descriptor store. Payloads
+are staged longword-aligned so a stack's copy callback can move longwords. The
+receive pass invalidates the cache for all ready frames in one batch.
 
-`UNIT_TASK_PRIORITY` is now held between 6 and 19. A value outside that range
-used to wrap round into a negative one, leaving the driver running below almost
-everything else on the machine — the opposite of what anyone setting it intends.
+### Task priority 15
 
-### Gigabit transmit timing is set up, not assumed
+The driver task used to run at 5, below the file handlers and the network
+stack. It now runs at 15, matching the 4.x driver and still below
+`input.device`. Out-of-range values no longer wrap round to negative ones.
 
-Gigabit Ethernet needs a small delay between the clock and the data, in each
-direction, applied once. The receive side was set up properly; the transmit side
-was not set up at all, and worked only because the Ethernet chip's PHY happens
-to power up providing it. Anything that left the PHY configured differently — the
-4.x driver in particular, which sets this up explicitly and therefore turns that
-default off — could leave the Amiga with a link that comes up and reports the
-right speed while nothing actually goes out.
+### Gigabit transmit timing
 
-The driver now programs both halves itself, exactly as the 4.x driver does, so
-sending no longer depends on how the PHY happened to be left. It also switches
-off the PHY's autonomous power saving, which could otherwise idle the link down
-without the Ethernet controller knowing.
+The driver now sets the PHY's transmit clock delay itself instead of relying on
+its power-on default. That default is gone after the 4.x driver has run, which
+left a link that came up but sent nothing. The PHY's autonomous power saving is
+switched off as well.
 
 ---
 
 ## Bug fixes
 
-### Going offline and back online works
-
-Taking the interface offline and online again — Roadshow's `Offline` and
-`Online` commands, or any stack that does this on its own — crashed the driver:
-the PHY was torn down at offline and not recreated at online. The PHY now lives
-for as long as the unit is configured, and only the hardware stops and starts
-around it.
-
-Two smaller faults on the same path went with it. Each online/offline cycle
-leaked a little memory until the last program closed the driver, and a failed
-`Online` (no link at the time, say) could not simply be retried. Both are fixed;
-a failed `Online` now leaves the unit ready for another attempt.
-
-### Works after another driver used the hardware
-
-A warm reboot (`C:Reboot`, Ctrl-Amiga-Amiga) does not reset the network chip's
-buffer configuration, so whatever ran before is inherited. After the 4.x netdev
-driver or a Linux boot, the chip was still prepending a 64-byte status block to
-every received frame, which this driver read as the frame itself.
-The driver now writes that configuration outright instead of inheriting it,
-and also switches off the chip's power-saving modes on the buffers, which survive
-the same way and can stop reception.
-
-### A packet filter no longer loses read requests
-
-An opener that supplies an `S2_PacketFilter` hook and declines a frame lost the
-`CMD_READ` request that frame was offered to — neither answered nor kept — so
-its supply of pending reads shrank with every rejection until it stopped
-receiving. A declined request now stays pending, as SANA-II says it should.
-
-### `S2EVENT_CONFIGCHANGED` can be waited for
-
-The driver reported the event after a successful `S2_CONFIGINTERFACE` but
-rejected any `S2_ONEVENT` that asked for it. It is now part of the accepted set.
+- `Offline` followed by `Online` crashed the driver. Each cycle also leaked
+  memory, and a failed `Online` could not be retried. All three are fixed.
+- After a warm reboot from the 4.x driver or Linux, received frames were read
+  with a leftover 64-byte status block in front. The buffer configuration is
+  now written outright rather than inherited.
+- An `S2_PacketFilter` hook that declined a frame lost the `CMD_READ` request
+  it was offered; the request now stays pending.
+- `S2_ONEVENT` now accepts `S2EVENT_CONFIGCHANGED`.
+- A write larger than a staging slot (2028 bytes) overran the next buffer; it
+  now fails with `S2ERR_MTU_EXCEEDED`.
+- Going offline while another task was writing could free the ring under it.
+- Control messages from other tasks came from a pool the driver's task was
+  using concurrently; they now use `AllocMem`.
+- A received descriptor shorter than 16 bytes is rejected instead of wrapping
+  its length.
+- The consumer index is written back only after the CPU has finished reading
+  the buffers.
 
 ---
 

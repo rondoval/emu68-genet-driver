@@ -28,6 +28,8 @@ static inline void Do_CMD_WRITE(struct IOSana2Req *io)
 #pragma GCC diagnostic pop
     }
 
+    /* Fast path only; the check that counts is inside bcmgenet_xmit, under
+     * the same Forbid that UnitOffline takes to flip the state. */
     if (unlikely(unit->state != STATE_ONLINE))
     {
         Kprintf("[genet] %s: Unit is offline, cannot write\n", __func__);

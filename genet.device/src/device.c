@@ -69,7 +69,8 @@ static const APTR initTable[4];
 
 /* [genet] perf slot names — rodata; order matches enum GenetProfSlot. */
 static const char *const genet_perf_names[GP_SLOT_COUNT] = {
-    "rx_drain", "tx_submit", "tx_publish",
+    "rx_drain", "rx_scan", "rx_copy", "rx_reply", "tx_submit", "tx_publish",
+    "tx_claim", "tx_copy", "tx_clean", "tx_ring",
 };
 
 /*

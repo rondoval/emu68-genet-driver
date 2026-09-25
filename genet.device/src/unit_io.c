@@ -85,6 +85,7 @@ static inline BOOL CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
 
     /* Packet not filtered. Send it now and reply request. */
     u32 copyLen = unit->use_miami_workaround ? ((packetLength + 3u) & ~3u) : packetLength;
+    PERF_T0(t_copy);
     if (unlikely(packetLength == 0 || !opener->CopyToBuff) || opener->CopyToBuff(io->ios2_Data, packet, copyLen) == 0)
     {
         KprintfT("[genet] %s: Failed to copy packet data to buffer\n", __func__);
@@ -93,11 +94,14 @@ static inline BOOL CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
         io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
         ReportEvents(unit, S2EVENT_BUFF | S2EVENT_RX | S2EVENT_SOFTWARE | S2EVENT_ERROR);
     }
+    PERF_ADD(&unit->perf, GP_RX_COPY, t_copy); /* the (rare) error branch is inside the bracket; a refusal is not the common case */
 
     /* Set number of bytes received */
     io->ios2_DataLength = packetLength;
 
+    PERF_T0(t_reply);
     ReplyMsg((struct Message *)io);
+    PERF_ADD(&unit->perf, GP_RX_REPLY, t_reply);
     KprintfT("[genet] %s: Packet copied and request replied\n", __func__);
     return TRUE;
 }

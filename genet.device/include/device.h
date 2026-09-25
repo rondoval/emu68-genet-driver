@@ -14,7 +14,6 @@
 
 #include <types.h>
 #include <bcm_gpio.h>
-#include <slab.h>
 #include <dma_mem.h>
 #include <perf.h>
 #include <reset_guard.h>
@@ -46,13 +45,33 @@
  * below this. Must exceed max descriptors per packet (2 for DMA path). */
 #define TX_RECLAIM_THRESHOLD 16U
 
+/* TX staging is ring-bound: slot k of txbuffer (RX_BUF_LENGTH bytes) belongs
+ * to BD k for the life of the ring. The frame starts TX_STAGE_OFFSET into the
+ * slot so that the 14-byte Ethernet header leaves the body 4-aligned - the
+ * alignment a stack's packet buffer has, which lets the opener's CopyFromBuff
+ * move longwords on both sides. */
+#define TX_STAGE_OFFSET 2U
+/* Longest ios2_DataLength a slot can take: offset + header + data + the
+ * use_miami_workaround round-up (3) must fit the slot. An overflow guard,
+ * not MTU policy - UMAC_MAX_FRAME_LEN still bounds what goes on the wire. */
+#define TX_MAX_DATALEN (RX_BUF_LENGTH - TX_STAGE_OFFSET - ETH_HLEN - 4U)
+
 /* Datapath perf slots (emu68-common <perf.h>), reported as [genet] by
  * bcmgenet_perf_tick(). Order must match genet_perf_names[] in device.c. */
 enum GenetProfSlot
 {
-	GP_RX_DRAIN,   /* whole bcmgenet_gmac_eth_rx ring walk */
-	GP_TX_SUBMIT,  /* bcmgenet_xmit: staging + copy + cache prime + ring writes */
-	GP_TX_PUBLISH, /* closing barrier + TDMA_PROD_INDEX doorbell */
+	GP_RX_DRAIN,   /* whole bcmgenet_gmac_eth_rx pass */
+	GP_RX_SCAN,    /*   its first pass: descriptor status + NoSync invalidates */
+	GP_RX_COPY,    /*   per frame: the opener's CopyToBuff */
+	GP_RX_REPLY,   /*   per frame: ReplyMsg of the read */
+	GP_TX_SUBMIT,  /* whole bcmgenet_xmit */
+	GP_TX_PUBLISH, /*   closing barrier + TDMA_PROD_INDEX doorbell */
+	/* the copy path's phases inside GP_TX_SUBMIT (each bracket costs a timer
+	 * read, so their sum runs a little under the whole) */
+	GP_TX_CLAIM,   /*   Forbid, free-BD check (+ the rare CONS read), slot */
+	GP_TX_COPY,    /*   the opener's CopyFromBuff */
+	GP_TX_CLEAN,   /*   cache_pre_dma of the slot (NoSync) */
+	GP_TX_RING,    /*   descriptor stores + prod advance */
 	GP_SLOT_COUNT
 };
 
@@ -128,13 +147,11 @@ struct MulticastRange
 	u64 upperBound; /* Inclusive */
 };
 
+/* TX ring state, only ever touched under the write path's Forbid(). */
 struct bcmgenet_tx_ring
 {
-	struct enet_cb *tx_control_block; /* tx ring buffer control block*/
-	u8 clean_ptr;					  /* Tx ring clean pointer */
-	u16 tx_cons_index;				  /* last consumer index of each ring*/
-	u8 write_ptr;					  /* Tx ring write pointer SW copy */
-	u16 tx_prod_index;				  /* Tx ring producer index SW copy */
+	u16 tx_prod_index; /* BDs handed to hardware (16-bit modular) */
+	u16 hw_cons_cache; /* cached TDMA_CONS_INDEX; refreshed on low water */
 };
 
 struct bcmgenet_rx_ring
@@ -149,8 +166,7 @@ struct bcmgenet_rx_ring
 struct enet_cb
 {
 	APTR descriptor_address;
-	APTR staging_buffer;        /* slab-allocated buffer to free on reclaim, or NULL */
-	dma_addr_t data_buffer;     /* DMA address fed to hardware */
+	dma_addr_t data_buffer; /* DMA address fed to hardware */
 };
 
 struct internal_stats
@@ -255,7 +271,7 @@ struct GenetUnit
 
 	/* TX */
 	struct bcmgenet_tx_ring tx_ring;
-	struct slab_cache tx_buffer_cache; /* RX_BUF_LENGTH-sized DMA-aligned staging buffers */
+	dma_addr_t txbuffer; /* TX_DESCS ring-bound staging slots of RX_BUF_LENGTH (bcmgenet-tx.c) */
 };
 
 /* Unit-control commands submitted from foreign tasks. */

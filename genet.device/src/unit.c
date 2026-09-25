@@ -158,7 +158,12 @@ u32 UnitOnline(struct GenetUnit *unit)
 void UnitOffline(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Stopping UMAC\n", __func__);
+	/* Under Forbid: bcmgenet_xmit re-checks the state inside its own Forbid
+	 * section, so once this store is visible no writer is inside the ring
+	 * or the staging slots that the stop below frees. */
+	Forbid();
 	unit->state = STATE_OFFLINE;
+	Permit();
 	bcmgenet_gmac_eth_stop(unit);
 }
 
