@@ -21,7 +21,7 @@
 #include <clib/gic400_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 
 #define GIC400_BASE_NAME unit->device->gic400Base
@@ -153,6 +153,7 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 
 s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	PERF_T0(t_drain);
 	u32 rx_prod_reg = mmio_read32(BCMGENET_REG(unit, RDMA_PROD_INDEX));
 	u16 discards = (u16)((rx_prod_reg >> DMA_P_INDEX_DISCARD_CNT_SHIFT) & DMA_P_INDEX_DISCARD_CNT_MASK);
@@ -323,6 +324,7 @@ u32 bcmgenet_set_coalesce(struct GenetUnit *unit, u32 tx_max_coalesced_frames, u
 
 static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Initializing RX ring\n", __func__);
 	struct bcmgenet_rx_ring *ring = &unit->rx_ring;
 
@@ -608,6 +610,7 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit)
  * which releases whichever stages were reached. */
 u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Starting GENET\n", __func__);
 
 	unit->rxbuffer = (dma_addr_t)dma_zalloc(unit->dmaPool, DMA_ALIGN_MIN, RX_TOTAL_BUFSIZE);
@@ -800,6 +803,7 @@ void bcmgenet_reset_quiesce(struct GenetUnit *unit)
  * probe/unconfigure pair, and the next start expects it in place. */
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Stopping GENET\n", __func__);
 
 	bcmgenet_reset_quiesce(unit);

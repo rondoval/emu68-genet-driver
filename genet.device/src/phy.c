@@ -11,7 +11,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -635,6 +635,7 @@ static s32 get_phy_id(struct phy_device *phydev)
 
 struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 {
+	struct ExecBase *SysBase = dev->sysBase;
 	KprintfT("[genet] %s: base=0x%lx phyaddr=%ld\n", __func__, dev->genetBase, dev->phyaddr);
 	struct phy_device *phydev = pool_alloc(dev->metaPool, sizeof(*phydev));
 	if (!phydev)
@@ -645,6 +646,7 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 	phydev->features = PHY_GBIT_FEATURES | SUPPORTED_MII |
 					   SUPPORTED_AUI | SUPPORTED_FIBRE |
 					   SUPPORTED_BNC;
+	phydev->sysBase = dev->sysBase;
 	phydev->unit = dev;
 	phydev->duplex = DUPLEX_HALF;
 	phydev->link = FALSE;
@@ -675,6 +677,7 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 
 void phy_destroy(struct phy_device *phydev)
 {
+	struct ExecBase *SysBase = phydev->sysBase;
 	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	pool_free(phydev->unit->metaPool, phydev);
 }

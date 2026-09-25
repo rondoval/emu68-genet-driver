@@ -3,7 +3,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -12,8 +12,9 @@
 #include <device.h>
 #include <debug.h>
 
-LONG abortIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6") __attribute__((unused)))
+LONG abortIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
+    struct ExecBase *SysBase = base->sysBase;
     /* AbortIO is a *wish* call. Someone would like to abort current IORequest */
     KprintfT("[genet] %s: Aborting IO request %lx\n", __func__, io);
 

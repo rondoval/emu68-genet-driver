@@ -6,7 +6,7 @@
 #define __NOLIBBASE__
 #define UTILITY_BASE_NAME unit->device->utilityBase
 #include <proto/utility.h>
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -24,6 +24,7 @@
 static inline BOOL CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLength, u16 dma_flags)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: Copying packet of length %lu\n", __func__, (ULONG)packetLength);
     struct Opener *opener = io->ios2_BufferManagement;
 
@@ -112,8 +113,9 @@ static inline BOOL CopyPacket(struct IOSana2Req *io, u8 *packet, u32 packetLengt
  * Sets ln_Type = NT_MESSAGE on each entry so abortIO's MinList detection
  * heuristic (ln_Type == NT_MESSAGE && ln_Pred != NULL) treats it the same
  * as an IO that came in through PutMsg. */
-void DrainReadRing(struct Opener *opener)
+void DrainReadRing(struct GenetUnit *unit, struct Opener *opener)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     ULONG p = opener->readRing.producer;
     asm volatile("nop");
     ULONG c = opener->readRing.consumer;
@@ -158,6 +160,7 @@ static inline BOOL MulticastFilter(struct GenetUnit *unit, u64 destAddr)
 
 BOOL ReceiveFrame(struct GenetUnit *unit, u8 *packet, u32 packetLength, u16 dma_flags)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     /* We only need to filter in software if MDF is not enabled */
     if (unlikely(!unit->mdfEnabled && (dma_flags & DMA_RX_MULT)))
     {

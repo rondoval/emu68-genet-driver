@@ -210,6 +210,7 @@ struct throughput_stats
 struct GenetUnit
 {
 	struct Unit unit;
+	struct ExecBase *sysBase; /* the device's, copied at unit creation */
 	struct dma_mem_ctx dma_ctx; /* Emu68 (DMA-reachable) RAM regions; backs dmaPool */
 	struct dma_pool *dmaPool;	/* region-restricted DMA pool (Emu68 RAM) for DMA buffers */
 	APTR metaPool;				/* ordinary Exec pool for CPU-only metadata */
@@ -300,6 +301,7 @@ struct GenetDevice
 {
 	struct Device device;
 	ULONG segList;
+	struct ExecBase *sysBase; /* cached: $4 is an Amiga-bus read on PiStorm */
 	struct GenetRuntimeConfig runtimeConfig;
 	struct Library *utilityBase;
 	struct Library *gic400Base;
@@ -330,7 +332,7 @@ void ProcessCommand(struct IOSana2Req *io);
 
 /* Drain the per-opener SPSC read ring into the per-type MinLists.
  * Called by the device task only. */
-void DrainReadRing(struct Opener *opener);
+void DrainReadRing(struct GenetUnit *unit, struct Opener *opener);
 
 /* Inline function for fast packet type queue lookup */
 static inline struct MinList *GetPacketTypeQueue(struct Opener *opener, u16 packetType)

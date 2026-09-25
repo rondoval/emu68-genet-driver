@@ -3,7 +3,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -45,10 +45,9 @@ void bcmgenet_intr_disable(struct GenetUnit *unit)
 
 /* bcmgenet_isr0: handle other stuff.  Returns 1 if the interrupt was ours, 0
  * otherwise (the AmigaOS interrupt-server "handled?" convention). */
-ULONG bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"))
+ULONG bcmgenet_isr0(struct ExecBase *SysBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"))
 {
 	(void)irq;
-	(void)execBase;
 
 	/* Read irq status */
 	u32 status = mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_STAT)) &

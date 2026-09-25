@@ -3,7 +3,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -44,6 +44,7 @@ static void SetupRGMII(struct GenetUnit *unit)
 
 u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *opener)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Opening unit %lu with flags %lx\n", __func__, unitNumber, flags);
 	if (unit->unit.unit_OpenCnt > 0)
 	{
@@ -68,7 +69,7 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 	 * GENET DMA engine can reach, so the DMA pool is region-restricted; with no device
 	 * tree there is no reachable region and we refuse to open.  CPU-only metadata uses a
 	 * separate ordinary Exec pool. */
-	dma_mem_init(&unit->dma_ctx);
+	dma_mem_init(&unit->dma_ctx, unit->sysBase);
 	unit->dmaPool = dma_pool_create(&unit->dma_ctx);
 	unit->metaPool = CreatePool(MEMF_FAST | MEMF_PUBLIC, 16384, 8192);
 
@@ -157,6 +158,7 @@ u32 UnitOnline(struct GenetUnit *unit)
 
 void UnitOffline(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Stopping UMAC\n", __func__);
 	/* Under Forbid: bcmgenet_xmit re-checks the state inside its own Forbid
 	 * section, so once this store is visible no writer is inside the ring
@@ -169,6 +171,7 @@ void UnitOffline(struct GenetUnit *unit)
 
 u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Closing unit %lu with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
 
 	unit->unit.unit_OpenCnt--;

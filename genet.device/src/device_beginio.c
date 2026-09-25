@@ -3,7 +3,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -15,6 +15,7 @@
 static inline void Do_CMD_WRITE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: CMD_WRITE\n", __func__);
 
     if (io->ios2_Req.io_Command == S2_BROADCAST)
@@ -45,9 +46,10 @@ static inline void Do_CMD_WRITE(struct IOSana2Req *io)
         ReplyMsg((struct Message *)io);
 }
 
-void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6") __attribute__((unused)))
+void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = base->sysBase;
     UWORD cmd = io->ios2_Req.io_Command;
 
     if (cmd == CMD_WRITE || cmd == S2_BROADCAST || cmd == S2_MULTICAST)

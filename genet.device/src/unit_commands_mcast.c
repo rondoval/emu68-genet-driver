@@ -3,7 +3,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -38,6 +38,7 @@ static inline u64 GetAddress(const u8 *addr)
 u32 Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
 #ifdef TRACE
     if (io->ios2_Req.io_Command == S2_ADDMULTICASTADDRESSES)
     {
@@ -97,6 +98,7 @@ u32 Do_S2_ADDMULTICASTADDRESSES(struct IOSana2Req *io)
 u32 Do_S2_DELMULTICASTADDRESSES(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
 #ifdef TRACE
     if (io->ios2_Req.io_Command == S2_DELMULTICASTADDRESSES)
     {
