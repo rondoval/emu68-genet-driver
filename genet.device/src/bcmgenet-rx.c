@@ -10,7 +10,7 @@
 #include <clib/gic400_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 
 #define GIC400_BASE_NAME unit->device->gic400Base
@@ -62,6 +62,7 @@ static void netdev_rx_flush(struct GenetUnit *unit, struct NetDevRxDesc *batch, 
 
 s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	/* Released buffers become swap candidates before anything else — this
 	 * runs on every unit-task wakeup, so the pool is replenished (and the
 	 * re-arm cache maintenance paid) even on a tick with no traffic. */

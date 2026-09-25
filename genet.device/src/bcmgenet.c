@@ -18,7 +18,7 @@
 #include <clib/gic400_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 
 #define GIC400_BASE_NAME unit->device->gic400Base
@@ -245,6 +245,7 @@ static u32 bcmgenet_interface_set(struct GenetUnit *unit)
 
 u32 bcmgenet_eth_probe(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	/* Read GENET HW version */
 	u32 reg = mmio_read32(BCMGENET_REG(unit, SYS_REV_CTRL));
 	u8 major = (reg >> 24) & 0x0f;
@@ -352,6 +353,7 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
  * the stop path: START after STOP must find the PHY where it left it. */
 void bcmgenet_eth_unconfigure(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	if (unit->phydev != NULL)
 	{
 		phy_destroy(unit->phydev);

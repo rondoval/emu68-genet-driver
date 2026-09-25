@@ -84,7 +84,8 @@ struct GenetRuntimeConfig
     u8 flow_control;
 };
 
-void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config);
+struct ExecBase;
+void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *SysBase);
 /* Debug-only; compiled out (call included) without DEBUG. */
 #ifdef DEBUG
 void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config);

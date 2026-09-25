@@ -255,6 +255,7 @@ struct internal_stats
 struct GenetUnit
 {
 	struct Unit unit; /* FIRST, always: io_Unit is cast to this struct */
+	struct ExecBase *sysBase; /* the device's, copied at unit creation */
 
 	/* --- datapath: reached by both halves ---------------------------- */
 	APTR genetBase;	  /* every MMIO access in the driver */
@@ -434,6 +435,7 @@ struct GenetDevice
 {
 	struct Device device;
 	ULONG segList;
+	struct ExecBase *sysBase; /* cached: $4 is an Amiga-bus read on PiStorm */
 	struct GenetRuntimeConfig runtimeConfig;
 	struct Library *utilityBase;
 	struct Library *gic400Base;

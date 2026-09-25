@@ -4,7 +4,7 @@
 #include <clib/timer_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 #include <proto/timer.h>
 #endif
@@ -40,12 +40,13 @@
  */
 static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     unit->rx_signal = -1;
     unit->tx_signal = -1;
     unit->link_signal = -1;
 
     // Initialize the built in msg port, we'll receive commands here
-    BYTE msg_sigbit = drv_unit_msgport_init(&unit->unit);
+    BYTE msg_sigbit = drv_unit_msgport_init(SysBase, &unit->unit);
     if (msg_sigbit == -1)
     {
         Kprintf("[genet] %s: Failed to allocate unit message signal\n", __func__);
@@ -64,7 +65,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
     // Create a timer, we'll use it to poll the PHY and do housekeeping
     struct drv_timer tick;
-    if (!drv_timer_open(&tick))
+    if (!drv_timer_open(&tick, SysBase))
     {
         Kprintf("[genet] %s: Failed to open timer device\n", __func__);
         goto free_signals;
@@ -249,12 +250,13 @@ free_signals:
     /* drv_task_exit clears the liveness slot first (drv_task_join polls it),
      * then reports CTRL_F for a task that ran / CTRL_C for one that never got
      * to its loop (unit->task is set only once the loop is entered). */
-    drv_task_exit(&unit->task, parent, unit->task != NULL);
+    drv_task_exit(SysBase, &unit->task, parent, unit->task != NULL);
 }
 
 u32 UnitTaskStart(struct GenetUnit *unit)
 {
-    return drv_task_spawn(unit, UnitTask, "genet ethernet driver",
+    struct ExecBase *SysBase = unit->sysBase;
+    return drv_task_spawn(SysBase, unit, UnitTask, "genet ethernet driver",
                           GENET_UNIT_STACK_BYTES,
                           unit->device->runtimeConfig.unit_task_priority) == 0
                ? GENET_OK
@@ -263,5 +265,6 @@ u32 UnitTaskStart(struct GenetUnit *unit)
 
 void UnitTaskStop(struct GenetUnit *unit)
 {
-    drv_task_join(&unit->task);
+    struct ExecBase *SysBase = unit->sysBase;
+    drv_task_join(SysBase, &unit->task);
 }

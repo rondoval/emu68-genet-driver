@@ -15,7 +15,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -73,6 +73,7 @@ void netdev_rx_push(struct GenetUnit *unit, APTR buffer)
 
 void netdev_drain_recycle(struct GenetUnit *unit)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     u32 cons = unit->ndRecycleCons;
     /* SPSC snapshot: an entry the stack releases after this read just waits
      * for the next drain. Snapshotting also lets the batch know its last op. */
@@ -219,6 +220,7 @@ static const struct NetDevDrvOps genet_netdev_ops = {
 
 static void netdev_teardown_pool(struct GenetUnit *unit)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     if (unit->ndRxSlab != NULL)
     {
         dma_free(unit->dmaPool, unit->ndRxSlab);
@@ -270,6 +272,7 @@ static BOOL netdev_is_owner(const struct GenetUnit *unit, const struct IOStdReq 
 
 static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     struct NetDevAttach *att = io->io_Data;
 
     if (att == NULL || io->io_Length < sizeof(struct NetDevAttach))
@@ -287,8 +290,7 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
 
     if (unit->state == STATE_UNCONFIGURED)
     {
-        CopyMem((APTR)unit->localMacAddress, unit->currentMacAddress,
-                sizeof(unit->currentMacAddress));
+        memcpy(unit->currentMacAddress, unit->localMacAddress, sizeof(unit->currentMacAddress));
         u32 result = UnitConfigure(unit);
         if (result != GENET_OK)
         {
@@ -382,7 +384,7 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
      * stack's nda_MtuReq. The negotiation field (IN nda_MtuReq -> OUT ndc_Mtu)
      * exists so a future jumbo-capable build raises this with no ABI change. */
     caps->ndc_Mtu = ETH_DATA_LEN;
-    CopyMem(unit->currentMacAddress, caps->ndc_Mac, sizeof(caps->ndc_Mac));
+    memcpy(caps->ndc_Mac, unit->currentMacAddress, sizeof(caps->ndc_Mac));
     caps->ndc_TxMaxSegs = ND_TX_MAX_SEGS;
     /* no NDCF_RX_CSUM_VALID: with RBUF_L3_PARSE_DIS the RXCHK block never
      * issues per-frame verdicts, only the raw sum */
@@ -488,7 +490,7 @@ static BYTE Do_NETDEV_SET_RXFILTER(struct GenetUnit *unit, struct IOStdReq *io)
 
     unit->ndMcastCount = exact ? filter->ndrx_NumMcast : 0;
     for (UWORD i = 0; i < unit->ndMcastCount; i++)
-        CopyMem((APTR)filter->ndrx_McastList[i], unit->ndMcastList[i], 6);
+        memcpy(unit->ndMcastList[i], filter->ndrx_McastList[i], 6);
     unit->ndPromisc = !exact;
 
     if (!exact)
@@ -642,7 +644,7 @@ static BYTE Do_NETDEV_SET_MAC(struct GenetUnit *unit, struct IOStdReq *io)
     if (unit->state == STATE_ONLINE)
         return NDERR_BADPARAMS; /* set before START; applied by UMAC bring-up */
 
-    CopyMem(io->io_Data, unit->currentMacAddress, sizeof(unit->currentMacAddress));
+    memcpy(unit->currentMacAddress, io->io_Data, sizeof(unit->currentMacAddress));
     /* Supported order: ATTACH, SET_MAC, START. Before the first ATTACH is
      * useless — that ATTACH configures the unit and reloads the factory
      * address — and the stack has already read ndc_Mac at ATTACH, so it
@@ -694,6 +696,7 @@ static BYTE Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
 void ProcessCommand(struct IOStdReq *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
     BYTE error;
 
     switch (io->io_Command)

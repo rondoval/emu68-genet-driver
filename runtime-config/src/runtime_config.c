@@ -5,7 +5,7 @@
 #else
 #define __NOLIBBASE__
 #include <proto/dos.h>
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -89,7 +89,7 @@ static void ApplyDefaults(struct GenetRuntimeConfig *config)
     config->flow_control = DEFAULT_FLOW_CONTROL;
 }
 
-void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
+void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *SysBase)
 {
     KprintfT("[genet] %s: Loading defaults\n", __func__);
     ApplyDefaults(config);

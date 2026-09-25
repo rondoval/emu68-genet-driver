@@ -35,7 +35,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -127,6 +127,7 @@ static inline void txdone_push(struct GenetUnit *unit, APTR cookie, u16 end, u16
  * arms the TX-done interrupt if that was nothing. Producer side. */
 static inline void tx_refused(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	unit->ndTxRefused++;
 	Signal(unit->task, 1UL << unit->tx_signal);
 }
@@ -205,6 +206,7 @@ ULONG bcmgenet_tx_harvest(struct GenetUnit *unit)
  */
 void bcmgenet_tx_done_arm(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	if (unit->ndTxDoneCons == unit->ndTxDoneProd)
 		return; /* nothing in flight: no completion to wait for */
 
@@ -232,6 +234,7 @@ void bcmgenet_tx_done_arm(struct GenetUnit *unit)
  */
 void bcmgenet_netdev_tx_quiesce(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	if (unit->ndTxBusy != 0)
 	{
 		struct Task *self = FindTask(NULL);
@@ -293,6 +296,7 @@ static BOOL tx_desc_ok(struct GenetUnit *unit, const struct NetDevTxDesc *d)
  */
 LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc *descs, ULONG count)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: count %lu len %lu\n", __func__, count,
 			 (ULONG)(count != 0 ? descs[0].ntd_Segs[0].nsg_Len : 0));
 	if (unlikely(!unit->ndStarted))

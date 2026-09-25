@@ -9,7 +9,7 @@
 #include <clib/gic400_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 
 #define GIC400_BASE_NAME unit->device->gic400Base
@@ -196,6 +196,7 @@ static void bcmgenet_rx_level_write(struct GenetUnit *unit)
 
 void bcmgenet_rx_moderate(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	u32 level;
 
 	if (bcmgenet_rx_pending(unit))
@@ -227,6 +228,7 @@ void bcmgenet_rx_moderate(struct GenetUnit *unit)
 
 void bcmgenet_rx_moderation_reset(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	/* Two sources, and the pin decides which one is in force:
 	 *
 	 *   pinned     the operator named the numbers with an explicit

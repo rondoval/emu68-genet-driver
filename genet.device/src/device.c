@@ -4,7 +4,7 @@
 #include <clib/utility_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 #include <proto/utility.h>
 #endif
@@ -105,7 +105,7 @@ static struct Resident const genetDeviceResident __attribute__((used)) = {
     can be sizeof(struct Library), sizeof(struct Device) or any size necessary to
     store user defined object extending the Device structure.
 */
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6"));
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *SysBase asm("a6"));
 
 static const APTR funcTable[];
 static const APTR initTable[4] = {
@@ -130,6 +130,7 @@ static const APTR funcTable[] = {
 
 static void genet_close_libraries(struct GenetDevice *base)
 {
+    struct ExecBase *SysBase = base->sysBase;
     if (base->gic400Base != NULL)
     {
         CloseLibrary(base->gic400Base);
@@ -145,6 +146,7 @@ static void genet_close_libraries(struct GenetDevice *base)
 
 static s32 genet_open_libraries(struct GenetDevice *base)
 {
+    struct ExecBase *SysBase = base->sysBase;
     if (base->utilityBase != NULL && base->gic400Base != NULL)
         return 0;
 
@@ -179,13 +181,12 @@ static void genet_reset_prepare(APTR user)
         bcmgenet_reset_quiesce(unit);
 }
 
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6"))
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *SysBase asm("a6"))
 {
-    (void)_SysBase;
     /* the id string carries the build date — the log's deploy beacon */
     Kprintf("[genet] %s: %s\n", __func__, (ULONG)deviceIdString);
 
-    if (!emu68_has_dcache_range_ops())
+    if (!emu68_has_dcache_range_ops(SysBase))
     {
         Kprintf("[genet] %s: rangeops build, but Emu68 lacks dcache-range-ops rev 1 - refusing to load. Install the standard driver package or update Emu68.\n", __func__);
         ULONG size = (ULONG)base->device.dd_Library.lib_NegSize + base->device.dd_Library.lib_PosSize;
@@ -194,12 +195,13 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     }
 
     base->segList = segList;
+    base->sysBase = SysBase;
     base->device.dd_Library.lib_Revision = DEVICE_REVISION;
     base->unit = NULL;
     base->utilityBase = NULL;
     base->gic400Base = NULL;
 
-    if (!reset_guard_install(&base->resetGuard, genet_reset_prepare, base,
+    if (!reset_guard_install(&base->resetGuard, SysBase, genet_reset_prepare, base,
                              (CONST_STRPTR)"genet.device"))
         Kprintf("[genet] %s: reset guard install failed\n", __func__);
 
@@ -209,6 +211,7 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
 void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
              ULONG flags asm("d1"), struct GenetDevice *base asm("a6"))
 {
+    struct ExecBase *SysBase = base->sysBase;
     BOOL firstOpen = FALSE;
     BOOL createdUnit = FALSE;
 
@@ -237,6 +240,7 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
             io->io_Error = IOERR_OPENFAIL;
             return;
         }
+        base->unit->sysBase = base->sysBase;
         base->unit->device = base;
         base->unit->gu_Perf = (struct perf){
             "genet", genet_perf_names, base->unit->gu_PerfSlots, GP_SLOT_COUNT};
@@ -267,7 +271,7 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
     if (base->unit->unit.unit_OpenCnt == 0)
     {
         /* Configuration is reloaded only when the unit has no other opener. */
-        LoadGenetRuntimeConfig(&base->runtimeConfig);
+        LoadGenetRuntimeConfig(&base->runtimeConfig, SysBase);
         DumpGenetRuntimeConfig(&base->runtimeConfig);
     }
 
@@ -302,6 +306,7 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
 
 ULONG closeLib(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
+    struct ExecBase *SysBase = base->sysBase;
     struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
     KprintfT("[genet] %s: Closing device\n", __func__);
 
@@ -329,6 +334,7 @@ ULONG closeLib(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6")
 
 ULONG expungeLib(struct GenetDevice *base asm("a6"))
 {
+    struct ExecBase *SysBase = base->sysBase;
     KprintfT("[genet] %s: Expunging device\n", __func__);
     if (base->device.dd_Library.lib_OpenCnt > 0)
     {
@@ -373,8 +379,9 @@ APTR extFunc(struct GenetDevice *base asm("a6"))
     control ops and NSCMD_DEVICEQUERY are serialized by the unit task;
     everything else is IOERR_NOCMD.
 */
-void beginIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6") __attribute__((unused)))
+void beginIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
+    struct ExecBase *SysBase = base->sysBase;
     struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
     UWORD cmd = io->io_Command;
 
@@ -407,8 +414,9 @@ void beginIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6") _
     port; nothing long-lived is abortable. Best-effort: pull a still-queued
     message off the port, otherwise let it complete.
 */
-LONG abortIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6") __attribute__((unused)))
+LONG abortIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
+    struct ExecBase *SysBase = base->sysBase;
     KprintfT("[genet] %s: Aborting IO request %lx\n", __func__, io);
 
     struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;

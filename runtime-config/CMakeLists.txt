@@ -18,7 +18,7 @@ add_compile_options(
 )
 
 # Debug-output backend defines (EMU68_DEBUG_BACKEND, see emu68-common).
-# Static lib: KPrintF stays unresolved here; genet.device resolves it at link.
+# Static lib: fmt_vformat stays unresolved here; genet.device resolves it at link.
 emu68_debug_definitions()
 
 file(GLOB_RECURSE runtime_config_sources src/*.c)
