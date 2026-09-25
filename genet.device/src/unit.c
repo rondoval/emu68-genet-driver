@@ -84,6 +84,7 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 	unit->multicastCount = 0;
 
 	_NewMinList(&unit->openers);
+	_NewMinList(&unit->txBacklog);
 
 	result = DevTreeParse(unit);
 	if (result != S2ERR_NO_ERROR)
@@ -167,6 +168,7 @@ void UnitOffline(struct GenetUnit *unit)
 	unit->state = STATE_OFFLINE;
 	Permit();
 	bcmgenet_gmac_eth_stop(unit);
+	bcmgenet_tx_backlog_abort(unit, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);
 }
 
 u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)

@@ -32,5 +32,7 @@ void bcmgenet_perf_tick(struct GenetUnit *unit);
 
 /* TX functions */
 u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit);
+void bcmgenet_tx_drain(struct GenetUnit *unit);
+void bcmgenet_tx_backlog_abort(struct GenetUnit *unit, BYTE error, ULONG wireError);
 
 #endif

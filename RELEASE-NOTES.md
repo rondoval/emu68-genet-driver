@@ -50,6 +50,10 @@ switched off as well.
 - `S2_ONEVENT` now accepts `S2EVENT_CONFIGCHANGED`.
 - A write larger than a staging slot (2028 bytes) overran the next buffer; it
   now fails with `S2ERR_MTU_EXCEEDED`.
+- A write that found the transmit ring full failed with `S2ERR_NO_RESOURCES`,
+  so a sender faster than the wire lost frames - with large UDP datagrams,
+  every datagram. It now waits for room and is replied once it is on the ring
+  (`genet-stats`: `tx_queued`).
 - Going offline while another task was writing could free the ring under it.
 - Control messages from other tasks came from a pool the driver's task was
   using concurrently; they now use `AllocMem`.

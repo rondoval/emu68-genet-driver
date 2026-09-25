@@ -188,7 +188,8 @@ struct internal_stats
 	u64 tx_bytes;			 // total bytes transmitted
 	u32 tx_dma;				 // tx_dma + tx_copy = tx_packets
 	u32 tx_copy;
-	u32 tx_dropped;			 // TX failed to enqueue (no BDs / no data / copy fail)
+	u32 tx_dropped;			 // TX failed (no data / too long / copy fail)
+	u32 tx_queued;			 // writes that waited in txBacklog for a full ring
 
 	u32 irq0_count;			 // IRQ0 fires (RX/TX/error)
 	u32 irq0_tx_count;		 // IRQ0 fires that included TXDMA_DONE
@@ -273,6 +274,7 @@ struct GenetUnit
 	/* TX */
 	struct bcmgenet_tx_ring tx_ring;
 	dma_addr_t txbuffer; /* TX_DESCS ring-bound staging slots of RX_BUF_LENGTH (bcmgenet-tx.c) */
+	struct MinList txBacklog; /* writes waiting for ring room, under Forbid (bcmgenet_tx_drain) */
 };
 
 /* Unit-control commands submitted from foreign tasks. */

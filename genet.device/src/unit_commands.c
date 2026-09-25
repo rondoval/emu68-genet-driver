@@ -257,6 +257,7 @@ static u32 Do_S2_GETSPECIALSTATS(struct IOSana2Req *io)
     idx = emit_ss(rec, max, idx, GENET_SS_RX_ARP_IP_DROPPED,  "rx_arp_ip_dropped",  st->rx_arp_ip_dropped);
 
     idx = emit_ss(rec, max, idx, GENET_SS_TX_DROPPED,         "tx_dropped",         st->tx_dropped);
+    idx = emit_ss(rec, max, idx, GENET_SS_TX_QUEUED,          "tx_queued",          st->tx_queued);
     idx = emit_ss(rec, max, idx, GENET_SS_TX_DMA,             "tx_dma",             st->tx_dma);
     idx = emit_ss(rec, max, idx, GENET_SS_TX_COPY,            "tx_copy",            st->tx_copy);
     idx = emit_ss(rec, max, idx, GENET_SS_IRQ0_COUNT,         "irq0_count",         st->irq0_count);
@@ -419,6 +420,8 @@ static u32 Do_CMD_FLUSH(struct IOSana2Req *io)
         req->ios2_WireError = 0;
         ReplyMsg((struct Message *)req);
     }
+
+    bcmgenet_tx_backlog_abort(unit, IOERR_ABORTED, 0);
 
     /* For every opener, flush all internal queues */
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)

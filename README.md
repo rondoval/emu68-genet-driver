@@ -123,7 +123,7 @@ Setting descriptions:
 - `PERIODIC_TASK_MS`  Interval in milliseconds for the housekeeping timer (PHY polling, interrupt watchdog).
 - `RX_COALESCE_USECS`  Target latency in microseconds before the hardware raises an RX interrupt if the frame threshold is not met.
 - `RX_COALESCE_FRAMES`  Number of received frames that trigger an RX interrupt when reached.
-- `TX_COALESCE_FRAMES`  Number of transmitted frames that trigger a TX interrupt when reached (not used in 3.x).
+- `TX_COALESCE_FRAMES`  Number of transmitted frames that trigger a TX interrupt when reached; used only while writes wait for a full transmit ring.
 
 You can omit any line to keep its default.
 In order for the changes to be applied, the device must be closed (e.g. shutdown your IP stack).

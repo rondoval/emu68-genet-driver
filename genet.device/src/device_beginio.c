@@ -17,6 +17,7 @@ static inline void Do_CMD_WRITE(struct IOSana2Req *io)
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: CMD_WRITE\n", __func__);
+    io->ios2_Req.io_Error = S2ERR_NO_ERROR;
 
     if (io->ios2_Req.io_Command == S2_BROADCAST)
     {
@@ -37,10 +38,10 @@ static inline void Do_CMD_WRITE(struct IOSana2Req *io)
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
         io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
     }
-    else
-    {
-        bcmgenet_xmit(io, unit);
-    }
+    /* A write that waits for ring room belongs to the unit task from here
+     * on - it may already be replied: do not touch it. */
+    else if (bcmgenet_xmit(io, unit) == COMMAND_SCHEDULED)
+        return;
 
     if (!(io->ios2_Req.io_Flags & IOF_QUICK))
         ReplyMsg((struct Message *)io);

@@ -672,12 +672,11 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 
 	/* Monitor link interrupts now.
 	 *
-	 * TXDMA_DONE is intentionally NOT enabled: the SANA-II stack 
-	 * is too slow to keep up with the DMA, and we would get an interrupt for every packet, which
-	 * would cause excessive CPU overhead.
-	 * Coalescing cannot batch anything and a per-completion interrupt is
-	 * pure overhead. We reclaim TX descriptors at the top of bcmgenet_xmit
-	 * instead.
+	 * TXDMA_DONE is NOT enabled here: descriptors are reclaimed at the top
+	 * of every write, so a completion interrupt is pure overhead while the
+	 * ring has room. It is unmasked only while writes wait in txBacklog for
+	 * a full ring (bcmgenet-tx.c) - then it fires once per
+	 * tx_coalesce_frames completions and bcmgenet_tx_drain moves them on.
 	 */
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R);
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE /* | UMAC_IRQ_TXDMA_DONE */);

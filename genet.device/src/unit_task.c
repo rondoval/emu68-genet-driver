@@ -226,6 +226,11 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 Kprintf("[genet] %s: PHY link up event\n", __func__);
             }
             
+            /* Ring room for writes waiting in the backlog (TXDMA_DONE is
+             * only unmasked while there are any) */
+            if (unlikely(status & UMAC_IRQ_TXDMA_DONE) && unit->state == STATE_ONLINE)
+                bcmgenet_tx_drain(unit);
+
             /* Receive processing */
             if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {

@@ -39,8 +39,10 @@
  * way out. A slot is reusable exactly when its BD is, and the free-BD check
  * against the cached consumer index already guarantees the hardware has read
  * it. "Reclaim" is therefore one TDMA_CONS_INDEX read when the cached count
- * runs low - every ~240 frames at line rate. Requests are replied at submit,
- * so a stale cache only under-reports free space, never a frame's fate.
+ * runs low - every ~240 frames at line rate. A write is replied at submit
+ * when it fits; a full ring queues it on txBacklog instead of failing it, and
+ * the TX interrupt - armed only while that backlog is non-empty - replays it
+ * (bcmgenet_tx_drain). A stale cache only under-reports free space.
  *
  * The frame is built at slot + TX_STAGE_OFFSET: the 14-byte Ethernet header
  * then leaves the body 4-aligned, the alignment a stack's packet buffer has,
@@ -97,27 +99,25 @@ static inline void build_eth_header(u8 *buf, const u8 *dst_mac,
 #pragma GCC diagnostic pop
 }
 
-u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
+enum TxPut
 {
-	struct ExecBase *SysBase = unit->sysBase;
-	KprintfT("[genet] %s: unit %lu, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
+	TX_PUT_OK,
+	TX_PUT_FULL,   /* not enough free BDs: nothing touched */
+	TX_PUT_FAILED, /* the opener's copy failed: io_Error set, nothing published */
+};
 
-	PERF_T0(t_submit);
+/* Put one well-formed write on the ring and ring the doorbell. Forbid held,
+ * unit online. Shared by the submitting task (bcmgenet_xmit) and the unit
+ * task replaying the backlog (bcmgenet_tx_drain). */
+static enum TxPut tx_ring_put(struct GenetUnit *unit, struct IOSana2Req *io)
+{
+	struct ExecBase *SysBase = unit->sysBase; /* the LVO cache-op flavour calls exec */
+	(void)SysBase;
 	struct Opener *opener = io->ios2_BufferManagement;
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 	const BOOL is_raw = (io->ios2_Req.io_Flags & SANA2IOF_RAW) != 0;
 	const u32 data_len = io->ios2_DataLength;
 
-	if (unlikely(data_len == 0))
-	{
-		KprintfT("[genet] %s: No data to send\n", __func__);
-		goto err_no_buf;
-	}
-	/* A slot is RX_BUF_LENGTH bytes: a write must never run into the next one. */
-	if (unlikely(data_len > TX_MAX_DATALEN))
-		goto err_mtu;
-
-	/* Outside the lock: nothing below touches the ring or a slot. */
 	u32 copy_len = data_len;
 	if (unit->use_miami_workaround)
 		copy_len = (copy_len + 3U) & ~3U;
@@ -137,14 +137,6 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	const u32 ls_common = (GENET_QTAG_MASK << DMA_TX_QTAG_SHIFT) | DMA_TX_APPEND_CRC;
 
 	PERF_T0(t_claim);
-	Forbid();
-	/* UnitOffline flips the state under Forbid: a writer that sees ONLINE
-	 * here owns txbuffer and the ring until its Permit(). */
-	if (unlikely(unit->state != STATE_ONLINE))
-	{
-		Permit();
-		goto err_offline;
-	}
 	u16 free_bds = tx_free_bds(ring);
 	if (unlikely(free_bds < TX_RECLAIM_THRESHOLD))
 	{
@@ -152,11 +144,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 		free_bds = tx_free_bds(ring);
 	}
 	if (unlikely(free_bds <= bds_required))
-	{
-		KprintfT("[genet] %s: Not enough free BDs\n", __func__);
-		Permit();
-		goto err_no_buf;
-	}
+		return TX_PUT_FULL;
 	/* Tell abortIO this request is committed to the ring. */
 	io->ios2_Req.io_Message.mn_Node.ln_Pred = NULL;
 	u8 *slot = tx_staging(unit, ring);
@@ -185,8 +173,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 			{
 				/* nothing published: the next write simply reuses the slot */
 				KprintfT("[genet] %s: Failed to copy packet data\n", __func__);
-				Permit();
-				goto err_no_buf;
+				goto err_copy;
 			}
 			PERF_ADD(&unit->perf, GP_TX_COPY, t_copy);
 			PERF_T0(t_clean);
@@ -208,8 +195,7 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 						 opener->CopyFromBuff(slot, io->ios2_Data, copy_len) == 0))
 			{
 				KprintfT("[genet] %s: Failed to copy RAW packet data\n", __func__);
-				Permit();
-				goto err_no_buf;
+				goto err_copy;
 			}
 			src = (dma_addr_t)slot;
 		}
@@ -229,28 +215,114 @@ u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
 	emu68_barrier(); /* the one dsb: closes the NoSync cleans and orders the relaxed BD stores ahead of the doorbell */
 	mmio_write32(ring->tx_prod_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
 	PERF_ADD(&unit->perf, GP_TX_PUBLISH, t_pub);
-	Permit();
-	PERF_ADD(&unit->perf, GP_TX_SUBMIT, t_submit);
-	return COMMAND_PROCESSED;
+	return TX_PUT_OK;
 
-err_offline:
-	io->ios2_WireError = S2WERR_UNIT_OFFLINE;
-	io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
-	PERF_ADD(&unit->perf, GP_TX_SUBMIT, t_submit);
-	return COMMAND_PROCESSED;
-
-err_mtu:
-	unit->internalStats.tx_dropped++;
-	io->ios2_WireError = S2WERR_GENERIC_ERROR;
-	io->ios2_Req.io_Error = S2ERR_MTU_EXCEEDED;
-	PERF_ADD(&unit->perf, GP_TX_SUBMIT, t_submit);
-	return COMMAND_PROCESSED;
-
-err_no_buf:
+err_copy:
 	unit->internalStats.tx_dropped++;
 	io->ios2_WireError = S2WERR_BUFF_ERROR;
 	io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
 	UnitSubmitControlAsync(unit, UNIT_CTRL_EVENT_REPORT, (union UnitControlPayload){.eventSet = S2EVENT_BUFF | S2EVENT_TX | S2EVENT_SOFTWARE | S2EVENT_ERROR});
+	return TX_PUT_FAILED;
+}
+
+/* Park a write that cannot go on the ring yet. Forbid held. It becomes an
+ * ordinary queued request - not quick, a real list node of type NT_MESSAGE -
+ * so abortIO can take it back, and the TX interrupt (masked while the
+ * backlog is empty) replays it once the hardware has sent enough. */
+static void tx_backlog_add(struct GenetUnit *unit, struct IOSana2Req *io)
+{
+	struct ExecBase *SysBase = unit->sysBase;
+	BOOL first = unit->txBacklog.mlh_Head->mln_Succ == NULL;
+	io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
+	io->ios2_Req.io_Message.mn_Node.ln_Type = NT_MESSAGE;
+	AddTailMinList(&unit->txBacklog, (struct MinNode *)io);
+	unit->internalStats.tx_queued++;
+	if (first)
+		bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
+}
+
+u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit)
+{
+	struct ExecBase *SysBase = unit->sysBase;
+	KprintfT("[genet] %s: unit %lu, io 0x%lx, flags 0x%lx\n", __func__, unit->unitNumber, io, io->ios2_Req.io_Flags);
+
+	PERF_T0(t_submit);
+	const u32 data_len = io->ios2_DataLength;
+
+	/* Reject what can never be sent before it could wait in the backlog. */
+	if (unlikely(data_len == 0))
+	{
+		KprintfT("[genet] %s: No data to send\n", __func__);
+		unit->internalStats.tx_dropped++;
+		io->ios2_WireError = S2WERR_BUFF_ERROR;
+		io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
+		return COMMAND_PROCESSED;
+	}
+	/* A slot is RX_BUF_LENGTH bytes: a write must never run into the next one. */
+	if (unlikely(data_len > TX_MAX_DATALEN))
+	{
+		unit->internalStats.tx_dropped++;
+		io->ios2_WireError = S2WERR_GENERIC_ERROR;
+		io->ios2_Req.io_Error = S2ERR_MTU_EXCEEDED;
+		return COMMAND_PROCESSED;
+	}
+
+	u32 result = COMMAND_PROCESSED;
+	Forbid();
+	/* UnitOffline flips the state under Forbid: a writer that sees ONLINE
+	 * here owns txbuffer and the ring until its Permit(). */
+	if (unlikely(unit->state != STATE_ONLINE))
+	{
+		io->ios2_WireError = S2WERR_UNIT_OFFLINE;
+		io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
+	}
+	/* A full ring means wait, not fail; once anything waits, later writes
+	 * wait behind it so the wire order stays the submit order. */
+	else if (unlikely(unit->txBacklog.mlh_Head->mln_Succ != NULL) ||
+			 unlikely(tx_ring_put(unit, io) == TX_PUT_FULL))
+	{
+		tx_backlog_add(unit, io);
+		result = COMMAND_SCHEDULED;
+	}
+	Permit();
 	PERF_ADD(&unit->perf, GP_TX_SUBMIT, t_submit);
-	return COMMAND_PROCESSED;
+	return result;
+}
+
+/* Unit task, on TXDMA_DONE: move backlog writes onto the ring while it has
+ * room, replying each. The interrupt is re-armed only while writes still
+ * wait - the same Forbid as the writers' makes that decision race-free. */
+void bcmgenet_tx_drain(struct GenetUnit *unit)
+{
+	struct ExecBase *SysBase = unit->sysBase;
+	Forbid();
+	struct IOSana2Req *io;
+	while ((io = (struct IOSana2Req *)RemHeadMinList(&unit->txBacklog)) != NULL)
+	{
+		if (tx_ring_put(unit, io) == TX_PUT_FULL)
+		{
+			AddHeadMinList(&unit->txBacklog, (struct MinNode *)io);
+			break;
+		}
+		ReplyMsg((struct Message *)io);
+	}
+	if (unit->txBacklog.mlh_Head->mln_Succ != NULL)
+		bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
+	Permit();
+}
+
+/* Reply every waiting write with @error (flush, offline). A TXDMA_DONE
+ * still armed finds an empty backlog and does not re-arm. */
+void bcmgenet_tx_backlog_abort(struct GenetUnit *unit, BYTE error, ULONG wireError)
+{
+	struct ExecBase *SysBase = unit->sysBase;
+	Forbid();
+	struct IOSana2Req *io;
+	while ((io = (struct IOSana2Req *)RemHeadMinList(&unit->txBacklog)) != NULL)
+	{
+		io->ios2_Req.io_Error = error;
+		io->ios2_WireError = wireError;
+		ReplyMsg((struct Message *)io);
+	}
+	Permit();
 }
