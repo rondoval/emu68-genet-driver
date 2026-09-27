@@ -82,7 +82,8 @@ ULONG bcmgenet_isr0(struct ExecBase *SysBase asm("a6"), struct GenetUnit *unit a
 	u32 status = mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_STAT)) &
 				   ~mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_STATUS));
 
-	/* Nothing pending for us — report not-handled. */
+	/* Nothing pending for us — report not-handled (Z set), so a shared
+	 * line's chain walk carries on to the next server. */
 	if (!status)
 		return 0;
 
