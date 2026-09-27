@@ -87,6 +87,10 @@ target_link_libraries(genet.device
 # instead links debug.lib (+ __divsi3 glue) and skips the ROM check.
 emu68_debug_backend_finalize(genet.device ROMABLE)
 
+# Exec interrupt servers answer with the Z flag, not D0 (exec.library/AddIntServer);
+# a compiler epilogue that ends in MOVE rather than MOVEM silently overwrites it.
+emu68_isr_z_check(genet.device SERVERS bcmgenet_isr0)
+
 install(
     PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/genet.device
     DESTINATION DEVS/Networks
