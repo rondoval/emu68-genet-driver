@@ -8,6 +8,7 @@
 #endif
 
 #include <iomem.h>
+#include <intserver.h>
 #include <debug.h>
 #include <genet/bcmgenet-irq.h>
 #include <genet/bcmgenet-regs.h>
@@ -73,7 +74,9 @@ void bcmgenet_intr_disable(struct GenetUnit *unit)
  * has to land before the GIC re-samples the line. Reads carry their own
  * completion, so the not-ours path pays for no barrier at all.
  */
-ULONG bcmgenet_isr0(struct ExecBase *SysBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"))
+EMU68_INTSERVER(bcmgenet_isr0)
+ULONG bcmgenet_isr0(struct ExecBase *SysBase asm("a6"), struct GenetUnit *unit asm("a1"),
+                    ULONG irq asm("d0"))
 {
 	(void)irq;
 

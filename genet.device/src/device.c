@@ -38,13 +38,13 @@
 #ifndef DEVICE_REVISION
 #define DEVICE_REVISION 0
 #endif
-LONG __attribute__((used, no_reorder)) doNotExecute(void);
+LONG __attribute__((used, section(".text.entry"))) doNotExecute(void);
 
 /*
     Put the function at the very beginning of the file in order to avoid
     unexpected results when user executes the device by mistake
 */
-LONG __attribute__((used, no_reorder)) doNotExecute(void)
+LONG __attribute__((used, section(".text.entry"))) doNotExecute(void)
 {
     return -1;
 }
@@ -88,7 +88,7 @@ static const u32 genet_rx_held_bounds[GENET_RX_HELD_BOUNDS] = {
     object will be initialized (coldstart means, before dos.library, after scheduler
     is started)
 */
-static struct Resident const genetDeviceResident __attribute__((used)) = {
+static struct Resident const genetDeviceResident __attribute__((used, section(".text.modhdr"))) = {
     RTC_MATCHWORD,
     (struct Resident *)&genetDeviceResident,
     (APTR)&endOfCode,

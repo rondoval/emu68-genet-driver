@@ -37,7 +37,7 @@ Build through the superbuild's container wrapper from the stack root — never h
 
 ## Licensing (mixed — preserve every file's SPDX header)
 
-- Dual-licensed `MPL-2.0 OR GPL-2.0+` device scaffolding — do not casually relicense: `device.c`, `device_end.c`, `unit.c`, `unit_task.c`, `netdev_api.c`, `bcmgenet-link.c`, `bcmgenet-mib.c`, `include/device.h`.
+- Dual-licensed `MPL-2.0 OR GPL-2.0+` device scaffolding — do not casually relicense: `device.c`, `unit.c`, `unit_task.c`, `netdev_api.c`, `bcmgenet-link.c`, `bcmgenet-mib.c`, `include/device.h`.
 - Original repository files, `GPL-2.0+`: `devtree_parse.c`, `include/genet/bcmgenet.h`, `runtime-config/*`.
 - Linux/U-Boot-derived GPL-family: the remaining `bcmgenet*`, `phy*`, and imported `include/genet/*` (mostly `GPL-2.0+`, some `GPL-2.0-only`). `bcmgenet-link.c` and `bcmgenet-mib.c/.h` are the dual-licensed exceptions to the `bcmgenet*` glob.
 
