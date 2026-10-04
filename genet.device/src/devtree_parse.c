@@ -29,8 +29,8 @@ u32 DevTreeParse(struct GenetUnit *unit)
 
 	char alias[12] = "ethernet0";
 	alias[8] = (char)('0' + unit->unitNumber);
-	CONST_STRPTR ethernet_alias = DT_GetAlias(SysBase, (CONST_STRPTR)alias);
-	CONST_STRPTR gpio_alias = DT_GetAlias(SysBase, (CONST_STRPTR) "gpio");
+	CONST_STRPTR ethernet_alias = DT_GetAlias(DeviceTreeBase, (CONST_STRPTR)alias);
+	CONST_STRPTR gpio_alias = DT_GetAlias(DeviceTreeBase, (CONST_STRPTR) "gpio");
 	if (ethernet_alias == NULL || gpio_alias == NULL)
 	{
 		Kprintf("[genet] %s: Failed to get aliases from device tree\n", __func__);
@@ -45,7 +45,7 @@ u32 DevTreeParse(struct GenetUnit *unit)
 	}
 
 	unit->compatible = DT_GetPropValue(DT_FindProperty(key, (CONST_STRPTR) "compatible"));
-	const u32 phy_handle = DT_GetPropertyValueULONG(SysBase, key, "phy-handle", 0, FALSE);
+	const u32 phy_handle = DT_GetPropertyValueULONG(DeviceTreeBase, key, "phy-handle", 0);
 	CONST_STRPTR phyMode = DT_GetPropValue(DT_FindProperty(key, (CONST_STRPTR) "phy-mode"));
 	unit->phy_interface = phyMode ? interface_for_phy_string((char *)phyMode) : PHY_INTERFACE_MODE_NA;
 
@@ -62,7 +62,7 @@ u32 DevTreeParse(struct GenetUnit *unit)
 	}
 	unit->localMacAddress = DT_GetPropValue(macProp);
 
-	unit->genetBase = DT_GetBaseAddressVirtual(SysBase, ethernet_alias);
+	unit->genetBase = DT_GetBaseAddressVirtual(DeviceTreeBase, key, 0);
 	if (unit->genetBase == NULL)
 	{
 		Kprintf("[genet] %s: Failed to get base address for GENET\n", __func__);
@@ -76,8 +76,8 @@ u32 DevTreeParse(struct GenetUnit *unit)
 	KprintfT("[genet] %s: phy-mode: %s\n", __func__, phy_string_for_interface(unit->phy_interface));
 	KprintfT("[genet] %s: register base: %08lx\n", __func__, unit->genetBase);
 
-	s32 irq0 = DT_GetInterrupt(SysBase, key, 0);
-	s32 irq1 = DT_GetInterrupt(SysBase, key, 1);
+	s32 irq0 = DT_GetInterrupt(DeviceTreeBase, key, 0);
+	s32 irq1 = DT_GetInterrupt(DeviceTreeBase, key, 1);
 	if (irq0 < 0 || irq1 < 0)
 	{
 		Kprintf("[genet] %s: Failed to get interrupt numbers\n", __func__);
@@ -89,11 +89,11 @@ u32 DevTreeParse(struct GenetUnit *unit)
 	unit->irq0_number = (u32)irq0;
 
 	// Now find phy address
-	APTR phy_key = DT_FindByPHandle(SysBase, key, phy_handle);
+	APTR phy_key = DT_FindByPHandle(DeviceTreeBase, key, phy_handle);
 	if (phy_key)
 	{
 		KprintfT("[genet] %s: Found phy key: %s\n", __func__, DT_GetKeyName(phy_key));
-		u32 phyaddr = DT_GetPropertyValueULONG(SysBase, phy_key, "reg", 1, FALSE);
+		u32 phyaddr = DT_GetPropertyValueULONG(DeviceTreeBase, phy_key, "reg", 1);
 		if (phyaddr > 0xffU)
 		{
 			Kprintf("[genet] %s: Invalid phy address %08lx\n", __func__, (ULONG)phyaddr);
@@ -111,7 +111,15 @@ u32 DevTreeParse(struct GenetUnit *unit)
 	}
 
 	// We also need GPIO to setup MDIO bus
-	unit->gpioBase = DT_GetBaseAddressVirtual(SysBase, gpio_alias);
+	APTR gpio_key = DT_OpenKey(gpio_alias);
+	if (gpio_key == NULL)
+	{
+		Kprintf("[genet] %s: Failed to open key %s\n", __func__, gpio_alias);
+		DT_CloseKey(key);
+		return ENOMEM;
+	}
+	unit->gpioBase = DT_GetBaseAddressVirtual(DeviceTreeBase, gpio_key, 0);
+	DT_CloseKey(gpio_key);
 	if (unit->gpioBase == NULL)
 	{
 		Kprintf("[genet] %s: Failed to get base address for GPIO\n", __func__);
