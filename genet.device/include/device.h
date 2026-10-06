@@ -14,7 +14,6 @@
 
 #include <types.h>
 #include <bcm_gpio.h>
-#include <slab.h>
 #include <dma_mem.h>
 #include <perf.h>
 #include <reset_guard.h>
@@ -46,13 +45,33 @@
  * below this. Must exceed max descriptors per packet (2 for DMA path). */
 #define TX_RECLAIM_THRESHOLD 16U
 
+/* TX staging is ring-bound: slot k of txbuffer (RX_BUF_LENGTH bytes) belongs
+ * to BD k for the life of the ring. The frame starts TX_STAGE_OFFSET into the
+ * slot so that the 14-byte Ethernet header leaves the body 4-aligned - the
+ * alignment a stack's packet buffer has, which lets the opener's CopyFromBuff
+ * move longwords on both sides. */
+#define TX_STAGE_OFFSET 2U
+/* Longest ios2_DataLength a slot can take: offset + header + data + the
+ * use_miami_workaround round-up (3) must fit the slot. An overflow guard,
+ * not MTU policy - UMAC_MAX_FRAME_LEN still bounds what goes on the wire. */
+#define TX_MAX_DATALEN (RX_BUF_LENGTH - TX_STAGE_OFFSET - ETH_HLEN - 4U)
+
 /* Datapath perf slots (emu68-common <perf.h>), reported as [genet] by
  * bcmgenet_perf_tick(). Order must match genet_perf_names[] in device.c. */
 enum GenetProfSlot
 {
-	GP_RX_DRAIN,   /* whole bcmgenet_gmac_eth_rx ring walk */
-	GP_TX_SUBMIT,  /* bcmgenet_xmit: staging + copy + cache prime + ring writes */
-	GP_TX_PUBLISH, /* closing barrier + TDMA_PROD_INDEX doorbell */
+	GP_RX_DRAIN,   /* whole bcmgenet_gmac_eth_rx pass */
+	GP_RX_SCAN,    /*   its first pass: descriptor status + NoSync invalidates */
+	GP_RX_COPY,    /*   per frame: the opener's CopyToBuff */
+	GP_RX_REPLY,   /*   per frame: ReplyMsg of the read */
+	GP_TX_SUBMIT,  /* whole bcmgenet_xmit */
+	GP_TX_PUBLISH, /*   closing barrier + TDMA_PROD_INDEX doorbell */
+	/* the copy path's phases inside GP_TX_SUBMIT (each bracket costs a timer
+	 * read, so their sum runs a little under the whole) */
+	GP_TX_CLAIM,   /*   Forbid, free-BD check (+ the rare CONS read), slot */
+	GP_TX_COPY,    /*   the opener's CopyFromBuff */
+	GP_TX_CLEAN,   /*   cache_pre_dma of the slot (NoSync) */
+	GP_TX_RING,    /*   descriptor stores + prod advance */
 	GP_SLOT_COUNT
 };
 
@@ -128,13 +147,11 @@ struct MulticastRange
 	u64 upperBound; /* Inclusive */
 };
 
+/* TX ring state, only ever touched under the write path's Forbid(). */
 struct bcmgenet_tx_ring
 {
-	struct enet_cb *tx_control_block; /* tx ring buffer control block*/
-	u8 clean_ptr;					  /* Tx ring clean pointer */
-	u16 tx_cons_index;				  /* last consumer index of each ring*/
-	u8 write_ptr;					  /* Tx ring write pointer SW copy */
-	u16 tx_prod_index;				  /* Tx ring producer index SW copy */
+	u16 tx_prod_index; /* BDs handed to hardware (16-bit modular) */
+	u16 hw_cons_cache; /* cached TDMA_CONS_INDEX; refreshed on low water */
 };
 
 struct bcmgenet_rx_ring
@@ -149,8 +166,7 @@ struct bcmgenet_rx_ring
 struct enet_cb
 {
 	APTR descriptor_address;
-	APTR staging_buffer;        /* slab-allocated buffer to free on reclaim, or NULL */
-	dma_addr_t data_buffer;     /* DMA address fed to hardware */
+	dma_addr_t data_buffer; /* DMA address fed to hardware */
 };
 
 struct internal_stats
@@ -172,7 +188,8 @@ struct internal_stats
 	u64 tx_bytes;			 // total bytes transmitted
 	u32 tx_dma;				 // tx_dma + tx_copy = tx_packets
 	u32 tx_copy;
-	u32 tx_dropped;			 // TX failed to enqueue (no BDs / no data / copy fail)
+	u32 tx_dropped;			 // TX failed (no data / too long / copy fail)
+	u32 tx_queued;			 // writes that waited in txBacklog for a full ring
 
 	u32 irq0_count;			 // IRQ0 fires (RX/TX/error)
 	u32 irq0_tx_count;		 // IRQ0 fires that included TXDMA_DONE
@@ -194,6 +211,7 @@ struct throughput_stats
 struct GenetUnit
 {
 	struct Unit unit;
+	struct ExecBase *sysBase; /* the device's, copied at unit creation */
 	struct dma_mem_ctx dma_ctx; /* Emu68 (DMA-reachable) RAM regions; backs dmaPool */
 	struct dma_pool *dmaPool;	/* region-restricted DMA pool (Emu68 RAM) for DMA buffers */
 	APTR metaPool;				/* ordinary Exec pool for CPU-only metadata */
@@ -240,6 +258,7 @@ struct GenetUnit
 	u32 irq0_number, irq1_number; /* IRQ numbers from Device Tree */
 	u32 irq0_status;			  /* status bits of irq0*/
 	BYTE irq0_signal;			  /* signals used to wake bottom-half */
+	BOOL irq0_installed;		  /* irq0_isr is on the server chain (start..stop) */
 	struct Interrupt irq0_isr;
 
 	/* PHY */
@@ -254,7 +273,8 @@ struct GenetUnit
 
 	/* TX */
 	struct bcmgenet_tx_ring tx_ring;
-	struct slab_cache tx_buffer_cache; /* RX_BUF_LENGTH-sized DMA-aligned staging buffers */
+	dma_addr_t txbuffer; /* TX_DESCS ring-bound staging slots of RX_BUF_LENGTH (bcmgenet-tx.c) */
+	struct MinList txBacklog; /* writes waiting for ring room, under Forbid (bcmgenet_tx_drain) */
 };
 
 /* Unit-control commands submitted from foreign tasks. */
@@ -283,6 +303,7 @@ struct GenetDevice
 {
 	struct Device device;
 	ULONG segList;
+	struct ExecBase *sysBase; /* cached: $4 is an Amiga-bus read on PiStorm */
 	struct GenetRuntimeConfig runtimeConfig;
 	struct Library *utilityBase;
 	struct Library *gic400Base;
@@ -313,7 +334,7 @@ void ProcessCommand(struct IOSana2Req *io);
 
 /* Drain the per-opener SPSC read ring into the per-type MinLists.
  * Called by the device task only. */
-void DrainReadRing(struct Opener *opener);
+void DrainReadRing(struct GenetUnit *unit, struct Opener *opener);
 
 /* Inline function for fast packet type queue lookup */
 static inline struct MinList *GetPacketTypeQueue(struct Opener *opener, u16 packetType)

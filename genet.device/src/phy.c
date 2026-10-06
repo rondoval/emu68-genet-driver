@@ -11,7 +11,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -25,6 +25,7 @@
 #include <device.h>
 
 #include <genet/phy.h>
+#include <genet/phy_priv.h>
 #include <genet/mii.h>
 
 /**
@@ -78,7 +79,7 @@ static inline void mdio_start(struct GenetUnit *unit)
 	mmio_set32(unit->genetBase + MDIO_CMD, MDIO_START_BUSY);
 }
 
-static s32 mdio_write(struct phy_device *phy, u8 reg, u16 value)
+s32 mdio_write(struct phy_device *phy, u8 reg, u16 value)
 {
 	// Kprintf("[genet] %s: phy=%ld reg=%ld value=0x%04lx\n", __func__, phy->addr, reg, value);
 	struct GenetUnit *unit = phy->unit;
@@ -95,7 +96,7 @@ static s32 mdio_write(struct phy_device *phy, u8 reg, u16 value)
 						   MDIO_START_BUSY, FALSE, 20);
 }
 
-static s32 mdio_read(struct phy_device *phy, u8 reg)
+s32 mdio_read(struct phy_device *phy, u8 reg)
 {
 	// Kprintf("[genet] %s: phy=%ld reg=%ld\n", __func__, phy->addr, reg);
 	struct GenetUnit *unit = phy->unit;
@@ -497,6 +498,13 @@ static s32 genphy_parse_link(struct phy_device *phydev)
 s32 phy_config(struct phy_device *phydev)
 {
 	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
+
+	/* Vendor bring-up first: phy_create() has just soft-reset the PHY, which
+	 * clears the shadow registers these settings live in. Nothing below
+	 * resets it again (genphy_config_aneg only sets BMCR_ANRESTART). */
+	if (phy_is_bcm54xx(phydev))
+		bcm54xx_config_init(phydev);
+
 	u32 features = (SUPPORTED_TP | SUPPORTED_MII | SUPPORTED_AUI | SUPPORTED_FIBRE |
 					SUPPORTED_BNC);
 
@@ -627,6 +635,7 @@ static s32 get_phy_id(struct phy_device *phydev)
 
 struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 {
+	struct ExecBase *SysBase = dev->sysBase;
 	KprintfT("[genet] %s: base=0x%lx phyaddr=%ld\n", __func__, dev->genetBase, dev->phyaddr);
 	struct phy_device *phydev = pool_alloc(dev->metaPool, sizeof(*phydev));
 	if (!phydev)
@@ -637,6 +646,7 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 	phydev->features = PHY_GBIT_FEATURES | SUPPORTED_MII |
 					   SUPPORTED_AUI | SUPPORTED_FIBRE |
 					   SUPPORTED_BNC;
+	phydev->sysBase = dev->sysBase;
 	phydev->unit = dev;
 	phydev->duplex = DUPLEX_HALF;
 	phydev->link = FALSE;
@@ -667,6 +677,7 @@ struct phy_device *phy_create(struct GenetUnit *dev, phy_interface_t interface)
 
 void phy_destroy(struct phy_device *phydev)
 {
+	struct ExecBase *SysBase = phydev->sysBase;
 	KprintfT("[genet] %s: phy=%ld\n", __func__, phydev->addr);
 	pool_free(phydev->unit->metaPool, phydev);
 }

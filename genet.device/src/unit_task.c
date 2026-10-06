@@ -4,7 +4,7 @@
 #include <clib/timer_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #include <proto/timer.h>
 #endif
@@ -29,6 +29,7 @@ LONG UnitSubmitControl(struct GenetUnit *unit, UWORD command, union UnitControlP
 {
     if (unit == NULL || unit->controlPort == NULL)
         return 0;
+    struct ExecBase *SysBase = unit->sysBase;
 
     struct MsgPort *replyPort = CreateMsgPort();
     if (replyPort == NULL)
@@ -58,8 +59,9 @@ void UnitSubmitControlAsync(struct GenetUnit *unit, UWORD command, union UnitCon
 {
     if (unit == NULL || unit->controlPort == NULL)
         return;
+    struct ExecBase *SysBase = unit->sysBase;
 
-    struct UnitControlMsg *msg = pool_alloc(unit->metaPool, sizeof(struct UnitControlMsg));
+    struct UnitControlMsg *msg = AllocMem(sizeof(struct UnitControlMsg), MEMF_PUBLIC | MEMF_CLEAR);
     if (msg == NULL)
     {
         Kprintf("[genet] %s: Failed to allocate message for async unit control\n", __func__);
@@ -75,6 +77,7 @@ void UnitSubmitControlAsync(struct GenetUnit *unit, UWORD command, union UnitCon
 
 static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
 
     // Initialize the built in msg port, we'll receive commands here
@@ -187,7 +190,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 if(cmsg->msg.mn_ReplyPort != NULL)
                     ReplyMsg(&cmsg->msg);
                 else
-                    pool_free(unit->metaPool, cmsg);
+                    FreeMem(cmsg, sizeof(struct UnitControlMsg));
             }
             if (budget == 0)
             {
@@ -223,22 +226,17 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                 Kprintf("[genet] %s: PHY link up event\n", __func__);
             }
             
-            /* TX completion processing */
-/*            
-            if (likely((status & UMAC_IRQ_TXDMA_DONE) && unit->state == STATE_ONLINE))
-            {
-                bcmgenet_tx_reclaim(unit, unit->budget);
-                mmio_write32(UMAC_IRQ_TXDMA_DONE,
-                        BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
-                bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
-            }
-*/
+            /* Ring room for writes waiting in the backlog (TXDMA_DONE is
+             * only unmasked while there are any) */
+            if (unlikely(status & UMAC_IRQ_TXDMA_DONE) && unit->state == STATE_ONLINE)
+                bcmgenet_tx_drain(unit);
+
             /* Receive processing */
             if (likely((status & UMAC_IRQ_RXDMA_DONE) && unit->state == STATE_ONLINE))
             {
                 KprintfT("[genet] %s: RX signal received, processing packets\n", __func__);
                 for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
-                    DrainReadRing((struct Opener *)node);
+                    DrainReadRing(unit, (struct Opener *)node);
                 budget = unit->budget;
                 s32 res = bcmgenet_gmac_eth_rx(unit, budget);
                 if (res > 0)
@@ -295,6 +293,16 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 free_ports:
     DeleteIORequest(&packetTimerReq->tr_node);
     DeleteMsgPort(microHZTimerPort);
+    /* Whatever arrived after the last loop pass: a waiting submitter gets
+     * its reply, an async message its memory back. */
+    struct UnitControlMsg *cmsg;
+    while ((cmsg = (struct UnitControlMsg *)GetMsg(unit->controlPort)) != NULL)
+    {
+        if (cmsg->msg.mn_ReplyPort != NULL)
+            ReplyMsg(&cmsg->msg);
+        else
+            FreeMem(cmsg, sizeof(struct UnitControlMsg));
+    }
     DeleteMsgPort(unit->controlPort);
 free_signals:
     FreeSignal(unit->irq0_signal);
@@ -306,6 +314,7 @@ free_signals:
 
 u32 UnitTaskStart(struct GenetUnit *unit)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: genet task starting\n", __func__);
 	const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
 
@@ -369,6 +378,7 @@ u32 UnitTaskStart(struct GenetUnit *unit)
 
 void UnitTaskStop(struct GenetUnit *unit)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: genet task stopping\n", __func__);
 
     struct MsgPort *timerPort = CreateMsgPort();

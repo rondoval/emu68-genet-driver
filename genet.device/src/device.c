@@ -4,7 +4,7 @@
 #include <clib/utility_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #include <proto/utility.h>
 #endif
@@ -41,13 +41,13 @@
 #define DEVICE_REVISION 3
 #endif
 
-LONG __attribute__((used, no_reorder)) doNotExecute(void);
+LONG __attribute__((used, section(".text.entry"))) doNotExecute(void);
 
 /*
     Put the function at the very beginning of the file in order to avoid
     unexpected results when user executes the device by mistake
 */
-LONG __attribute__((used, no_reorder)) doNotExecute(void)
+LONG __attribute__((used, section(".text.entry"))) doNotExecute(void)
 {
     return -1;
 }
@@ -69,7 +69,8 @@ static const APTR initTable[4];
 
 /* [genet] perf slot names — rodata; order matches enum GenetProfSlot. */
 static const char *const genet_perf_names[GP_SLOT_COUNT] = {
-    "rx_drain", "tx_submit", "tx_publish",
+    "rx_drain", "rx_scan", "rx_copy", "rx_reply", "tx_submit", "tx_publish",
+    "tx_claim", "tx_copy", "tx_clean", "tx_ring",
 };
 
 /*
@@ -78,7 +79,7 @@ static const char *const genet_perf_names[GP_SLOT_COUNT] = {
     object will be initialized (coldstart means, before dos.library, after scheduler
     is started)
 */
-static struct Resident const genetDeviceResident __attribute__((used)) = {
+static struct Resident const genetDeviceResident __attribute__((used, section(".text.modhdr"))) = {
     RTC_MATCHWORD,
     (struct Resident *)&genetDeviceResident,
     (APTR)&endOfCode,
@@ -95,7 +96,7 @@ static struct Resident const genetDeviceResident __attribute__((used)) = {
     can be sizeof(struct Library), sizeof(struct Device) or any size necessary to
     store user defined object extending the Device structure.
 */
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6"));
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *SysBase asm("a6"));
 
 static const APTR funcTable[];
 static const APTR initTable[4] = {
@@ -122,6 +123,7 @@ static const APTR funcTable[] = {
 
 static void genet_close_libraries(struct GenetDevice *base)
 {
+    struct ExecBase *SysBase = base->sysBase;
     if (base->gic400Base != NULL)
     {
         CloseLibrary(base->gic400Base);
@@ -137,6 +139,7 @@ static void genet_close_libraries(struct GenetDevice *base)
 
 static s32 genet_open_libraries(struct GenetDevice *base)
 {
+    struct ExecBase *SysBase = base->sysBase;
     if (base->utilityBase != NULL && base->gic400Base != NULL)
         return 0;
 
@@ -171,12 +174,11 @@ static void genet_reset_prepare(APTR user)
         bcmgenet_reset_quiesce(unit);
 }
 
-APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *_SysBase asm("a6"))
+APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *SysBase asm("a6"))
 {
-    (void)_SysBase;
     KprintfT("[genet] %s: Initializing device\n", __func__);
 
-    if (!emu68_has_dcache_range_ops())
+    if (!emu68_has_dcache_range_ops(SysBase))
     {
         Kprintf("[genet] %s: rangeops build, but Emu68 lacks dcache-range-ops rev 1 - refusing to load. Install the standard driver package or update Emu68.\n", __func__);
         ULONG size = (ULONG)base->device.dd_Library.lib_NegSize + base->device.dd_Library.lib_PosSize;
@@ -185,12 +187,13 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     }
 
     base->segList = segList;
+    base->sysBase = SysBase;
     base->device.dd_Library.lib_Revision = DEVICE_REVISION;
     base->unit = NULL;
     base->utilityBase = NULL;
     base->gic400Base = NULL;
 
-    if (!reset_guard_install(&base->resetGuard, genet_reset_prepare, base,
+    if (!reset_guard_install(&base->resetGuard, SysBase, genet_reset_prepare, base,
                              (CONST_STRPTR)"genet.device"))
         Kprintf("[genet] %s: reset guard install failed\n", __func__);
 
@@ -205,7 +208,7 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
         func;                                                 \
     })
 
-static struct Opener *createOpener(struct TagItem *tags, struct Library *UtilityBase, const struct GenetRuntimeConfig *config)
+static struct Opener *createOpener(struct ExecBase *SysBase, struct TagItem *tags, struct Library *UtilityBase, const struct GenetRuntimeConfig *config)
 {
     struct Opener *opener = NULL;
     opener = AllocMem(sizeof(struct Opener), MEMF_PUBLIC | MEMF_CLEAR);
@@ -264,6 +267,7 @@ static struct Opener *createOpener(struct TagItem *tags, struct Library *Utility
 void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
              ULONG flags asm("d1"), struct GenetDevice *base asm("a6"))
 {
+    struct ExecBase *SysBase = base->sysBase;
     BOOL firstOpen = FALSE;
     BOOL createdUnit = FALSE;
 
@@ -292,6 +296,7 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
             io->ios2_Req.io_Error = IOERR_OPENFAIL;
             return;
         }
+        base->unit->sysBase = base->sysBase;
         base->unit->device = base;
         base->unit->perf = (struct perf){
             "genet", genet_perf_names, base->unit->perfSlots, GP_SLOT_COUNT};
@@ -320,14 +325,14 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     if (base->unit->unit.unit_OpenCnt == 0)
     {
         /* We're reloading configuration only if the device was previously not in use */
-        LoadGenetRuntimeConfig(&base->runtimeConfig);
+        LoadGenetRuntimeConfig(&base->runtimeConfig, SysBase);
         DumpGenetRuntimeConfig(&base->runtimeConfig);
     }
 
     struct Opener *opener = NULL;
     if (io->ios2_Req.io_Message.mn_Length >= sizeof(struct IOSana2Req))
     {
-        opener = createOpener(io->ios2_BufferManagement, base->utilityBase, &base->runtimeConfig);
+        opener = createOpener(SysBase, io->ios2_BufferManagement, base->utilityBase, &base->runtimeConfig);
         if (opener == NULL)
         {
             io->ios2_Req.io_Error = IOERR_OPENFAIL;
@@ -367,6 +372,7 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
 
 ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
+    struct ExecBase *SysBase = base->sysBase;
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
     KprintfT("[genet] %s: Closing device\n", __func__);
 
@@ -410,6 +416,7 @@ ULONG closeLib(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6
 
 ULONG expungeLib(struct GenetDevice *base asm("a6"))
 {
+    struct ExecBase *SysBase = base->sysBase;
     KprintfT("[genet] %s: Expunging device\n", __func__);
     if (base->device.dd_Library.lib_OpenCnt > 0)
     {

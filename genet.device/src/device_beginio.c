@@ -3,7 +3,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -15,7 +15,9 @@
 static inline void Do_CMD_WRITE(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: CMD_WRITE\n", __func__);
+    io->ios2_Req.io_Error = S2ERR_NO_ERROR;
 
     if (io->ios2_Req.io_Command == S2_BROADCAST)
     {
@@ -28,24 +30,27 @@ static inline void Do_CMD_WRITE(struct IOSana2Req *io)
 #pragma GCC diagnostic pop
     }
 
+    /* Fast path only; the check that counts is inside bcmgenet_xmit, under
+     * the same Forbid that UnitOffline takes to flip the state. */
     if (unlikely(unit->state != STATE_ONLINE))
     {
         Kprintf("[genet] %s: Unit is offline, cannot write\n", __func__);
         io->ios2_WireError = S2WERR_UNIT_OFFLINE;
         io->ios2_Req.io_Error = S2ERR_OUTOFSERVICE;
     }
-    else
-    {
-        bcmgenet_xmit(io, unit);
-    }
+    /* A write that waits for ring room belongs to the unit task from here
+     * on - it may already be replied: do not touch it. */
+    else if (bcmgenet_xmit(io, unit) == COMMAND_SCHEDULED)
+        return;
 
     if (!(io->ios2_Req.io_Flags & IOF_QUICK))
         ReplyMsg((struct Message *)io);
 }
 
-void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6") __attribute__((unused)))
+void beginIO(struct IOSana2Req *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = base->sysBase;
     UWORD cmd = io->ios2_Req.io_Command;
 
     if (cmd == CMD_WRITE || cmd == S2_BROADCAST || cmd == S2_MULTICAST)

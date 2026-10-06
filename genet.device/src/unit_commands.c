@@ -6,7 +6,7 @@
 #define __NOLIBBASE__
 #define TIMER_BASE_NAME unitTimerBase
 #include <proto/timer.h>
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -52,13 +52,14 @@ static const u16 GENET_SupportedCommands[] = {
     0};
 
 /* Mask of events known by the driver */
-#define EVENT_MASK (S2EVENT_ONLINE | S2EVENT_OFFLINE |       \
-                    S2EVENT_TX | S2EVENT_RX | S2EVENT_BUFF | \
+#define EVENT_MASK (S2EVENT_ONLINE | S2EVENT_OFFLINE | S2EVENT_CONFIGCHANGED | \
+                    S2EVENT_TX | S2EVENT_RX | S2EVENT_BUFF |                   \
                     S2EVENT_ERROR | S2EVENT_HARDWARE | S2EVENT_SOFTWARE)
 
 /* Report events to this unit */
 void ReportEvents(struct GenetUnit *unit, u32 eventSet)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: Reporting events %08lx\n", __func__, (ULONG)eventSet);
 
     /* Report event to every listener of every opener accepting the mask */
@@ -87,6 +88,7 @@ void ReportEvents(struct GenetUnit *unit, u32 eventSet)
 
 void UnitCancelEvent(struct IOSana2Req *io)
 {
+    struct ExecBase *SysBase = ((struct GenetUnit *)io->ios2_Req.io_Unit)->sysBase;
     Remove((struct Node *)io);
     io->ios2_Req.io_Error = IOERR_ABORTED;
     io->ios2_WireError = S2WERR_GENERIC_ERROR;
@@ -95,6 +97,7 @@ void UnitCancelEvent(struct IOSana2Req *io)
 
 void UpdateThroughputStats(struct GenetUnit *unit)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     struct throughput_stats *throughput = &unit->throughputStats;
     struct IOSana2Req *io = throughput->req;
     if (io == NULL)
@@ -127,6 +130,7 @@ void UpdateThroughputStats(struct GenetUnit *unit)
 
 BOOL UnitCancelThroughput(struct GenetUnit *unit, struct IOSana2Req *io)
 {
+    struct ExecBase *SysBase = unit->sysBase;
     struct throughput_stats *throughput = &unit->throughputStats;
 
     if (throughput->req != io)
@@ -253,6 +257,7 @@ static u32 Do_S2_GETSPECIALSTATS(struct IOSana2Req *io)
     idx = emit_ss(rec, max, idx, GENET_SS_RX_ARP_IP_DROPPED,  "rx_arp_ip_dropped",  st->rx_arp_ip_dropped);
 
     idx = emit_ss(rec, max, idx, GENET_SS_TX_DROPPED,         "tx_dropped",         st->tx_dropped);
+    idx = emit_ss(rec, max, idx, GENET_SS_TX_QUEUED,          "tx_queued",          st->tx_queued);
     idx = emit_ss(rec, max, idx, GENET_SS_TX_DMA,             "tx_dma",             st->tx_dma);
     idx = emit_ss(rec, max, idx, GENET_SS_TX_COPY,            "tx_copy",            st->tx_copy);
     idx = emit_ss(rec, max, idx, GENET_SS_IRQ0_COUNT,         "irq0_count",         st->irq0_count);
@@ -370,6 +375,7 @@ static u32 Do_S2_SAMPLE_THROUGHPUT(struct IOSana2Req *io)
 static u32 Do_S2_ONEVENT(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: S2_ONEVENT %08lx\n", __func__, io->ios2_WireError);
 
     /* If any unsupported events are requested, report an error */
@@ -403,6 +409,7 @@ static u32 Do_S2_ONEVENT(struct IOSana2Req *io)
 static u32 Do_CMD_FLUSH(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: CMD_FLUSH\n", __func__);
 
     struct IOSana2Req *req;
@@ -414,13 +421,15 @@ static u32 Do_CMD_FLUSH(struct IOSana2Req *io)
         ReplyMsg((struct Message *)req);
     }
 
+    bcmgenet_tx_backlog_abort(unit, IOERR_ABORTED, 0);
+
     /* For every opener, flush all internal queues */
     for (struct MinNode *node = unit->openers.mlh_Head; node->mln_Succ; node = node->mln_Succ)
     {
         struct Opener *opener = (struct Opener *)node;
 
         /* Drain the SPSC ring first — entries land in the MinLists below. */
-        DrainReadRing(opener);
+        DrainReadRing(unit, opener);
 
         while ((req = (struct IOSana2Req *)RemHeadMinList(&opener->orphanQueue)))
         {
@@ -489,6 +498,7 @@ static u32 Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
 static inline u32 Do_CMD_READ(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: CMD_READ for packet type 0x%lx\n", __func__, io->ios2_PacketType);
 
     if (unlikely(unit->state != STATE_ONLINE))
@@ -502,7 +512,7 @@ static inline u32 Do_CMD_READ(struct IOSana2Req *io)
     struct Opener *opener = io->ios2_BufferManagement;
     u16 packetType = (u16)io->ios2_PacketType;
 
-    DrainReadRing(opener);
+    DrainReadRing(unit, opener);
     io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
     AddTailMinList(GetPacketTypeQueue(opener, packetType), (struct MinNode *)io);
 
@@ -513,6 +523,7 @@ static inline u32 Do_CMD_READ(struct IOSana2Req *io)
 static inline u32 Do_S2_READORPHAN(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
     KprintfT("[genet] %s: S2_READORPHAN\n", __func__);
 
     if (unlikely(unit->state != STATE_ONLINE))
@@ -524,7 +535,7 @@ static inline u32 Do_S2_READORPHAN(struct IOSana2Req *io)
     }
 
     struct Opener *opener = io->ios2_BufferManagement;
-    DrainReadRing(opener);
+    DrainReadRing(unit, opener);
     io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
     AddTailMinList(&opener->orphanQueue, (struct MinNode *)io);
     return COMMAND_SCHEDULED;
@@ -613,7 +624,7 @@ static u32 Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
 
     if (unit->state == STATE_UNCONFIGURED)
     {
-        CopyMem(io->ios2_SrcAddr, unit->currentMacAddress, sizeof(unit->currentMacAddress));
+        memcpy(unit->currentMacAddress, io->ios2_SrcAddr, sizeof(unit->currentMacAddress));
         KprintfT("[genet] %s: Setting current MAC address to %02lx:%02lx:%02lx:%02lx:%02lx:%02lx\n",
                  __func__,
                  unit->currentMacAddress[0], unit->currentMacAddress[1],
@@ -642,7 +653,7 @@ static u32 Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
         ReportEvents(unit, S2EVENT_SOFTWARE | S2EVENT_ERROR);
     }
 
-    CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, sizeof(unit->currentMacAddress));
+    memcpy(io->ios2_SrcAddr, unit->currentMacAddress, sizeof(unit->currentMacAddress));
     return COMMAND_PROCESSED;
 }
 
@@ -667,6 +678,7 @@ static u32 Do_S2_OFFLINE(struct IOSana2Req *io)
 void ProcessCommand(struct IOSana2Req *io)
 {
     struct GenetUnit *unit = (struct GenetUnit *)io->ios2_Req.io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
 
     u32 complete = COMMAND_SCHEDULED;
 
@@ -704,8 +716,8 @@ void ProcessCommand(struct IOSana2Req *io)
 
         case S2_GETSTATIONADDRESS:
             KprintfT("[genet] %s: S2_GETSTATIONADDRESS\n", __func__);
-            CopyMem(unit->localMacAddress, io->ios2_DstAddr, 6);
-            CopyMem(unit->currentMacAddress, io->ios2_SrcAddr, 6);
+            memcpy(io->ios2_DstAddr, unit->localMacAddress, 6);
+            memcpy(io->ios2_SrcAddr, unit->currentMacAddress, 6);
             io->ios2_Req.io_Error = S2ERR_NO_ERROR;
             complete = COMMAND_PROCESSED;
             break;

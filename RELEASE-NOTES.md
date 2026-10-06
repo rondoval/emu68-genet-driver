@@ -1,3 +1,69 @@
+# Release notes — genet.device 3.16
+
+Changes since 3.15.
+
+Sending and receiving a frame costs about half what it did, plus a batch of
+bug fixes. Installation is unchanged.
+
+---
+
+## Breaking changes
+
+`UNIT_TASK_PRIORITY` in `ENV:genet.prefs` now defaults to 15 and is clamped to 6–19.
+
+---
+
+## Improvements
+
+### Faster send and receive
+
+A write now takes one short `Forbid()` instead of three: each ring descriptor
+owns a fixed staging slot, so nothing is allocated or freed per frame, and one
+barrier before the doorbell replaces a barrier per descriptor store. Payloads
+are staged longword-aligned so a stack's copy callback can move longwords. The
+receive pass invalidates the cache for all ready frames in one batch.
+
+### Task priority 15
+
+The driver task used to run at 5, below the file handlers and the network
+stack. It now runs at 15, matching the 4.x driver and still below
+`input.device`. Out-of-range values no longer wrap round to negative ones.
+
+### Gigabit transmit timing
+
+The driver now sets the PHY's transmit clock delay itself instead of relying on
+its power-on default. That default is gone after the 4.x driver has run, which
+left a link that came up but sent nothing. The PHY's autonomous power saving is
+switched off as well.
+
+---
+
+## Bug fixes
+
+- `Offline` followed by `Online` crashed the driver. Each cycle also leaked
+  memory, and a failed `Online` could not be retried. All three are fixed.
+- After a warm reboot from the 4.x driver or Linux, received frames were read
+  with a leftover 64-byte status block in front. The buffer configuration is
+  now written outright rather than inherited.
+- An `S2_PacketFilter` hook that declined a frame lost the `CMD_READ` request
+  it was offered; the request now stays pending.
+- `S2_ONEVENT` now accepts `S2EVENT_CONFIGCHANGED`.
+- A write larger than a staging slot (2028 bytes) overran the next buffer; it
+  now fails with `S2ERR_MTU_EXCEEDED`.
+- A write that found the transmit ring full failed with `S2ERR_NO_RESOURCES`,
+  so a sender faster than the wire lost frames - with large UDP datagrams,
+  every datagram. It now waits for room and is replied once it is on the ring
+  (`genet-stats`: `tx_queued`).
+- Going offline while another task was writing could free the ring under it.
+- Control messages from other tasks came from a pool the driver's task was
+  using concurrently; they now use `AllocMem`.
+- A received descriptor shorter than 16 bytes is rejected instead of wrapping
+  its length.
+- The consumer index is written back only after the CPU has finished reading
+  the buffers.
+
+---
+
 # Release notes — genet.device 3.15
 
 Changes since 3.14.

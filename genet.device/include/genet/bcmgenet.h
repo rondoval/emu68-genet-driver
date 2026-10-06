@@ -9,7 +9,11 @@ struct IOSana2Req;
 
 #define BCMGENET_REG(unit, offset) ((unit)->genetBase + (offset))
 
+/* Lifetimes: probe/unconfigure bracket the PHY (once per configured unit);
+ * start/stop bracket the rings, buffers and interrupt (once per online). A
+ * failed start is unwound by stop, which is safe on any partial stage. */
 u32 bcmgenet_eth_probe(struct GenetUnit *unit);
+void bcmgenet_eth_unconfigure(struct GenetUnit *unit);
 u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit);
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit);
 void bcmgenet_reset_quiesce(struct GenetUnit *unit);
@@ -28,6 +32,7 @@ void bcmgenet_perf_tick(struct GenetUnit *unit);
 
 /* TX functions */
 u32 bcmgenet_xmit(struct IOSana2Req *io, struct GenetUnit *unit);
-void bcmgenet_tx_reclaim(struct GenetUnit *unit, u16 budget);
+void bcmgenet_tx_drain(struct GenetUnit *unit);
+void bcmgenet_tx_backlog_abort(struct GenetUnit *unit, BYTE error, ULONG wireError);
 
 #endif

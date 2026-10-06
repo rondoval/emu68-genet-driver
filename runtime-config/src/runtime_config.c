@@ -5,7 +5,7 @@
 #else
 #define __NOLIBBASE__
 #include <proto/dos.h>
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -30,7 +30,7 @@ static void ApplyDefaults(struct GenetRuntimeConfig *config)
     config->tx_coalesce_frames = DEFAULT_TX_COALESCE_FRAMES;
 }
 
-void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
+void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *SysBase)
 {
     KprintfT("[genet] %s: Loading defaults\n", __func__);
     ApplyDefaults(config);
@@ -86,7 +86,13 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config)
                 if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_TASK_PRIORITY") == 0)
                 {
                     if (StrToLong((STRPTR)val, &parsed))
+                    {
+                        if (parsed < UNIT_TASK_PRIORITY_MIN)
+                            parsed = UNIT_TASK_PRIORITY_MIN;
+                        if (parsed > UNIT_TASK_PRIORITY_MAX)
+                            parsed = UNIT_TASK_PRIORITY_MAX;
                         config->unit_task_priority = (s8)parsed;
+                    }
                 }
                 else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_STACK_SIZE") == 0)
                 {

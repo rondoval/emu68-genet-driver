@@ -7,7 +7,19 @@
 #define DEVICE_PRIORITY -90
 
 /* Defaults (compile-time fallbacks) */
-#define DEFAULT_UNIT_TASK_PRIORITY 5
+/* The unit task is the bottom half of the receive interrupt: it has to run
+ * when the interrupt says so. Exec does not preempt among equals, so at the
+ * priority of the AmigaDOS handler processes (10) a handler busy with a packet
+ * keeps it off the CPU for milliseconds. 15 sits above the handlers and the pump,
+ * below input.device (20), and far above dynamic-scheduler managed bands (Executive
+ * reprioritizes pri <= 5). Same value and reasoning as the 4.x driver. */
+#define DEFAULT_UNIT_TASK_PRIORITY 15
+/* Clamped: the field is an s8, so an unclamped 200 would land at -56 and park
+ * the unit task below every dynamic-scheduler band. Below the floor the driver
+ * loses to the handlers it must outrun; above the ceiling it outranks
+ * input.device (20) and the keyboard stops answering. */
+#define UNIT_TASK_PRIORITY_MIN 6
+#define UNIT_TASK_PRIORITY_MAX 19
 #define DEFAULT_UNIT_STACK_BYTES 65536UL /* 64 KB */
 
 #define DEFAULT_USE_DMA 0
@@ -33,7 +45,8 @@ struct GenetRuntimeConfig
     u32 tx_coalesce_frames;
 };
 
-void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config);
+struct ExecBase;
+void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *SysBase);
 /* Debug-only; compiled out (call included) without DEBUG. */
 #ifdef DEBUG
 void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config);

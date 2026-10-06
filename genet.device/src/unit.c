@@ -3,7 +3,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -44,6 +44,7 @@ static void SetupRGMII(struct GenetUnit *unit)
 
 u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *opener)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Opening unit %lu with flags %lx\n", __func__, unitNumber, flags);
 	if (unit->unit.unit_OpenCnt > 0)
 	{
@@ -68,7 +69,7 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 	 * GENET DMA engine can reach, so the DMA pool is region-restricted; with no device
 	 * tree there is no reachable region and we refuse to open.  CPU-only metadata uses a
 	 * separate ordinary Exec pool. */
-	dma_mem_init(&unit->dma_ctx);
+	dma_mem_init(&unit->dma_ctx, unit->sysBase);
 	unit->dmaPool = dma_pool_create(&unit->dma_ctx);
 	unit->metaPool = CreatePool(MEMF_FAST | MEMF_PUBLIC, 16384, 8192);
 
@@ -83,6 +84,7 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags, struct Opener *o
 	unit->multicastCount = 0;
 
 	_NewMinList(&unit->openers);
+	_NewMinList(&unit->txBacklog);
 
 	result = DevTreeParse(unit);
 	if (result != S2ERR_NO_ERROR)
@@ -145,7 +147,9 @@ u32 UnitOnline(struct GenetUnit *unit)
 	if (result != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to start UMAC: %ld\n", __func__, result);
-		bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
+		/* Unwinds whichever stages the start reached; the unit stays
+		 * configured, so a retried S2_ONLINE needs no reconfiguration. */
+		bcmgenet_gmac_eth_stop(unit);
 		return result;
 	}
 
@@ -155,13 +159,21 @@ u32 UnitOnline(struct GenetUnit *unit)
 
 void UnitOffline(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Stopping UMAC\n", __func__);
+	/* Under Forbid: bcmgenet_xmit re-checks the state inside its own Forbid
+	 * section, so once this store is visible no writer is inside the ring
+	 * or the staging slots that the stop below frees. */
+	Forbid();
 	unit->state = STATE_OFFLINE;
-	bcmgenet_gmac_eth_stop(unit); // This may be needed to free PHY memory
+	Permit();
+	bcmgenet_gmac_eth_stop(unit);
+	bcmgenet_tx_backlog_abort(unit, S2ERR_OUTOFSERVICE, S2WERR_UNIT_OFFLINE);
 }
 
 u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Closing unit %lu with opener %lx\n", __func__, unit->unitNumber, (ULONG)opener);
 
 	unit->unit.unit_OpenCnt--;
@@ -173,6 +185,9 @@ u32 UnitClose(struct GenetUnit *unit, struct Opener *opener)
 			UnitOffline(unit);
 		}
 		UnitTaskStop(unit);
+		/* After the task is gone: its IRQ bottom half dereferences the PHY,
+		 * and a status word latched before the stop could still be pending. */
+		bcmgenet_eth_unconfigure(unit);
 		dma_pool_delete(unit->dmaPool);
 		unit->dmaPool = NULL;
 		DeletePool(unit->metaPool);

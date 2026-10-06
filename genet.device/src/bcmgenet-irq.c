@@ -3,7 +3,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -41,46 +41,4 @@ void bcmgenet_intr_disable(struct GenetUnit *unit)
 		   BCMGENET_REG(unit, GENET_INTRL2_1_OFF + INTRL2_CPU_MASK_SET));
 	mmio_write32(0xFFFFFFFF,
 		   BCMGENET_REG(unit, GENET_INTRL2_1_OFF + INTRL2_CPU_CLEAR));
-}
-
-/* bcmgenet_isr0: handle other stuff.  Returns 1 if the interrupt was ours, 0
- * otherwise (the AmigaOS interrupt-server "handled?" convention). */
-ULONG bcmgenet_isr0(struct ExecBase *execBase asm("a6"), struct GenetUnit *unit asm("a1"), ULONG irq asm("d0"))
-{
-	(void)irq;
-	(void)execBase;
-
-	/* Read irq status */
-	u32 status = mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_STAT)) &
-				   ~mmio_read32(BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_STATUS));
-
-	/* Nothing pending for us — report not-handled. */
-	if (!status)
-		return 0;
-
-	/* Clear before handling so any new events after this point re-assert cleanly */
-	mmio_write32(status, BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
-
-	KprintfT("[genet] %s: IRQ0 status: 0x%08lX unit: 0x%08lx\n", __func__, (ULONG)status, (ULONG)unit);
-
-	/* Disable both TX and RX until the bottom-half catches up */
-	if (status & UMAC_IRQ_TXDMA_DONE)
-	{
-		bcmgenet_irq0_disable(unit, UMAC_IRQ_TXDMA_DONE);
-		unit->internalStats.irq0_tx_count++;
-	}
-
-	if (status & UMAC_IRQ_RXDMA_DONE)
-	{
-		bcmgenet_irq0_disable(unit, UMAC_IRQ_RXDMA_DONE);
-		unit->internalStats.irq0_rx_count++;
-	}
-
-	unit->internalStats.irq0_count++;
-	if ((status & (UMAC_IRQ_TXDMA_DONE | UMAC_IRQ_RXDMA_DONE)) == 0)
-		unit->internalStats.irq0_other_count++;
-	/* Save irq status for bottom-half processing. */
-	unit->irq0_status |= status;
-	Signal(unit->task, 1UL << unit->irq0_signal);
-	return 1;
 }

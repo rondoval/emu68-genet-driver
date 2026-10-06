@@ -21,7 +21,7 @@
 #include <clib/gic400_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 
 #define GIC400_BASE_NAME unit->device->gic400Base
@@ -69,11 +69,19 @@ static void bcmgenet_umac_reset(struct GenetUnit *unit)
 
 	mmio_write32(ENET_MAX_MTU_SIZE, BCMGENET_REG(unit, UMAC_MAX_FRAME_LEN));
 
-	/* init rx registers, enable ip header optimization */
-	u32 reg = mmio_read32(BCMGENET_REG(unit, RBUF_CTRL));
-	reg |= RBUF_ALIGN_2B;
-	// // RBUF_64B_EN would be set here, but we don't use Receive Status Block
-	mmio_write32(reg, BCMGENET_REG(unit, RBUF_CTRL));
+	/* The RBUF/TBUF control registers survive the flush above, CMD_SW_RESET
+	 * and a warm reboot, so they hold whatever ran before us: the netdev
+	 * genet.device 4.x or Linux enable the 64-byte status block
+	 * and the RX checksum engine, and this driver would then read a status
+	 * block as the Ethernet header. */
+	mmio_write32(RBUF_ALIGN_2B, BCMGENET_REG(unit, RBUF_CTRL));
+	mmio_write32(0, BCMGENET_REG(unit, RBUF_CHK_CTRL));
+	mmio_clear32(BCMGENET_REG(unit, TBUF_CTRL), TBUF_64B_EN);
+
+	/* EEE and buffer-block power management off, both directions — the same
+	 * survive-reset class; RBUF EEE/PM in particular breaks reception. */
+	mmio_clear32(BCMGENET_REG(unit, RBUF_ENERGY_CTRL), ENERGY_EEE_EN | ENERGY_PM_EN);
+	mmio_clear32(BCMGENET_REG(unit, TBUF_ENERGY_CTRL), ENERGY_EEE_EN | ENERGY_PM_EN);
 
 	mmio_write32(1, BCMGENET_REG(unit, RBUF_TBUF_SIZE_CTRL));
 
@@ -96,10 +104,14 @@ static void bcmgenet_gmac_write_hwaddr(struct GenetUnit *unit, const u8 *addr)
 	mmio_write32(reg, BCMGENET_REG(unit, UMAC_MAC1));
 }
 
+/* Stopping the engine means the ring's own enable as well: a descriptor index is
+ * only writable while its ring is disabled (the ring inits rely on that). */
+#define GENET_DMA_OFF (DMA_EN | (1u << (DEFAULT_Q + DMA_RING_BUF_EN_SHIFT)))
+
 static void bcmgenet_disable_dma(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Disabling DMA\n", __func__);
-	mmio_clear32(BCMGENET_REG(unit, TDMA_REG_BASE + DMA_CTRL), DMA_EN);
+	mmio_clear32(BCMGENET_REG(unit, TDMA_REG_BASE + DMA_CTRL), GENET_DMA_OFF);
 	for (u32 timeout = 0; timeout < DMA_TIMEOUT_VAL; timeout++)
 	{
 		u32 tdma = mmio_read32(unit->genetBase + TDMA_REG_BASE + DMA_CTRL);
@@ -114,7 +126,7 @@ static void bcmgenet_disable_dma(struct GenetUnit *unit)
 	// TODO timer?
 	delay_ms(10);
 
-	mmio_clear32(BCMGENET_REG(unit, RDMA_REG_BASE + DMA_CTRL), DMA_EN);
+	mmio_clear32(BCMGENET_REG(unit, RDMA_REG_BASE + DMA_CTRL), GENET_DMA_OFF);
 	for (u32 timeout = 0; timeout < DMA_TIMEOUT_VAL; timeout++)
 	{
 		u32 rdma = mmio_read32(unit->genetBase + RDMA_REG_BASE + DMA_CTRL);
@@ -141,6 +153,7 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 
 s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	PERF_T0(t_drain);
 	u32 rx_prod_reg = mmio_read32(BCMGENET_REG(unit, RDMA_PROD_INDEX));
 	u16 discards = (u16)((rx_prod_reg >> DMA_P_INDEX_DISCARD_CNT_SHIFT) & DMA_P_INDEX_DISCARD_CNT_MASK);
@@ -163,36 +176,44 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 		}
 	}
 
-	KprintfT("[genet] %s: rx_prod_index=%lu, rx_cons_index=%lu\n", __func__, (ULONG)rx_prod_index, (ULONG)unit->rx_ring.rx_cons_index);
-
 	u16 rx_cons_index = unit->rx_ring.rx_cons_index;
 	u16 to_process = (u16)((u32)(rx_prod_index - rx_cons_index) & DMA_C_INDEX_MASK);
 	if (to_process > budget)
 		to_process = budget;
-	rx_prod_index = (u16)((u32)(rx_cons_index + to_process) & DMA_C_INDEX_MASK);
-	while (rx_cons_index != rx_prod_index)
+	if (to_process > RX_DESCS)
+		to_process = RX_DESCS; /* never more pending than the ring holds; bounds status[] */
+
+	/*
+	 * Two passes, so the whole batch pays one barrier instead of one per
+	 * frame. Pass 1 reads descriptor status only and issues the cache
+	 * invalidates as a NoSync batch - NOT ONE FRAME BYTE IS READ HERE: a load
+	 * is not ordered after a NoSync invalidate until the dsb below
+	 * (cache_ops.h, SHARP EDGE). Rejected frames are never read, so they get
+	 * no invalidate, and a corrupt length must never widen one - hence the
+	 * checks first. Pass 2 delivers.
+	 */
+	u32 status[RX_DESCS]; /* 0 = rejected */
+
+	PERF_T0(t_scan);
+	for (u16 k = 0; k < to_process; k++)
 	{
-		struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[(u8)rx_cons_index];
-		u8 *desc_base = (u8 *)rx_cb->descriptor_address;
-		u32 length = mmio_read32(desc_base + DMA_DESC_LENGTH_STATUS);
-		u16 dma_flags = length & 0xffffu;
-		length = (length >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
-		u8 *addr = (u8 *)rx_cb->data_buffer;
+		struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[(u8)(rx_cons_index + k)];
+		u32 ls = mmio_read32_relaxed((u8 *)rx_cb->descriptor_address + DMA_DESC_LENGTH_STATUS);
+		u16 dma_flags = ls & 0xffffu;
+		u32 length = (ls >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
+		status[k] = 0;
 
-		KprintfT("[genet] %s: packet=%08lx length=%lu\n", __func__, addr + RX_BUF_OFFSET, (ULONG)(length - RX_BUF_OFFSET));
-
-		if (unlikely(length > RX_BUF_LENGTH))
+		if (unlikely(length > RX_BUF_LENGTH || length < RX_BUF_OFFSET + ETH_HLEN))
 		{
-			KprintfT("[genet] %s: len %lu exceeds RX_BUF_LENGTH %lu\n", __func__, (ULONG)length, (ULONG)RX_BUF_LENGTH);
 			unit->internalStats.rx_length_errors++;
-			goto next;
+			continue;
 		}
 
 		if (unlikely(!(dma_flags & DMA_EOP) || !(dma_flags & DMA_SOP)))
 		{
 			KprintfT("[genet] %s: dropping fragmented packet, dma_flags=0x%lx\n", __func__, (ULONG)dma_flags);
 			unit->internalStats.rx_fragmented_errors++;
-			goto next;
+			continue;
 		}
 
 		/* report errors */
@@ -202,7 +223,7 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 								  DMA_RX_LG |
 								  DMA_RX_RXER)))
 		{
-			KprintfT("[genet] %s: Packet error, length=%lu, dma_flag=0x%lx\n",
+			KprintfT("[genet] %s: dropping packet with errors, length=%lu, dma_flags=0x%lx\n",
 					 __func__, (ULONG)length, (ULONG)dma_flags);
 			if (dma_flags & DMA_RX_CRC_ERROR)
 				unit->internalStats.rx_crc_errors++;
@@ -218,20 +239,28 @@ s32 bcmgenet_gmac_eth_rx(struct GenetUnit *unit, u16 budget)
 							  DMA_RX_LG |
 							  DMA_RX_RXER)) == DMA_RX_RXER)
 				unit->internalStats.rx_other_errors++;
-			goto next;
+			continue;
 		} /* error packet */
 
-		/* Invalidate only after the descriptor passed the sanity checks: the
-		 * inline op drops whole lines with no end-of-range concession, so a
-		 * corrupt length must never widen it — and rejected frames are never
-		 * read, so they need no invalidate at all. */
-		cache_post_dma(addr, length, 0);
-		ReceiveFrame(unit, addr + RX_BUF_OFFSET, length - RX_BUF_OFFSET, dma_flags);
-	next:
-		rx_cons_index++;
+		cache_post_dma((APTR)rx_cb->data_buffer, length, DMAF_NoSync);
+		status[k] = ls;
+	}
+	emu68_barrier(); /* the one dsb: every invalidate above is complete, frame bytes may be read from here on */
+	PERF_ADD(&unit->perf, GP_RX_SCAN, t_scan);
+
+	for (u16 k = 0; k < to_process; k++)
+	{
+		u32 ls = status[k];
+		if (ls == 0)
+			continue;
+		struct enet_cb *rx_cb = &unit->rx_ring.rx_control_block[(u8)(rx_cons_index + k)];
+		u32 length = (ls >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
+		ReceiveFrame(unit, (u8 *)rx_cb->data_buffer + RX_BUF_OFFSET, length - RX_BUF_OFFSET, (u16)(ls & 0xffffu));
 	}
 
+	rx_cons_index = (u16)((u32)(rx_cons_index + to_process) & DMA_C_INDEX_MASK);
 	unit->rx_ring.rx_cons_index = rx_cons_index;
+	emu68_barrier(); /* every CPU read of the handed-back buffers completes before the device may refill them */
 	mmio_write32(rx_cons_index, BCMGENET_REG(unit, RDMA_CONS_INDEX));
 
 	PERF_ADD(&unit->perf, GP_RX_DRAIN, t_drain);
@@ -295,6 +324,7 @@ u32 bcmgenet_set_coalesce(struct GenetUnit *unit, u32 tx_max_coalesced_frames, u
 
 static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Initializing RX ring\n", __func__);
 	struct bcmgenet_rx_ring *ring = &unit->rx_ring;
 
@@ -324,10 +354,9 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 
 	bcmgenet_set_rx_coalesce(unit, unit->device->runtimeConfig.rx_coalesce_usecs, unit->device->runtimeConfig.rx_coalesce_frames);
 
-	/* cannot init RDMA_PROD_INDEX to 0, so align RDMA_CONS_INDEX on it instead */
-	ring->rx_cons_index = mmio_read32(BCMGENET_REG(unit, RDMA_PROD_INDEX)) & DMA_P_INDEX_MASK;
-	mmio_write32(ring->rx_cons_index, BCMGENET_REG(unit, RDMA_CONS_INDEX));
-	KprintfT("[genet] %s: rx_cons_index=%lu\n", __func__, (ULONG)unit->rx_ring.rx_cons_index);
+	mmio_write32(0, BCMGENET_REG(unit, RDMA_PROD_INDEX));
+	mmio_write32(0, BCMGENET_REG(unit, RDMA_CONS_INDEX));
+	ring->rx_cons_index = 0;
 
 	mmio_write32((RX_DESCS << DMA_RING_SIZE_SHIFT) | RX_BUF_LENGTH, unit->genetBase + RDMA_RING_REG_BASE + DMA_RING_BUF_SIZE);
 	mmio_write32((DMA_FC_THRESH_LO << DMA_XOFF_THRESHOLD_SHIFT) | DMA_FC_THRESH_HI, unit->genetBase + RDMA_XON_XOFF_THRESH);
@@ -363,29 +392,18 @@ static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 	KprintfT("[genet] %s: Initializing TX ring\n", __func__);
 	struct bcmgenet_tx_ring *ring = &unit->tx_ring;
 
-	/* Initialize common TX ring structures */
-	APTR desc_base = unit->genetBase + GENET_TX_OFF;
-	ring->tx_control_block = pool_alloc(unit->metaPool, TX_DESCS * sizeof(struct enet_cb));
-	if (!ring->tx_control_block)
+	/* Ring-bound staging: slot k belongs to BD k for the life of the ring
+	 * (bcmgenet-tx.c). Nothing reads a slot before a write fills it. */
+	unit->txbuffer = (dma_addr_t)dma_alloc(unit->dmaPool, DMA_ALIGN_MIN, RX_BUF_LENGTH * TX_DESCS);
+	if (!unit->txbuffer)
 	{
 		return S2ERR_NO_RESOURCES;
 	}
 
-	memset(ring->tx_control_block, 0, TX_DESCS * sizeof(struct enet_cb));
-	for (u32 i = 0; i < TX_DESCS; i++)
-	{
-		ring->tx_control_block[i].descriptor_address = desc_base + i * DMA_DESC_SIZE;
-	}
-
-	slab_cache_init(&unit->tx_buffer_cache, unit->metaPool, unit->dmaPool,
-	                RX_BUF_LENGTH, DMA_ALIGN_MIN, TX_DESCS);
-
-	/* Cannot init TDMA_CONS_INDEX to 0, so align TDMA_PROD_INDEX on it instead */
-	ring->tx_cons_index = mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK;
-	mmio_write32(ring->tx_cons_index, BCMGENET_REG(unit, TDMA_PROD_INDEX));
-	ring->tx_prod_index = ring->tx_cons_index;
-	ring->write_ptr = (u8)ring->tx_cons_index;
-	ring->clean_ptr = (u8)ring->tx_cons_index;
+	mmio_write32(0, BCMGENET_REG(unit, TDMA_PROD_INDEX));
+	mmio_write32(0, BCMGENET_REG(unit, TDMA_CONS_INDEX));
+	ring->tx_prod_index = 0;
+	ring->hw_cons_cache = 0;
 
 	/* Default, can be overridden using coalesce settings */
 	mmio_write32(unit->device->runtimeConfig.tx_coalesce_frames, BCMGENET_REG(unit, TDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH));
@@ -453,12 +471,27 @@ static u32 bcmgenet_adjust_link(struct GenetUnit *unit)
 		return S2ERR_BAD_ARGUMENT;
 	}
 
-	mmio_update32(BCMGENET_REG(unit, EXT_RGMII_OOB_CTRL), OOB_DISABLE,
-				  RGMII_LINK | RGMII_MODE_EN);
+	/* Delay contract, the MAC half — see bcm54xx_config_clock_delay() in
+	 * phy_bcm54xx.c for the PHY half, and never change one side alone. RGMII
+	 * needs ~2 ns of clock-to-data skew in each direction, contributed exactly
+	 * once. The phy-mode names the PHY's share and the MAC supplies the rest;
+	 * ID_MODE_DIS turns the MAC's internal TX delay *off*, so it is set only
+	 * for plain "rgmii", where neither end delays and the board is expected
+	 * to. The Pi's "rgmii-rxid" means the PHY delays RXC and the MAC delays
+	 * TXC, so the bit stays clear. Clear-then-set keeps the result independent
+	 * of whatever the bootloader or a previous driver left behind. */
+	u32 id_mode_dis = (phy_dev->interface == PHY_INTERFACE_MODE_RGMII) ? ID_MODE_DIS : 0;
 
-	if (phy_dev->interface == PHY_INTERFACE_MODE_RGMII || phy_dev->interface == PHY_INTERFACE_MODE_RGMII_RXID)
-		mmio_set32(BCMGENET_REG(unit, EXT_RGMII_OOB_CTRL), ID_MODE_DIS);
+	mmio_update32(BCMGENET_REG(unit, EXT_RGMII_OOB_CTRL),
+				  OOB_DISABLE | ID_MODE_DIS,				 /* clear */
+				  RGMII_LINK | RGMII_MODE_EN | id_mode_dis); /* set   */
 
+	/* Deliberately a blind store, not a read-modify-write: this is what clears
+	 * the CMD_LCL_LOOP_EN that bcmgenet_umac_reset() set, and TX/RX are enabled
+	 * after it by the caller. It is only safe because this runs once per start;
+	 * S9 (runtime link tracking) has to replace it with the 4.x
+	 * bcmgenet_mac_config() shape — RMW with LCL_LOOP_EN in the clear mask —
+	 * before adjust_link can be called on a live datapath. */
 	mmio_write32(speed << CMD_SPEED_SHIFT, BCMGENET_REG(unit, UMAC_CMD));
 
 	return S2ERR_NO_ERROR;
@@ -573,17 +606,18 @@ void bcmgenet_set_rx_mode(struct GenetUnit *unit)
 	unit->mdfEnabled = TRUE;
 }
 
+/* On failure nothing is unwound here: the caller runs bcmgenet_gmac_eth_stop(),
+ * which releases whichever stages were reached. */
 u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Starting GENET\n", __func__);
-	u32 ret;
 
 	unit->rxbuffer = (dma_addr_t)dma_zalloc(unit->dmaPool, DMA_ALIGN_MIN, RX_TOTAL_BUFSIZE);
 	if (!unit->rxbuffer)
 	{
 		Kprintf("[genet] %s: Failed to allocate RX buffer\n", __func__);
-		ret = S2ERR_NO_RESOURCES;
-		goto rx_buf_allocated;
+		return S2ERR_NO_RESOURCES;
 	}
 
 	cache_pre_dma((APTR)unit->rxbuffer, RX_TOTAL_BUFSIZE, 0);
@@ -594,11 +628,11 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 
 	// bcmgenet_hfb_init()
 
-	ret = bcmgenet_init_dma(unit);
+	u32 ret = bcmgenet_init_dma(unit);
 	if (ret != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: Failed to initialize DMA: %ld\n", __func__, ret);
-		goto init_dma;
+		return ret;
 	}
 
 	unit->irq0_isr.is_Node.ln_Type = NT_INTERRUPT;
@@ -610,9 +644,9 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	if (irq_result < 0)
 	{
 		Kprintf("[genet] %s: can't register IRQ %ld\n", __func__, unit->irq0_number);
-		ret = S2ERR_SOFTWARE;
-		goto init_dma;
+		return S2ERR_SOFTWARE;
 	}
+	unit->irq0_installed = TRUE;
 	Kprintf("[genet] %s: Interrupt server for IRQ %ld registered\n", __func__, unit->irq0_number);
 
 	// bcmgenet_mii_probe(unit);
@@ -625,8 +659,7 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	if (phy_result < 0)
 	{
 		Kprintf("[genet] %s: PHY startup failed: %ld\n", __func__, phy_result);
-		ret = S2ERR_SOFTWARE;
-		goto err_irq;
+		return S2ERR_SOFTWARE;
 	}
 
 	/* Update MAC registers based on PHY property */
@@ -634,17 +667,16 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	if (ret != S2ERR_NO_ERROR)
 	{
 		Kprintf("[genet] %s: adjust PHY link failed: %ld\n", __func__, ret);
-		goto err_irq;
+		return ret;
 	}
 
 	/* Monitor link interrupts now.
 	 *
-	 * TXDMA_DONE is intentionally NOT enabled: the SANA-II stack 
-	 * is too slow to keep up with the DMA, and we would get an interrupt for every packet, which
-	 * would cause excessive CPU overhead.
-	 * Coalescing cannot batch anything and a per-completion interrupt is
-	 * pure overhead. We reclaim TX descriptors at the top of bcmgenet_xmit
-	 * instead.
+	 * TXDMA_DONE is NOT enabled here: descriptors are reclaimed at the top
+	 * of every write, so a completion interrupt is pure overhead while the
+	 * ring has room. It is unmasked only while writes wait in txBacklog for
+	 * a full ring (bcmgenet-tx.c) - then it fires once per
+	 * tx_coalesce_frames completions and bcmgenet_tx_drain moves them on.
 	 */
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_LINK_EVENT | UMAC_IRQ_PHY_DET_R);
 	bcmgenet_irq0_enable(unit, UMAC_IRQ_RXDMA_DONE /* | UMAC_IRQ_TXDMA_DONE */);
@@ -655,18 +687,6 @@ u32 bcmgenet_gmac_eth_start(struct GenetUnit *unit)
 	Kprintf("[genet] %s: UMAC started, RX/TX enabled\n", __func__);
 
 	return S2ERR_NO_ERROR;
-
-err_irq:
-	RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
-
-init_dma:
-	slab_cache_destroy(&unit->tx_buffer_cache);
-
-rx_buf_allocated:
-	dma_free(unit->dmaPool, (APTR)unit->rxbuffer);
-	unit->rxbuffer = 0;
-
-	return ret;
 }
 
 static u32 bcmgenet_phy_init(struct GenetUnit *unit)
@@ -746,6 +766,19 @@ u32 bcmgenet_eth_probe(struct GenetUnit *unit)
 	return bcmgenet_phy_init(unit);
 }
 
+/* The inverse of bcmgenet_eth_probe(): releases what configuring created. The
+ * PHY lives from configure to here, across any number of stop/start cycles;
+ * a stop only halts the hardware, so S2_OFFLINE then S2_ONLINE finds it intact. */
+void bcmgenet_eth_unconfigure(struct GenetUnit *unit)
+{
+	if (unit->phydev != NULL)
+	{
+		phy_destroy(unit->phydev);
+		unit->phydev = NULL;
+	}
+	KprintfT("[genet] %s: GENET unconfigured\n", __func__);
+}
+
 /* Stop all bus-master activity (RX/TX DMA, MAC, interrupts) without
  * releasing any resources.  Also the pre-reset quiesce: the RX ring keeps
  * receiving into RAM the next OS session reuses unless this runs before
@@ -763,29 +796,40 @@ void bcmgenet_reset_quiesce(struct GenetUnit *unit)
 	bcmgenet_intr_disable(unit);
 }
 
+/* Halts the hardware and releases everything a start allocates. Also the
+ * unwinder for a start that failed part-way, so every step is guarded on the
+ * stage having been reached. The PHY is not touched: it belongs to the
+ * probe/unconfigure pair, and the next start expects it in place. */
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Stopping GENET\n", __func__);
 
 	bcmgenet_reset_quiesce(unit);
-	RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
+	if (unit->irq0_installed)
+	{
+		RemIntServerEx(unit->irq0_number, &unit->irq0_isr);
+		unit->irq0_installed = FALSE;
+	}
 
-	/* tx reclaim */
-	bcmgenet_tx_reclaim(unit, TX_DESCS);
-	// /* Really kill the PHY state machine and disconnect from it */
-	// phy_disconnect(dev->phydev);
+	/* DMA is off: the buffers and the RX bookkeeping go; every start
+	 * allocates them afresh. */
+	if (unit->txbuffer)
+	{
+		dma_free(unit->dmaPool, (APTR)unit->txbuffer);
+		unit->txbuffer = 0;
+	}
+	if (unit->rx_ring.rx_control_block != NULL)
+	{
+		pool_free(unit->metaPool, unit->rx_ring.rx_control_block);
+		unit->rx_ring.rx_control_block = NULL;
+	}
 
 	if (unit->rxbuffer)
 	{
 		dma_free(unit->dmaPool, (APTR)unit->rxbuffer);
 		unit->rxbuffer = 0;
 	}
-	slab_cache_destroy(&unit->tx_buffer_cache);
 
-	if (unit->phydev)
-	{
-		phy_destroy(unit->phydev);
-		unit->phydev = NULL;
-	}
-	KprintfT("[genet] %s: PHY destroyed. GENET stopped.\n", __func__);
+	KprintfT("[genet] %s: GENET stopped.\n", __func__);
 }
