@@ -1,3 +1,81 @@
+# Release notes — genet.device 4.3
+
+Changes since v4.2.
+
+Mostly a tuning release, plus a clear-out of settings — see *Settings removed*.
+
+The main change is **adaptive receive interrupt moderation**. Until now the driver
+coalesced receive interrupts with one fixed timeout and frame threshold, and that single
+setting has to serve both a lone reply somebody is blocked on and a line-rate download —
+it cannot suit both. Now the stack states which of the two is happening, and the driver
+moderates to match. Request-and-answer traffic — file shares, remote shells, running a
+program off the network — is quicker for it, and downloads keep their speed.
+
+That part needs the matching **lwip-amiga**: an older stack states nothing, and the
+receive side falls back to the fixed settings it used in 4.2. The transmit and
+scheduling changes below apply with any stack.
+
+## What's faster
+
+- **Answers come back about twice as quickly.** The stack now tells the driver whether
+  a program is sitting and waiting for a reply. When one is, a packet arriving at a
+  quiet moment is handed over straight away instead of being held back in case more
+  follows. A busy stream is still gathered up in batches, so downloads keep their speed.
+- **Sending uses less processor time.** The chip used to interrupt the Amiga every time
+  it finished sending, even for a single packet nobody was waiting on. Those interrupts
+  are gone from normal running; finished packets are cleared up during work the driver
+  was doing anyway. The descriptor stores of a burst are also no longer each followed
+  by a full memory barrier; the one before the doorbell was always sufficient.
+- **Receiving uses less processor time.** The receive pass now reads every waiting
+  descriptor first and issues the cache invalidates as one batch closed by a single
+  barrier, then hands the frames up; each frame used to pay a synchronous invalidate
+  and two barriered register accesses of its own.
+- **The driver keeps its turn on the processor.** Its task now runs at priority 15
+  rather than 10. At 10 it shared a priority with the AmigaDOS file handlers, and the
+  Amiga will not interrupt one task for another of the same priority — so a busy
+  handler could keep the driver waiting long enough to hold up replies and let a burst
+  of incoming packets overflow.
+
+## Settings removed
+
+Six settings in `ENV:genet.prefs` are gone:
+
+> `RX_COALESCE_USECS`, `RX_COALESCE_FRAMES`, `TX_COALESCE_FRAMES`,
+> `PERIODIC_TASK_MS`, `LINK_POLL_MS`, `UNIT_STACK_SIZE`
+
+They controlled interrupt timing and internal housekeeping — details of how the driver
+works — and the ones worth changing are now handled by the stack itself, while it runs.
+
+**Nothing breaks if you leave them in your file.** Settings the driver does not
+recognise have always been ignored. But if you had tuned one, it stops having an
+effect. Interrupt timing can still be set by hand at any time with `netdev-stats`
+(`RXUSECS`, `RXFRAMES`, `TXFRAMES`) — no reboot needed. The rest now keep the values
+they always had by default.
+
+Setting `RXUSECS`/`RXFRAMES` by hand **pins** them: the driver then ignores the receive
+profile the stack asks for, until `RXUSECS 0 RXFRAMES 0` hands control back.
+
+`LINK_MODE`, `AUTONEG`, `FLOW_CONTROL`, `RX_POOL_BUFS` and `UNIT_TASK_PRIORITY` are
+unchanged; see the [README](README.md).
+
+`UNIT_TASK_PRIORITY` is now held between 6 and 19. A value outside that range used to
+wrap round into a negative one, leaving the driver running below almost everything else
+on the machine — the opposite of what anyone setting it intends.
+
+## Diagnostics
+
+`netdev-stats COUNTERS` reports the new receive behaviour: `drv_rx_profile` shows what
+the stack has asked for (0 nothing, 1 throughput, 2 latency), `drv_rx_level` and
+`drv_rx_level_changes` follow the driver's response to it, and `drv_tx_irq_arms` counts
+the send interrupts that still happen.
+
+For the technically minded: the stack states its intent with a new netdev command,
+`SET_RX_PROFILE`, and the driver decides the interrupt timing from it. The rules, the
+measurements behind them and the rest of the counters are in
+[docs/offloads.md](docs/offloads.md), under *Interrupt coalescing*.
+
+---
+
 # Release notes — genet.device 4.2
 
 Changes since v4.1.

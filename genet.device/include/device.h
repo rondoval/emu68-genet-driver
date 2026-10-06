@@ -36,11 +36,19 @@
 enum GenetProfSlot
 {
 	GP_RX_DRAIN,  /* whole bcmgenet_netdev_rx ring walk (excl. recycle) */
+	GP_RX_SCAN,   /*   its first pass: status reads, buffer swaps, NoSync invalidates */
 	GP_RX_FLUSH,  /* nso_RxInput hand-up (lock wait + stack work) */
 	GP_TX_SUBMIT, /* bcmgenet_netdev_tx_submit cache-prime + ring writes + doorbell */
 	GP_TX_HARVEST,/* bcmgenet_tx_harvest completion sweep + nso_TxDone */
+	GP_RX_WAKE,   /* RX interrupt -> the unit task reaches its RX poll */
 	GP_SLOT_COUNT
 };
+
+/* RX interrupt-moderation histograms (emu68-common perf_hist), reported beside
+ * the slots. Bucket counts = bounds in device.c + the open last bucket. */
+#define GENET_RX_PENDING_BOUNDS 13 /* frames in the ring when a poll starts */
+#define GENET_RX_IRQ_GAP_BOUNDS 13 /* us between two RX interrupts */
+#define GENET_RX_HELD_BOUNDS 13	   /* RX buffers the stack holds when the ladder finds the ring quiet */
 
 /*
  * Internal status codes, from emu68-common <errors.h>. None of these crosses the
@@ -80,6 +88,41 @@ enum GenetProfSlot
 /* Auto-pool headroom over ring + stack budget: buffers parked in the SPSC
  * recycle ring between a stack release and the unit-task drain. */
 #define ND_RX_RECLAIM_SLACK 64u
+
+/*
+ * Unit-task pacing. Not configurable. The housekeeping tick is the
+ * interrupt watchdog and the TX-done sweep of last resort; the link poll rides
+ * on it, rounded up to whole ticks.
+ *
+ * GENET v5 (BCM2711) does not reliably raise the link-up interrupt at 10 Mbps,
+ * so polling — not the interrupt — is what converges the link; the interrupt is
+ * only a latency optimisation. 1 s matches Linux phylib's PHY_STATE_TIME.
+ */
+#define GENET_UNIT_STACK_BYTES 65536UL /* 64 KB */
+#define GENET_PERIODIC_TASK_MS 200u
+#define GENET_LINK_POLL_MS 1000u
+
+/* The poll period as the unit task counts it: housekeeping ticks, rounded up,
+ * so the poll never comes early. */
+#define GENET_LINK_POLL_TICKS \
+	((GENET_LINK_POLL_MS + GENET_PERIODIC_TASK_MS - 1u) / GENET_PERIODIC_TASK_MS)
+
+/*
+ * Interrupt-moderation seed values, replaced at runtime by
+ * NETDEV_CMD_SET_COALESCE (which `netdev-stats RXUSECS/RXFRAMES/TXFRAMES`
+ * reaches by hand). The frame thresholds must stay within the hardware's
+ * DMA_INTR_THRESHOLD_MASK (511) and the timeout within DMA_TIMEOUT_MASK.
+ *
+ * GENET_COAL_RX_USECS is the compromise for a stack that states no RX profile,
+ * and the top rung of the latency profile's burst ladder. GENET_COAL_RX_BULK_USECS
+ * is the longer timeout for traffic nobody waits for: everything under the
+ * throughput profile, and a consumer that has fallen behind under the latency
+ * one. At line rate the frame threshold fires first either way.
+ */
+#define GENET_COAL_RX_USECS 500u
+#define GENET_COAL_RX_FRAMES 64u
+#define GENET_COAL_TX_FRAMES 32u
+#define GENET_COAL_RX_BULK_USECS 1000u
 
 struct GenetDevice;
 
@@ -155,8 +198,13 @@ struct enet_cb
  */
 struct internal_stats
 {
+	/* The four a normal packet bumps */
 	u64 rx_packets;
 	u64 rx_bytes;
+	u64 tx_packets;
+	u64 tx_bytes;
+
+	/* RX, beyond the per-frame pair: everything here is an exception. */
 	u64 rx_dropped;	 /* no pool buffer, or stack backpressure */
 	u32 rx_pool_dry; /* the pool-dry share of rx_dropped */
 	u32 rx_overruns; /* RX HW miss (discard counter) */
@@ -172,128 +220,66 @@ struct internal_stats
 	u32 rx_length_errors;
 	u32 rx_fragmented_errors;
 
-	u64 tx_packets;
-	u64 tx_bytes;
+	/* TX, beyond the per-frame pair. */
 	u64 tx_dropped;	  /* accepted, then completed unsent at STOP */
 	u32 tx_rejected;  /* TxSubmit calls that accepted nothing (ring full) */
 	u32 tx_bad;		  /* descriptors refused by the sanity gate (garbage SG) */
 
+	/* ISR-owned: the total, then what each fire carried. */
 	u32 irq0_count;		  /* IRQ0 fires (RX/TX/error) */
-	u32 irq0_tx_count;	  /* IRQ0 fires that included TXDMA_DONE */
 	u32 irq0_rx_count;	  /* IRQ0 fires that included RXDMA_DONE */
+	u32 irq0_tx_count;	  /* IRQ0 fires that included TXDMA_DONE */
 	u32 irq0_other_count; /* IRQ0 fires with neither TX nor RX DONE */
+
+	/* Unit-task-owned: what the driver did about interrupt moderation. */
+	u32 tx_irq_arms;	  /* times the unit task armed TXDMA_DONE (backpressure only) */
+	u32 rx_level_changes; /* times the RX burst ladder reprogrammed the coalescer */
+	u32 rx_bulk_arms;	  /* quiet re-arms at the bulk level: the consumer was behind, nobody waiting */
 };
 
+/*
+ * Ordered by ACCESS PATH, not by topic: the fields a packet touches come
+ * first and contiguously, the setup and teardown state last.
+ *
+ * Two placement rules, both load-bearing:
+ *   - struct Unit MUST stay first. io_Unit points at this struct and the
+ *     command path casts it straight back (device.c, netdev_api.c).
+ *   - The PROFILE-only telemetry goes LAST. Its storage is unconditional so
+ *     that every debug tier shares one layout, which means ~300 bytes that a
+ *     release build never touches; in the middle of the struct they would
+ *     push the datapath apart for nothing.
+ *
+ * Ownership is noted per block and is the real invariant: the datapath takes
+ * no locks, so who writes a field is what makes it safe.
+ */
 struct GenetUnit
 {
-	struct Unit unit;
-	struct dma_mem_ctx dma_ctx; /* Emu68 (DMA-reachable) RAM regions; backs dmaPool */
-	struct dma_pool *dmaPool;	/* region-restricted DMA pool (Emu68 RAM) */
-	APTR metaPool;				/* ordinary Exec pool for CPU-only metadata */
-	struct GenetDevice *device;
+	struct Unit unit; /* FIRST, always: io_Unit is cast to this struct */
+	struct ExecBase *sysBase; /* the device's, copied at unit creation */
 
-	/* config */
-	u32 unitNumber;
-	u8 currentMacAddress[6];
+	/* --- datapath: reached by both halves ---------------------------- */
+	APTR genetBase;	  /* every MMIO access in the driver */
+	struct GenetDevice *device;
+	struct Task *task; /* the ISR's Signal() target */
+	APTR ndStackCtx;   /* first argument of every nso_* callback */
+	const struct NetDevStackOps *ndStackOps;
+	volatile BOOL ndStarted; /* delivery gate: set/cleared by unit task */
+	UnitState state;
+
+	/* --- datapath: RX drain (unit task only) -------------------------- */
+	struct bcmgenet_rx_ring rx_ring;
 	u16 ndRxBatch;      /* frames handed up per nso_RxInput call = one stack lock
 	                       hold = one GRO merge run; the capacity of ndRxBatchDescs,
 	                       and the RX poll weight (one batch drained per wakeup).
 	                       Negotiated at ATTACH from the stack's nda_RxBatch, clamped
 	                       to RX_DESCS (a batch can't exceed the ring). */
-
-	/* unit/task state */
-	UnitState state;
-	struct Task *task;
-
-	/* stats */
-	struct internal_stats internalStats;
-
-	/* Datapath timing (emu68-common <perf.h>): the [genet] perf instance.
-	 * Slots live in the allocated unit (ROM-able: no writable statics); the
-	 * name table and prefix are rodata. Written under PROFILE; storage is
-	 * unconditional so all tiers share one struct layout. bcmgenet_perf_tick
-	 * reports it via perf_report() every ~2 s. */
-	struct perf_counter gu_PerfSlots[GP_SLOT_COUNT];
-	struct perf gu_Perf;
-	u32 gu_ProfTicks; /* mib_check tick divider for the ~2 s report */
-
-	/* Device tree */
-	CONST_STRPTR compatible;
-	const u8 *localMacAddress;
-	APTR genetBase;
-	struct tGpioRegs *gpioBase;
-
-	/* Interrupt config. The ISR carries no state to the bottom half: Exec
-	 * signals are the atomic, level-latched ISR->task channel, and the task
-	 * reads the rings themselves rather than replaying status bits. One
-	 * signal per source, because the sources want different treatment — see
-	 * the unit task's datapath block. */
-	/* IRQ0 carries every source this driver uses. IRQ1 is per-priority-queue
-	 * RX/TX only, and the driver runs one ring each way, so it never fires —
-	 * devtree_parse.c still requires the device tree to name it, as a check
-	 * that it found a GENET node rather than something else. */
-	u32 irq0_number;
-	BYTE rx_signal;				  /* RX DMA done */
-	BYTE tx_signal;				  /* TX DMA done, and the submit-path kick */
-	BYTE link_signal;			  /* link/PHY-detect */
-	BOOL irq0_installed;		  /* irq0_isr is on the GIC's server list */
-	struct Interrupt irq0_isr;
-
-	/* PHY */
-	phy_interface_t phy_interface;
-	u8 phyaddr;
-	struct phy_device *phydev;
-
-	/* MAC layer */
-	struct bcmgenet_rx_ring rx_ring;
-	struct bcmgenet_tx_ring tx_ring;
-
-	/* Interrupt moderation, seeded from the prefs defaults at UnitOpen and
-	 * replaced by NETDEV_CMD_SET_COALESCE. Held here rather than programmed
-	 * straight into the hardware so a value set while the unit is stopped
-	 * survives to the next start, as the RX filter does. */
-	u32 coalTxFrames;
-	u32 coalRxFrames;
-	u32 coalRxUsecs;
-
-	/* --- netdev attachment ------------------------------------------------
-	 * One stack at a time. The direct-call surface (TxSubmit/RxRelease/
-	 * DmaAlloc/DmaFree) runs in FOREIGN task context, serialized against
-	 * each other by the stack's core lock — one logical producer. Nothing
-	 * in the datapath takes a lock: every object crossing the two contexts
-	 * is a single-producer/single-consumer ring (ndRecycle, ndTxDone), and
-	 * the TX BD ring is producer-to-hardware only. All nso_* callbacks are
-	 * made from the unit task only. */
-	APTR ndStackCtx;
-	const struct NetDevStackOps *ndStackOps;
-	/* The attaching request's reply port. Identifies the owning opener: only it
-	 * may STOP, DETACH or SET_MAC, so a diagnostic tool holding the same unit
-	 * open cannot tear the live stack's attachment down. */
-	struct MsgPort *ndOwnerPort;
-	volatile BOOL ndStarted; /* delivery gate: set/cleared by unit task */
-	/* ndo_TxSubmit calls in progress. Single-writer (the stack serializes its
-	 * own submits), read by the unit task's STOP quiesce, which must not
-	 * complete while a submitter that passed the ndStarted gate is still
-	 * queueing cookies. */
-	volatile u32 ndTxBusy;
-	UWORD ndFilterFlags;	 /* NDFF_* as requested by the stack */
-	BOOL ndPromisc;			 /* effective promiscuity (incl. all-multi fallback) */
-	UWORD ndMcastCount;		 /* exact multicast MACs held in the MDF slots */
-	u8 ndMcastList[GENET_MDF_MCAST_MAX][6];
-
-	/* RX buffer pool: ndRxPoolBufs × RX_BUF_LENGTH out of one DMA slab.
-	 * Free stack + held count are unit-task-only. */
-	u32 ndRxPoolBufs; /* latched prefs value at UnitOpen; 0 = auto,
-	                   * resolved at ATTACH from nda_RxHoldReq */
-	u32 ndRxPoolTotal; /* resolved pool size (ndRxFree capacity) */
-	APTR ndRxSlab;
-	APTR *ndRxFree;
+	/* RX marshalling buffer: the drain fills it with up to ndRxBatch
+	 * NetDevRxDesc and hands it to nso_RxInput. CPU-only (metaPool), sized
+	 * at ATTACH to the negotiated ndRxBatch. */
+	struct NetDevRxDesc *ndRxBatchDescs;
+	APTR *ndRxFree;		/* free-buffer stack out of the ndRxSlab pool */
 	u32 ndRxFreeCount;
-	u32 ndRxHeld; /* buffers currently owned by the stack */
-
-	/* TX status blocks (TSB): one 64-byte block per TX ring slot, indexed by
-	 * the packet's SOP slot; submitted as the packet's first descriptor. */
-	APTR ndTxTsb;
+	u32 ndRxHeld;		/* buffers currently owned by the stack */
 
 	/* RX recycle ring: producer = ndo_RxRelease (stack context), consumer =
 	 * unit task. Sized at ATTACH to cover the whole pool (each buffer can
@@ -303,27 +289,153 @@ struct GenetUnit
 	volatile u32 ndRecycleProd;
 	volatile u32 ndRecycleCons;
 
-	/* TX-done cookie FIFO: producer = ndo_TxSubmit (stack context),
-	 * consumer = unit task (bcmgenet_tx_harvest). Sized well past the BD
-	 * ring's packet capacity so a late harvest never throttles the
-	 * producer — and so an unharvested entry can never age past the
-	 * 16-bit half-window its completion test relies on. */
+	/* RX moderation by profile (NETDEV_CMD_SET_RX_PROFILE); the rules are with
+	 * bcmgenet_rx_moderate(). All of it belongs to the unit task, and the
+	 * drain reads rxLadder on every re-arm. */
+	u32 rxProfile;		 /* NDRP_*; NDRP_UNSTATED (0) until the stack says */
+	u32 rxLevel;		 /* burst ladder level in force */
+	u8 rxLadder;		 /* the ladder drives the RX coalescer (else: static values) */
+	u8 coalPinned;		 /* an explicit SET_COALESCE holds the static values, whatever the profile */
+
+	/* --- datapath: TX submit (stack context) + harvest (unit task) ----
+	 * The direct-call surface (TxSubmit/RxRelease/DmaAlloc/DmaFree) runs in
+	 * FOREIGN task context, serialized against itself by the stack's core
+	 * lock — one logical producer. Nothing here takes a lock: every object
+	 * crossing the two contexts is a single-producer/single-consumer ring
+	 * (ndRecycle above, ndTxDone below), and the TX BD ring is
+	 * producer-to-hardware only. All nso_* callbacks come from the unit task. */
+	struct bcmgenet_tx_ring tx_ring;
+	APTR ndTxTsb; /* TX status blocks: one 64-byte block per ring slot,
+	               * indexed by the packet's SOP slot and submitted as its
+	               * first descriptor. */
+	/* TX-done cookie FIFO: producer = ndo_TxSubmit, consumer = unit task
+	 * (bcmgenet_tx_harvest). Sized well past the BD ring's packet capacity so
+	 * a late harvest never throttles the producer — and so an unharvested
+	 * entry can never age past the 16-bit half-window its completion test
+	 * relies on. */
 	struct GenetTxDone *ndTxDone;
 	volatile u32 ndTxDoneProd;
 	volatile u32 ndTxDoneCons;
+	/* TX-done interrupt on demand. The submitter counts the ndo_TxSubmit calls
+	 * it answered short — the one case in which the ABI tells the stack to
+	 * wait for nso_TxDone; the unit task remembers how many it has settled
+	 * (unit_task.c). One writer each, like the FIFO indices above. */
+	volatile u32 ndTxRefused;
+	u32 ndTxRefusedSeen;
+	/* ndo_TxSubmit calls in progress. Single-writer (the stack serializes its
+	 * own submits), read by the unit task's STOP quiesce, which must not
+	 * complete while a submitter that passed the ndStarted gate is still
+	 * queueing cookies. */
+	volatile u32 ndTxBusy;
+	/* Scanned per TX segment by tx_desc_ok() -> dma_addr_reachable(), so it
+	 * sits with the TX path rather than with the pools it also describes.
+	 * Only `count` and the first region or two are ever read on a Pi. */
+	struct dma_mem_ctx dma_ctx; /* Emu68 (DMA-reachable) RAM regions; backs dmaPool */
 
-	/* RX marshalling buffer: the drain fills it with up to ndRxBatch
-	 * NetDevRxDesc and hands it to nso_RxInput. CPU-only (metaPool), sized
-	 * at ATTACH to the negotiated ndRxBatch. */
-	struct NetDevRxDesc *ndRxBatchDescs;
+	/* --- counters, bumped per frame ----------------------------------- */
+	struct internal_stats internalStats;
 
+	/* --- warm: interrupt plumbing and link state ----------------------
+	 * The ISR carries no state to the bottom half: Exec signals are the
+	 * atomic, level-latched ISR->task channel, and the task reads the rings
+	 * themselves rather than replaying status bits. One signal per source,
+	 * because the sources want different treatment — see the unit task's
+	 * datapath block.
+	 *
+	 * IRQ0 carries every source this driver uses. IRQ1 is per-priority-queue
+	 * RX/TX only, and the driver runs one ring each way, so it never fires —
+	 * devtree_parse.c still requires the device tree to name it, as a check
+	 * that it found a GENET node rather than something else. */
+	BYTE rx_signal;				  /* RX DMA done */
+	BYTE tx_signal;				  /* TX DMA done, and the submit-path kick */
+	BYTE link_signal;			  /* link/PHY-detect */
+	BOOL irq0_installed;		  /* irq0_isr is on the GIC's server list */
+	u32 irq0_number;
+	struct Interrupt irq0_isr;
+	struct phy_device *phydev;
 	struct NetDevLinkState ndLink;
+
+	/* Interrupt moderation as the operator set it with NETDEV_CMD_SET_COALESCE,
+	 * seeded from the GENET_COAL_* defaults at UnitOpen. Held here rather than
+	 * programmed straight into the hardware so a value set while the unit is
+	 * stopped survives to the next start, as the RX filter does. Read when the
+	 * coalescer is reprogrammed, not per frame.
+	 *
+	 * The RX pair is the operator's OVERRIDE and is read only while coalPinned
+	 * (bcmgenet_rx_moderation_reset). */
+	u32 coalTxFrames;
+	u32 coalRxFrames;
+	u32 coalRxUsecs;
+
+	/* --- cold: setup, configuration, teardown -------------------------- */
+	struct dma_pool *dmaPool; /* region-restricted DMA pool (Emu68 RAM) */
+	APTR metaPool;			  /* ordinary Exec pool for CPU-only metadata */
+	u32 unitNumber;
+	u8 currentMacAddress[6];
+
+	/* Device tree */
+	CONST_STRPTR compatible;
+	const u8 *localMacAddress;
+	struct tGpioRegs *gpioBase;
+
+	/* PHY */
+	phy_interface_t phy_interface;
+	u8 phyaddr;
+
+	/* The attaching request's reply port. Identifies the owning opener: only it
+	 * may STOP, DETACH or SET_MAC, so a diagnostic tool holding the same unit
+	 * open cannot tear the live stack's attachment down. */
+	struct MsgPort *ndOwnerPort;
+
+	/* RX buffer pool: ndRxPoolBufs × RX_BUF_LENGTH out of one DMA slab.
+	 * Resolved at ATTACH; the hot side of it (ndRxFree/Count/Held) is up with
+	 * the RX drain. */
+	u32 ndRxPoolBufs; /* latched prefs value at UnitOpen; 0 = auto,
+	                   * resolved at ATTACH from nda_RxHoldReq */
+	u32 ndRxPoolTotal; /* resolved pool size (ndRxFree capacity) */
+	APTR ndRxSlab;
+
+	/* Reception filter, reprogrammed only by NETDEV_CMD_SET_RXFILTER. */
+	UWORD ndFilterFlags;	 /* NDFF_* as requested by the stack */
+	BOOL ndPromisc;			 /* effective promiscuity (incl. all-multi fallback) */
+	UWORD ndMcastCount;		 /* exact multicast MACs held in the MDF slots */
+	u8 ndMcastList[GENET_MDF_MCAST_MAX][6];
+
+	/* --- cold: telemetry storage, written under PROFILE only -----------
+	 * Last on purpose: the storage is unconditional so every tier shares one
+	 * layout, so in a release build this is dead weight that must not sit
+	 * between fields a packet touches.
+	 *
+	 * Datapath timing (emu68-common <perf.h>): the [genet] perf instance.
+	 * Slots live in the allocated unit (ROM-able: no writable statics); the
+	 * name table and prefix are rodata. bcmgenet_perf_tick reports it via
+	 * perf_report() every ~2 s. */
+	struct perf_counter gu_PerfSlots[GP_SLOT_COUNT];
+	struct perf gu_Perf;
+	u32 gu_ProfTicks; /* mib_check tick divider for the ~2 s report */
+
+	/* What the RX coalescer actually does, which the averages cannot show:
+	 * how many frames a poll finds waiting and how far apart RX interrupts
+	 * are. The two stamps are get_time() values with 0 for "none":
+	 * gu_RxIrqLast is the ISR's own (previous RX interrupt), gu_RxIrqPending
+	 * is handed to the task, which clears it, so that a poll the task
+	 * signalled itself does not count as an interrupt wakeup. */
+	u32 gu_RxPendingBuckets[GENET_RX_PENDING_BOUNDS + 1];
+	struct perf_hist gu_RxPendingHist;
+	u32 gu_RxIrqGapBuckets[GENET_RX_IRQ_GAP_BOUNDS + 1];
+	struct perf_hist gu_RxIrqGapHist;
+	/* the burst ladder's view, taken whenever it finds the ring quiet */
+	u32 gu_RxHeldBuckets[GENET_RX_HELD_BOUNDS + 1];
+	struct perf_hist gu_RxHeldHist;
+	u32 gu_RxIrqLast;
+	u32 gu_RxIrqPending;
 };
 
 struct GenetDevice
 {
 	struct Device device;
 	ULONG segList;
+	struct ExecBase *sysBase; /* cached: $4 is an Amiga-bus read on PiStorm */
 	struct GenetRuntimeConfig runtimeConfig;
 	struct Library *utilityBase;
 	struct Library *gic400Base;

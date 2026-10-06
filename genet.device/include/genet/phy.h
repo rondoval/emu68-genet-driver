@@ -48,6 +48,7 @@ struct GenetUnit;
 
 struct phy_device
 {
+	struct ExecBase *sysBase; /* the unit's, copied at phy_create() */
 	struct GenetUnit *unit;
 
 	/* forced speed & duplex (no autoneg)

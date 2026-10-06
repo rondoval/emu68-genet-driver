@@ -3,7 +3,7 @@
 #include <clib/exec_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 #endif
 
@@ -44,6 +44,7 @@ static void SetupRGMII(struct GenetUnit *unit)
 
 u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Opening unit %lu with flags %lx\n", __func__, unitNumber, flags);
 	(void)flags;
 	if (unit->unit.unit_OpenCnt > 0)
@@ -57,17 +58,20 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags)
 	unit->unitNumber = unitNumber;
 	unit->ndRxPoolBufs = unit->device->runtimeConfig.rx_pool_bufs;
 
-	/* Coalescing starts at the prefs defaults; NETDEV_CMD_SET_COALESCE
-	 * replaces them for the lifetime of the open. */
-	unit->coalTxFrames = unit->device->runtimeConfig.tx_coalesce_frames;
-	unit->coalRxFrames = unit->device->runtimeConfig.rx_coalesce_frames;
-	unit->coalRxUsecs = unit->device->runtimeConfig.rx_coalesce_usecs;
+	/* Coalescing starts at the compiled-in seeds, which are in range by
+	 * construction; NETDEV_CMD_SET_COALESCE replaces them, validated there,
+	 * for the lifetime of the open. */
+	unit->coalTxFrames = GENET_COAL_TX_FRAMES;
+	unit->coalRxFrames = GENET_COAL_RX_FRAMES;
+	unit->coalRxUsecs = GENET_COAL_RX_USECS;
+	unit->coalPinned = FALSE;
+	unit->rxProfile = NDRP_UNSTATED;
 
 	/* DMA buffers (rings, rx buffer, tx staging) must live in Emu68 (Pi-DRAM) RAM the
 	 * GENET DMA engine can reach, so the DMA pool is region-restricted; with no device
 	 * tree there is no reachable region and we refuse to open.  CPU-only metadata uses a
 	 * separate ordinary Exec pool. */
-	dma_mem_init(&unit->dma_ctx);
+	dma_mem_init(&unit->dma_ctx, SysBase);
 	unit->dmaPool = dma_pool_create(&unit->dma_ctx);
 	unit->metaPool = CreatePool(MEMF_FAST | MEMF_PUBLIC, 16384, 8192);
 
@@ -154,6 +158,7 @@ void UnitOffline(struct GenetUnit *unit)
 
 u32 UnitClose(struct GenetUnit *unit)
 {
+	struct ExecBase *SysBase = unit->sysBase;
 	KprintfT("[genet] %s: Closing unit %lu\n", __func__, unit->unitNumber);
 
 	unit->unit.unit_OpenCnt--;

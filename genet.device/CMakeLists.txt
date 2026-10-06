@@ -6,7 +6,6 @@ add_link_options(
     -nostdlib
     -nostartfiles
     -s
-    -Wl,-e,_doNotExecute
 )
 
 # CPU/FPU/frame-pointer flags come from the stack toolchain (cmake/toolchain.cmake,
@@ -49,7 +48,6 @@ add_executable(genet.device
     src/phy_mdio.c
     src/phy_bcm54xx.c
     src/phy_interface.c
-    src/device_end.c
 )
 
 target_compile_definitions(genet.device
@@ -75,7 +73,16 @@ target_link_libraries(genet.device
 
 # ROM-able: no writable .data/.bss may sneak in. For the serial backend this
 # instead links debug.lib (+ __divsi3 glue) and skips the ROM check.
-emu68_debug_backend_finalize(genet.device ROMABLE)
+# Layout contract (entry at offset 0, RT_ENDSKIP, no writable sections) belongs to the
+# linker, not to source order -- see Emu68CommonModuleLayout.cmake.
+emu68_module_layout(genet.device)
+
+# Exec interrupt servers answer with the Z flag, not D0 (exec.library/AddIntServer);
+# a compiler epilogue that ends in MOVE rather than MOVEM silently overwrites it.
+# emu68_isr_z_check() slices each server out of the LINKED module (by the section
+# EMU68_INTSERVER() puts it in), so the servers are ordinary LTO'd TUs.
+emu68_enable_lto(genet.device)
+emu68_isr_z_check(genet.device SERVERS bcmgenet_isr0)
 
 install(
     PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/genet.device

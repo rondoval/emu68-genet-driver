@@ -117,12 +117,70 @@ sw confirming the drop means genuine wire corruption reaching the MAC.
 ## Interrupt coalescing
 
 - **RX**: `DMA_MBUF_DONE_THRESH` (frames) + the RDMA timeout register (usecs,
-  in 8.192 µs hardware units). Runtime-tunable via `ENV:genet.prefs`
-  (`RX_COALESCE_USECS`, default 500; `RX_COALESCE_FRAMES`, default 64) and the
-  netdev `SET_COALESCE` op (`NDCF_COALESCE`).
-- **TX**: `DMA_MBUF_DONE_THRESH` on the TX ring (`TX_COALESCE_FRAMES`, default
-  32); the hardware additionally interrupts when the ring drains, so
-  completions are never starved.
+  in 8.192 µs hardware units). Seeded from `GENET_COAL_RX_USECS` (500) and
+  `GENET_COAL_RX_FRAMES` (64) in `device.h`, and set at runtime by the netdev
+  `SET_COALESCE` op (`NDCF_COALESCE`) — which `netdev-stats RXUSECS <n>
+  RXFRAMES <n> TXFRAMES <n>` issues by hand.
+- **RX profile** (`NDCF_RX_PROFILE`, `NETDEV_CMD_SET_RX_PROFILE`): the timeout
+  counts from the first pending frame and is not postponed by frames that keep
+  arriving, so a lone small frame — the reply a task is blocked on — always
+  waits all of it, while a short static timeout costs a third of the bulk
+  receive rate. Whether anybody waits is known to the stack alone, so it states
+  intent and the driver maps it.
+
+  Two sources can set the RX coalescer, and **the pin decides which is in
+  force**. An explicit `SET_COALESCE` — one naming a non-zero `RXUSECS` or
+  `RXFRAMES` — pins the operator's numbers and the stack's intent is ignored
+  until an all-default RX setting releases them. Unpinned, the driver decides
+  from the profile, and uses its own `GENET_COAL_*` constants rather than the
+  operator's fields:
+
+  | pinned | profile | programmed |
+  |---|---|---|
+  | yes | any | the operator's `RXFRAMES` + `RXUSECS` |
+  | no | not stated | `GENET_COAL_RX_FRAMES` + `GENET_COAL_RX_USECS` (64 / 500) |
+  | no | throughput | `GENET_COAL_RX_FRAMES` + `GENET_COAL_RX_BULK_USECS` (1000) |
+  | no | latency | the burst ladder below |
+
+  The profile keeps being recorded while pinned, so `drv_rx_profile` still
+  shows what the stack asked for and the last intent takes effect the moment
+  the pin is released. Two edges worth knowing: the pin covers RX only —
+  `TXFRAMES` is always applied, there being no TX profile to outrank — and
+  because the ABI reads a zero field as "use the driver default", a
+  `SET_COALESCE` that names only `TXFRAMES` resets RX to the defaults and
+  releases the pin with it.
+
+  - *throughput*: the driver's RX frame threshold with the longer
+    `GENET_COAL_RX_BULK_USECS` timeout (1000) — nobody waits for a single
+    frame, and at line rate the frame threshold fires first.
+  - *latency*: a burst ladder. When an RX pass is about to re-arm its interrupt
+    it looks at the ring once more: quiet → one frame, so whatever comes next
+    interrupts at once; frames already waiting → one level up (64 frames with
+    100 → 200 → 400 µs → `GENET_COAL_RX_USECS`; the top is that 500 µs,
+    because the end of a large reply waits for it and somebody waits for that
+    end). Registers are written only on a level change; going down to one frame
+    is followed by another look at the ring and a poll if a frame slipped in.
+    One thing overrules a quiet ring: a consumer that is behind. If the stack
+    still holds two poll batches or more of the driver's buffers while the wire
+    is idle, nobody is waiting for this traffic — a file copied window by
+    window while the application writes the previous one out — and the ring is
+    re-armed at the bulk level, so the next burst is batched
+    from its first frame; a quiet ring that finds the buffers returned ends it.
+    Counters: `drv_rx_profile` (0 nothing stated, 1 throughput, 2 latency),
+    `drv_rx_level` (both gauges), `drv_rx_level_changes`, `drv_rx_bulk_arms`.
+ - **TX**: the TX-done interrupt is masked in steady state. Completed cookies
+  are harvested on every unit-task wakeup — receive interrupts, the submit
+  path's low-water kick, the housekeeping tick — because nothing waits for a
+  completion, while the hardware also interrupts whenever the ring drains:
+  one interrupt plus one task wakeup for every lone frame, i.e. for every
+  request and every ACK, at more than 100 µs apiece on this platform. The
+  exception is backpressure: when `ndo_TxSubmit` returns short, the ABI tells
+  the stack to retry after the next `nso_TxDone`, so the submitter wakes the
+  unit task, which hands back what has completed or, if that is nothing, arms
+  one TX-done interrupt (`DMA_MBUF_DONE_THRESH` = the unit's TX frame
+  threshold, `GENET_COAL_TX_FRAMES` = 32 unless `SET_COALESCE` moved it).
+  Counter: `drv_tx_irq_arms`. Without receive traffic the tail of a burst is
+  completed by the tick, at most `GENET_PERIODIC_TASK_MS` later.
 
 ## Capability inventory
 
@@ -133,7 +191,7 @@ Used by this driver:
 | TX L4 checksum (TCP/UDP) | TSB `tx_csum_info` + `DMA_TX_DO_CSUM` | `NDCF_TX_L4CSUM`, per-frame `NDTF_L4CSUM/L4_UDP` |
 | RX full-frame checksum | RXCHK raw mode → RSB | `NDCF_RX_CSUM_RAW`, `nrd_CsumRaw` |
 | FCS generation | `DMA_TX_APPEND_CRC` | always (also gives hardware runt padding) |
-| Interrupt coalescing | MBUF_DONE_THRESH + RDMA timeout | `NDCF_COALESCE` + prefs |
+| Interrupt coalescing | MBUF_DONE_THRESH + RDMA timeout | `NDCF_COALESCE` + `NDCF_RX_PROFILE` |
 | Link events | PHY IRQ → `UMAC_IRQ_LINK_UP/DOWN` | `NDCF_LINK_EVENTS` → `nso_LinkChange` |
 | MAC address filter | MDF (17 exact-match slots) | broadcast + own MAC + up to 15 joined multicast groups (`NDCF_MCAST_FILTER`); promiscuous only for `NDFF_PROMISC`/`NDFF_ALLMULTI` or a list that overruns the slots — the UniMAC has no multicast-only accept bit, so `CMD_PROMISC` is our all-multi |
 

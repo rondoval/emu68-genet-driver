@@ -4,7 +4,7 @@
 #include <clib/timer_protos.h>
 #else
 #define __NOLIBBASE__
-#define EXEC_BASE_NAME (*(struct ExecBase **)4UL)
+#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
 #include <proto/exec.h>
 #include <proto/timer.h>
 #endif
@@ -40,14 +40,13 @@
  */
 static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 {
-    const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
-
+    struct ExecBase *SysBase = unit->sysBase;
     unit->rx_signal = -1;
     unit->tx_signal = -1;
     unit->link_signal = -1;
 
     // Initialize the built in msg port, we'll receive commands here
-    BYTE msg_sigbit = drv_unit_msgport_init(&unit->unit);
+    BYTE msg_sigbit = drv_unit_msgport_init(SysBase, &unit->unit);
     if (msg_sigbit == -1)
     {
         Kprintf("[genet] %s: Failed to allocate unit message signal\n", __func__);
@@ -66,12 +65,12 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
     // Create a timer, we'll use it to poll the PHY and do housekeeping
     struct drv_timer tick;
-    if (!drv_timer_open(&tick))
+    if (!drv_timer_open(&tick, SysBase))
     {
         Kprintf("[genet] %s: Failed to open timer device\n", __func__);
         goto free_signals;
     }
-    drv_timer_arm_ms(&tick, config->periodic_task_ms);
+    drv_timer_arm_ms(&tick, GENET_PERIODIC_TASK_MS);
 
     unit->task = FindTask(NULL);
     /* Signal parent that Unit task is up and running now */
@@ -79,12 +78,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
 
     KprintfT("[genet] %s: Entering main unit task loop\n", __func__);
 
-    /* Housekeeping ticks between PHY link polls, rounded up (>= 1). */
-    u32 link_poll_period_ticks = 1;
-    if (config->periodic_task_ms != 0 && config->link_poll_ms > config->periodic_task_ms)
-        link_poll_period_ticks =
-            (config->link_poll_ms + config->periodic_task_ms - 1) / config->periodic_task_ms;
-    u32 link_poll_ticks = 0;
+    u32 link_poll_ticks = 0; /* counts up to GENET_LINK_POLL_TICKS */
 
     ULONG sigset;
     ULONG waitMask = (1UL << unit->unit.unit_MsgPort.mp_SigBit) |
@@ -105,7 +99,15 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
          *
          *   TX  — harvested on EVERY wakeup. It is lock-free and costs one
          *         index compare when idle, and completing early only frees
-         *         the stack's memory sooner.
+         *         the stack's memory sooner. Those wakeups are all the TX side
+         *         gets in steady state: the TX-done interrupt stays masked,
+         *         because nothing waits for a completion and an interrupt plus
+         *         a wakeup per lone frame — every request, every ACK — costs
+         *         more than a hundred microseconds apiece. The exception is a
+         *         stack that ndo_TxSubmit answered short: the ABI tells it to
+         *         retry after the next nso_TxDone. The submitter counts those
+         *         calls and signals us; if this pass's harvest had nothing to
+         *         hand back, the hardware is asked for one interrupt.
          *   RX  — polled only when its own interrupt says so. Handing frames
          *         up takes the stack's core lock, so the batch size IS the
          *         lock cadence (see unit->ndRxBatch) and it is also the GRO merge
@@ -116,16 +118,34 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
          */
         if (likely(unit->state == STATE_ONLINE))
         {
-            bcmgenet_tx_harvest(unit);
+            /* Sampled before the harvest, so every refusal counted here
+             * precedes it: cookies delivered below are the nso_TxDone those
+             * callers were told to wait for. A later refusal signals again. */
+            u32 refused = unit->ndTxRefused;
+            ULONG delivered = bcmgenet_tx_harvest(unit);
+            if (unlikely(refused != unit->ndTxRefusedSeen))
+            {
+                unit->ndTxRefusedSeen = refused;
+                if (delivered == 0)
+                    bcmgenet_tx_done_arm(unit);
+            }
 
-            /* Re-arm what the ISR masked, as one MASK_CLEAR write. TX is
-             * always caught up by here; RX stays masked while we are still
-             * behind, and the ISR already ACKed, so a writeback that latched
-             * STAT during the drain re-fires on unmask — nothing is lost. */
-            u32 rearm = UMAC_IRQ_TXDMA_DONE;
+            /* Re-arm the RX interrupt the ISR masked. It stays masked while we
+             * are still behind, and the ISR already ACKed, so a writeback that
+             * latched STAT during the drain re-fires on unmask — nothing is
+             * lost. */
+            u32 rearm = 0;
 
             if (sigset & (1UL << unit->rx_signal))
             {
+#ifdef PROFILE
+                /* interrupt wakeups only: a poll we signalled ourselves has no stamp */
+                if (unit->gu_RxIrqPending != 0)
+                {
+                    PERF_ADD(&unit->gu_Perf, GP_RX_WAKE, unit->gu_RxIrqPending);
+                    unit->gu_RxIrqPending = 0;
+                }
+#endif
                 /* Poll one negotiated batch. If the ring still held a full
                  * batch we re-signal to poll again, so TX harvest and commands
                  * get a turn between batches instead of RX draining the whole
@@ -136,7 +156,14 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                     Signal(unit->task, 1UL << unit->rx_signal); /* still behind */
             }
 
-            bcmgenet_irq0_enable(unit, rearm);
+            if (rearm != 0)
+            {
+                /* latency profile: decide from the ring what the next
+                 * interrupt should wait for, before it can fire. */
+                if (unit->rxLadder)
+                    bcmgenet_rx_moderate(unit);
+                bcmgenet_irq0_enable(unit, rearm);
+            }
         }
 
         // IO queue got a new message
@@ -185,8 +212,8 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             {
                 /* PHY link poll — the reliable path to current link state
                  * (see bcmgenet_link_poll). MDIO reads are slow, so it runs at
-                 * link_poll_ms rather than on every housekeeping tick. */
-                if (++link_poll_ticks >= link_poll_period_ticks)
+                 * GENET_LINK_POLL_MS rather than on every housekeeping tick. */
+                if (++link_poll_ticks >= GENET_LINK_POLL_TICKS)
                 {
                     link_poll_ticks = 0;
                     bcmgenet_link_poll(unit, TRUE); /* poll: keep the latch, so short drops are seen */
@@ -196,7 +223,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
             }
 
             /* Re-arm timer */
-            drv_timer_arm_ms(&tick, config->periodic_task_ms);
+            drv_timer_arm_ms(&tick, GENET_PERIODIC_TASK_MS);
         }
 
         if (unlikely(sigset & SIGBREAKF_CTRL_C))
@@ -223,19 +250,21 @@ free_signals:
     /* drv_task_exit clears the liveness slot first (drv_task_join polls it),
      * then reports CTRL_F for a task that ran / CTRL_C for one that never got
      * to its loop (unit->task is set only once the loop is entered). */
-    drv_task_exit(&unit->task, parent, unit->task != NULL);
+    drv_task_exit(SysBase, &unit->task, parent, unit->task != NULL);
 }
 
 u32 UnitTaskStart(struct GenetUnit *unit)
 {
-    const struct GenetRuntimeConfig *config = &unit->device->runtimeConfig;
-    return drv_task_spawn(unit, UnitTask, "genet ethernet driver",
-                          config->unit_stack_bytes, config->unit_task_priority) == 0
+    struct ExecBase *SysBase = unit->sysBase;
+    return drv_task_spawn(SysBase, unit, UnitTask, "genet ethernet driver",
+                          GENET_UNIT_STACK_BYTES,
+                          unit->device->runtimeConfig.unit_task_priority) == 0
                ? GENET_OK
                : ENOMEM;
 }
 
 void UnitTaskStop(struct GenetUnit *unit)
 {
-    drv_task_join(&unit->task);
+    struct ExecBase *SysBase = unit->sysBase;
+    drv_task_join(SysBase, &unit->task);
 }
