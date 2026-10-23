@@ -1,3 +1,26 @@
+# Release notes - genet.device 3.17
+
+Changes since 3.16.
+
+---
+
+## Bug fixes
+
+- **A program that calls `CloseDevice()` after a failed `OpenDevice()` no
+  longer upsets the driver.** A failed open now clears the request's device
+  and unit, so that close does nothing, as Exec expects; before, it reached
+  the driver's close and dropped an open count it had never taken.
+
+---
+
+## Build & tooling
+
+- `find_package()` names the oldest version of each dependency the driver
+  builds against: emu68-common 2.0, gic400.library 1.3. An older one now
+  fails at configure instead of mid-build.
+
+---
+
 # Release notes — genet.device 3.16
 
 Changes since 3.15.
