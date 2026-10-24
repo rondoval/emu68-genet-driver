@@ -62,12 +62,7 @@ endif()
 
 set(LIBNIX_SWAPSTACK_O ${TOOLCHAIN_PATH}/m68k-amigaos/libnix/lib/swapstack.o)
 
-# -Warray-bounds (GCC's -Wall) misreads EXEC_BASE_NAME-style fixed-address
-# reads (the standard AmigaOS "SysBase lives at address 4" convention, used
-# stack-wide) as near-null out-of-bounds accesses. False positive, not
-# scopeable via pragma (the warning fires at each call site, not at the
-# macro definition), so it's disabled toolchain-wide instead.
-set(FLAGS_COMMON "${TOOLCHAIN_COMMON} -m${M68K_CPU} -m${M68K_FPU}-float -fomit-frame-pointer -mcrt=${M68K_CRT} -Wno-array-bounds")
+set(FLAGS_COMMON "${TOOLCHAIN_COMMON} -m${M68K_CPU} -m${M68K_FPU}-float -fomit-frame-pointer -mcrt=${M68K_CRT}")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${FLAGS_COMMON} ${TOOLCHAIN_CFLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${FLAGS_COMMON} ${TOOLCHAIN_CXXFLAGS}")
 set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} -m${M68K_CPU} -I${TOOLCHAIN_PATH}/m68k-amigaos/sys-include")
