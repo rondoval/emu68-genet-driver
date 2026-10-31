@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14.0)
-project(emu68-genet-driver VERSION 4.3)
+project(emu68-genet-driver VERSION 4.4)
 
 string(TIMESTAMP CURRENT_DATE "(%d.%m.%Y)")
 if(EMU68_BUILD_STAMP)   # local-build marker from the stack's build.sh; empty in releases
@@ -7,9 +7,9 @@ if(EMU68_BUILD_STAMP)   # local-build marker from the stack's build.sh; empty in
 endif()
 set(VERSTRING "$VER: ${PROJECT_NAME} ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR} ${CURRENT_DATE}")
 
-find_package(GIC400 REQUIRED)
-find_package(Emu68Common REQUIRED)
-find_package(Netdev REQUIRED) # the netdev driver ABI header (lwip-amiga)
+find_package(GIC400 1.3 REQUIRED)
+find_package(Emu68Common 2.0 REQUIRED)
+find_package(Netdev 1.0 REQUIRED) # the netdev driver ABI header (lwip-amiga)
 
 # Set default install prefix to ./install subdirectory
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)

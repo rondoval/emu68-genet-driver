@@ -220,6 +220,8 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
     {
         KprintfT("[genet] %s: Invalid unit number %ld\n", __func__, unitNumber);
         io->io_Error = IOERR_OPENFAIL;
+        io->io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->io_Unit = NULL;
         return;
     }
 
@@ -227,6 +229,8 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
     {
         KprintfT("[genet] %s: Invalid request length %ld\n", __func__, io->io_Message.mn_Length);
         io->io_Error = IOERR_OPENFAIL;
+        io->io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->io_Unit = NULL;
         return;
     }
 
@@ -238,6 +242,8 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
         {
             Kprintf("[genet]%s: Failed to allocate unit\n", __func__);
             io->io_Error = IOERR_OPENFAIL;
+            io->io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+            io->io_Unit = NULL;
             return;
         }
         base->unit->sysBase = base->sysBase;
@@ -260,6 +266,8 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
     if (firstOpen && genet_open_libraries(base) != 0)
     {
         io->io_Error = IOERR_OPENFAIL;
+        io->io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->io_Unit = NULL;
         if (createdUnit)
         {
             FreeMem(base->unit, sizeof(struct GenetUnit));
@@ -290,7 +298,8 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
         Kprintf("[genet] %s: Failed to open unit, error code %ld\n", __func__, result);
         /* Leave nothing usable behind. */
         io->io_Error = IOERR_OPENFAIL;
-        io->io_Device = (struct Device *)-1;
+        io->io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->io_Unit = NULL;
         if (createdUnit)
         {
             FreeMem(base->unit, sizeof(struct GenetUnit));
