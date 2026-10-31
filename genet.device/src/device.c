@@ -276,6 +276,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     {
         KprintfT("[genet] %s: Invalid unit number %ld\n", __func__, unitNumber);
         io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        io->ios2_Req.io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->ios2_Req.io_Unit = NULL;
         return;
     }
 
@@ -283,6 +285,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     {
         KprintfT("[genet] %s: Invalid request length %ld\n", __func__, io->ios2_Req.io_Message.mn_Length);
         io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        io->ios2_Req.io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->ios2_Req.io_Unit = NULL;
         return;
     }
 
@@ -294,6 +298,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
         {
             Kprintf("[genet]%s: Failed to allocate unit\n", __func__);
             io->ios2_Req.io_Error = IOERR_OPENFAIL;
+            io->ios2_Req.io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+            io->ios2_Req.io_Unit = NULL;
             return;
         }
         base->unit->sysBase = base->sysBase;
@@ -307,6 +313,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     {
         KprintfT("[genet] %s: Unit is already open, can't do exclusive access\n", __func__);
         io->ios2_Req.io_Error = IOERR_UNITBUSY;
+        io->ios2_Req.io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->ios2_Req.io_Unit = NULL;
         return;
     }
 
@@ -314,6 +322,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     if (firstOpen && genet_open_libraries(base) != 0)
     {
         io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        io->ios2_Req.io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->ios2_Req.io_Unit = NULL;
         if (createdUnit)
         {
             FreeMem(base->unit, sizeof(struct GenetUnit));
@@ -336,6 +346,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
         if (opener == NULL)
         {
             io->ios2_Req.io_Error = IOERR_OPENFAIL;
+            io->ios2_Req.io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+            io->ios2_Req.io_Unit = NULL;
             if (base->unit)
             {
                 FreeMem(base->unit, sizeof(struct GenetUnit));
@@ -362,6 +374,8 @@ void openLib(struct IOSana2Req *io asm("a1"), LONG unitNumber asm("d0"),
     {
         Kprintf("[genet] %s: Failed to open unit, error code %ld\n", __func__, result);
         io->ios2_Req.io_Error = IOERR_OPENFAIL;
+        io->ios2_Req.io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->ios2_Req.io_Unit = NULL;
         if (firstOpen)
             genet_close_libraries(base);
     }
