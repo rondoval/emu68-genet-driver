@@ -8,7 +8,7 @@ endif()
 set(VERSTRING "$VER: ${PROJECT_NAME} ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR} ${CURRENT_DATE}")
 
 find_package(GIC400 1.3 REQUIRED)
-find_package(Emu68Common 2.0 REQUIRED)
+find_package(Emu68Common 2.3 REQUIRED) # 2.3: prefs_open()
 find_package(Netdev 1.0 REQUIRED) # the netdev driver ABI header (lwip-amiga)
 
 # Set default install prefix to ./install subdirectory

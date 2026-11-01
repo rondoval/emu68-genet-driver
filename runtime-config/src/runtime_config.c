@@ -1,16 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0+
-#ifdef __INTELLISENSE__
-#include <clib/dos_protos.h>
-#include <clib/exec_protos.h>
-#else
-#define __NOLIBBASE__
-#include <proto/dos.h>
-#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetUnit.sysBase */
-#include <proto/exec.h>
-#endif
-
 #include <exec/types.h>
-#include <exec/memory.h>
 
 #include <types.h>
 #include <strutil.h>
@@ -56,29 +45,6 @@ static BOOL ParseLinkMode(struct GenetRuntimeConfig *config, const char *val)
     return FALSE;
 }
 
-/* on/off, yes/no, true/false, 1/0. Returns FALSE for anything else, leaving
- * *out untouched. */
-static BOOL ParseBool(const char *val, u8 *out)
-{
-    static const char *const on_names[] = {"on", "yes", "true", "1"};
-    static const char *const off_names[] = {"off", "no", "false", "0"};
-
-    for (u32 i = 0; i < sizeof(on_names) / sizeof(on_names[0]); i++)
-    {
-        if (_Stricmp((CONST_STRPTR)val, (CONST_STRPTR)on_names[i]) == 0)
-        {
-            *out = 1;
-            return TRUE;
-        }
-        if (_Stricmp((CONST_STRPTR)val, (CONST_STRPTR)off_names[i]) == 0)
-        {
-            *out = 0;
-            return TRUE;
-        }
-    }
-    return FALSE;
-}
-
 static void ApplyDefaults(struct GenetRuntimeConfig *config)
 {
     config->unit_task_priority = DEFAULT_UNIT_TASK_PRIORITY;
@@ -94,38 +60,23 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *
     KprintfT("[genet] %s: Loading defaults\n", __func__);
     ApplyDefaults(config);
 
-    /* dos packet I/O needs a Process; OpenDevice is legal from a bare Task,
-     * whose "pr_MsgPort" would be garbage beyond the Task structure */
-    if (FindTask(NULL)->tc_Node.ln_Type != NT_PROCESS)
+    struct prefs_file f;
+    if (!prefs_open(&f, SysBase, "ENV:genet.prefs"))
     {
-        Kprintf("[genet] %s: caller is not a Process, keeping defaults\n", __func__);
-        return;
-    }
-
-    struct DosLibrary *DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR) "dos.library", 0);
-    if (!DOSBase)
-        return;
-
-    BPTR fh = Open((CONST_STRPTR) "ENV:genet.prefs", MODE_OLDFILE);
-    if (!fh)
-    {
-        CloseLibrary((struct Library *)DOSBase);
+        KprintfT("[genet] %s: Nothing to read, keeping defaults\n", __func__);
         return;
     }
     KprintfT("[genet] %s: Reading ENV:genet.prefs\n", __func__);
 
-    unsigned char linebuf[256];
-    while (FGets(fh, (STRPTR)linebuf, sizeof(linebuf)))
+    char *key, *val;
+    while (prefs_next(&f, &key, &val))
     {
-        char *key, *val;
-        if (!prefs_split((char *)linebuf, &key, &val))
-            continue;
-
         LONG parsed;
+        BOOL on;
 
         if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_TASK_PRIORITY") == 0)
         {
-            if (StrToLong((STRPTR)val, &parsed))
+            if (prefs_number(val, PREFS_NUMBER_LEAST, PREFS_NUMBER_MOST, &parsed))
             {
                 if (parsed < UNIT_TASK_PRIORITY_MIN)
                     parsed = UNIT_TASK_PRIORITY_MIN;
@@ -142,13 +93,17 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *
         }
         else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "AUTONEG") == 0)
         {
-            if (!ParseBool(val, &config->link_autoneg))
+            if (prefs_bool(val, &on))
+                config->link_autoneg = (u8)on;
+            else
                 Kprintf("[genet] %s: unknown AUTONEG '%s', keeping on\n",
                         __func__, (ULONG)val);
         }
         else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "FLOW_CONTROL") == 0)
         {
-            if (!ParseBool(val, &config->flow_control))
+            if (prefs_bool(val, &on))
+                config->flow_control = (u8)on;
+            else
                 Kprintf("[genet] %s: unknown FLOW_CONTROL '%s', keeping on\n",
                         __func__, (ULONG)val);
         }
@@ -156,7 +111,7 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *
         {
             /* 0 = auto (sized at ATTACH from the stack's budget);
              * explicit values are an absolute operator override */
-            if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
+            if (prefs_number(val, 0, PREFS_NUMBER_MOST, &parsed))
             {
                 if (parsed != 0)
                 {
@@ -170,8 +125,7 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *
         }
     }
 
-    Close(fh);
-    CloseLibrary((struct Library *)DOSBase);
+    prefs_close(&f);
 
     /* Cross-key validation, once the whole file has been read: LINK_MODE and
      * AUTONEG may appear in either order.

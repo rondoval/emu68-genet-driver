@@ -10,6 +10,10 @@ Changes since v4.3.
   longer upsets the driver.** A failed open now clears the request's device
   and unit, so that close does nothing, as Exec expects; before, it reached
   the driver's close and dropped an open count it had never taken.
+- **A `UNIT_TASK_PRIORITY` in `ENV:genet.prefs` that is not a number now leaves
+  the default of 15.** `UNIT_TASK_PRIORITY = high` counted as 0, which became
+  the minimum, 6. A number with something after it, such as `15x`, is refused
+  the same way, here and in `RX_POOL_BUFS`.
 
 ---
 
