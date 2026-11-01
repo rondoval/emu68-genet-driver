@@ -1,19 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0+
-#ifdef __INTELLISENSE__
-#include <clib/dos_protos.h>
-#include <clib/exec_protos.h>
-#else
-#define __NOLIBBASE__
-#include <proto/dos.h>
-#define EXEC_BASE_NAME SysBase /* a local in every function: see GenetDevice.sysBase */
-#include <proto/exec.h>
-#endif
-
 #include <exec/types.h>
-#include <exec/memory.h>
 
 #include <types.h>
 #include <strutil.h>
+#include <prefs.h>
 #include <runtime_config.h>
 #include <debug.h>
 
@@ -35,114 +25,76 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *
     KprintfT("[genet] %s: Loading defaults\n", __func__);
     ApplyDefaults(config);
 
-    struct DosLibrary *DOSBase = (struct DosLibrary *)OpenLibrary((CONST_STRPTR) "dos.library", 0);
-    if (!DOSBase)
-        return;
-
-    BPTR fh = Open((CONST_STRPTR) "ENV:genet.prefs", MODE_OLDFILE);
-    if (!fh)
+    struct prefs_file f;
+    if (!prefs_open(&f, SysBase, "ENV:genet.prefs"))
     {
-        CloseLibrary((struct Library *)DOSBase);
+        KprintfT("[genet] %s: Nothing to read, keeping defaults\n", __func__);
         return;
     }
     KprintfT("[genet] %s: Reading ENV:genet.prefs\n", __func__);
 
-    unsigned char linebuf[256];
-    while (FGets(fh, (STRPTR)linebuf, sizeof(linebuf)))
+    char *key, *val;
+    while (prefs_next(&f, &key, &val))
     {
-        char *line = (char *)linebuf;
-        /* strip CR/LF */
-        char *eol = line;
-        while (*eol && *eol != '\n' && *eol != '\r')
-            eol++;
-        *eol = '\0';
-        /* find '=' */
-        char *eq = line;
-        while (*eq && *eq != '=')
-            eq++;
-        if (*eq == '=')
-        {
-            *eq = '\0';
-            char *key = line;
-            char *val = eq + 1;
-            while (*key == ' ' || *key == '\t')
-                key++;
-            while (*val == ' ' || *val == '\t')
-                val++;
-            char *end = val;
-            while (*end)
-                end++;
-            while (end > val && (end[-1] == ' ' || end[-1] == '\t'))
-                *--end = '\0';
-            end = key;
-            while (*end)
-                end++;
-            while (end > key && (end[-1] == ' ' || end[-1] == '\t'))
-                *--end = '\0';
-            if (*key && *val)
-            {
-                LONG parsed;
+        LONG parsed;
 
-                if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_TASK_PRIORITY") == 0)
-                {
-                    if (StrToLong((STRPTR)val, &parsed))
-                    {
-                        if (parsed < UNIT_TASK_PRIORITY_MIN)
-                            parsed = UNIT_TASK_PRIORITY_MIN;
-                        if (parsed > UNIT_TASK_PRIORITY_MAX)
-                            parsed = UNIT_TASK_PRIORITY_MAX;
-                        config->unit_task_priority = (s8)parsed;
-                    }
-                }
-                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_STACK_SIZE") == 0)
-                {
-                    if (StrToLong((STRPTR)val, &parsed) && parsed > 0)
-                        config->unit_stack_bytes = (u32)parsed;
-                    if (config->unit_stack_bytes < 4096)
-                        config->unit_stack_bytes = 4096; /* floor */
-                    config->unit_stack_bytes &= ~3u;    /* 32-bit align */
-                }
-                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "USE_DMA") == 0)
-                {
-                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                        config->use_dma = (u8)parsed;
-                }
-                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "USE_MIAMI_WORKAROUND") == 0)
-                {
-                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                        config->use_miami_workaround = (u8)parsed;
-                }
-                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "BUDGET") == 0)
-                {
-                    if (StrToLong((STRPTR)val, &parsed) && parsed > 0)
-                        config->budget = (u16)parsed;
-                }
-                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "PERIODIC_TASK_MS") == 0)
-                {
-                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                        config->periodic_task_ms = (u32)parsed;
-                }
-                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_USECS") == 0)
-                {
-                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                        config->rx_coalesce_usecs = (u32)parsed;
-                }
-                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_FRAMES") == 0)
-                {
-                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                        config->rx_coalesce_frames = (u32)parsed;
-                }
-                else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "TX_COALESCE_FRAMES") == 0)
-                {
-                    if (StrToLong((STRPTR)val, &parsed) && parsed >= 0)
-                        config->tx_coalesce_frames = (u32)parsed;
-                }
+        if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_TASK_PRIORITY") == 0)
+        {
+            if (prefs_number(val, PREFS_NUMBER_LEAST, PREFS_NUMBER_MOST, &parsed))
+            {
+                if (parsed < UNIT_TASK_PRIORITY_MIN)
+                    parsed = UNIT_TASK_PRIORITY_MIN;
+                if (parsed > UNIT_TASK_PRIORITY_MAX)
+                    parsed = UNIT_TASK_PRIORITY_MAX;
+                config->unit_task_priority = (s8)parsed;
             }
+        }
+        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "UNIT_STACK_SIZE") == 0)
+        {
+            if (prefs_number(val, 1, PREFS_NUMBER_MOST, &parsed))
+                config->unit_stack_bytes = (u32)parsed;
+            if (config->unit_stack_bytes < 4096)
+                config->unit_stack_bytes = 4096; /* floor */
+            config->unit_stack_bytes &= ~3u;    /* 32-bit align */
+        }
+        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "USE_DMA") == 0)
+        {
+            if (prefs_number(val, 0, PREFS_NUMBER_MOST, &parsed))
+                config->use_dma = (u8)parsed;
+        }
+        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "USE_MIAMI_WORKAROUND") == 0)
+        {
+            if (prefs_number(val, 0, PREFS_NUMBER_MOST, &parsed))
+                config->use_miami_workaround = (u8)parsed;
+        }
+        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "BUDGET") == 0)
+        {
+            if (prefs_number(val, 1, PREFS_NUMBER_MOST, &parsed))
+                config->budget = (u16)parsed;
+        }
+        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "PERIODIC_TASK_MS") == 0)
+        {
+            if (prefs_number(val, 0, PREFS_NUMBER_MOST, &parsed))
+                config->periodic_task_ms = (u32)parsed;
+        }
+        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_USECS") == 0)
+        {
+            if (prefs_number(val, 0, PREFS_NUMBER_MOST, &parsed))
+                config->rx_coalesce_usecs = (u32)parsed;
+        }
+        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "RX_COALESCE_FRAMES") == 0)
+        {
+            if (prefs_number(val, 0, PREFS_NUMBER_MOST, &parsed))
+                config->rx_coalesce_frames = (u32)parsed;
+        }
+        else if (_Stricmp((CONST_STRPTR)key, (CONST_STRPTR) "TX_COALESCE_FRAMES") == 0)
+        {
+            if (prefs_number(val, 0, PREFS_NUMBER_MOST, &parsed))
+                config->tx_coalesce_frames = (u32)parsed;
         }
     }
 
-    Close(fh);
-    CloseLibrary((struct Library *)DOSBase);
+    prefs_close(&f);
 }
 
 #ifdef DEBUG

@@ -10,6 +10,15 @@ Changes since 3.16.
   longer upsets the driver.** A failed open now clears the request's device
   and unit, so that close does nothing, as Exec expects; before, it reached
   the driver's close and dropped an open count it had never taken.
+- **A setting in `ENV:genet.prefs` that is not a number now leaves the default.**
+  It counted as 0, so `PERIODIC_TASK_MS = soon` set that timer to 0 instead of
+  200, the `RX_COALESCE_*` and `TX_COALESCE_FRAMES` settings lost their values,
+  and `UNIT_TASK_PRIORITY = high` became the minimum, 6, instead of the default
+  of 15. A number with something after it, such as `15x`, is refused the same
+  way.
+- **Opening the device from a plain Exec task is safe.** The driver read
+  `ENV:genet.prefs` whoever opened it, and only a Process can use `dos.library`.
+  From a plain task it now keeps its defaults.
 
 ---
 
