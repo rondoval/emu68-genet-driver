@@ -187,7 +187,7 @@ static const struct genet_sw_counter genet_sw_counters[] = {
 	SW_U32("drv_rx_level_changes", internalStats.rx_level_changes, 0),
 	SW_U32("drv_rx_bulk_arms", internalStats.rx_bulk_arms, 0),
 	/* RX buffer pool, right now */
-	SW_U32("drv_rx_pool_free", ndRxFreeCount, NDCNTF_GAUGE),
+	SW_U32("drv_rx_pool_free", rxFreeCount, NDCNTF_GAUGE),
 	SW_U32("drv_rx_held", ndRxHeld, NDCNTF_GAUGE),
 };
 
@@ -354,4 +354,9 @@ void bcmgenet_mib_reset(struct GenetUnit *unit)
 	/* The overflow accumulator survives the start; only its delta baseline
 	 * follows the register back to zero. */
 	bcmgenet_mib_rbuf_ovfl_rebase(unit);
+}
+
+u32 bcmgenet_mib_read(struct GenetUnit *unit, u16 reg)
+{
+	return mmio_read32(BCMGENET_REG(unit, reg));
 }

@@ -15,12 +15,18 @@ Build through the superbuild's container wrapper from the stack root — never h
 ```
 
 - Debug backend (`pistorm` default | `serial` | `off`): `EMU68_CONFIGURE_ARGS="-DEMU68_DEBUG_BACKEND=serial"`. Selected stack-wide via `emu68-common`; `serial` links `debug.lib` and is not ROM-able.
-- The top-level `CMakeLists.txt` adds `runtime-config` (static lib) and `genet.device` (the driver), and `find_package`s `GIC400`, `Emu68Common`, and `Netdev`. `devicetree.resource` is a runtime resource, not a build-time package. `VERSTRING` is defined at the top level from project version plus date; `genet.device/CMakeLists.txt` only consumes it.
+- The top-level `CMakeLists.txt` adds `runtime-config` (static lib), `genet.device` (the driver), `tools` (`genet-stats`, installed to `C/`) and `tests` (`s2check`, built, not installed), and `find_package`s `GIC400`, `Emu68Common`, and `Netdev`. `devicetree.resource` is a runtime resource, not a build-time package. `VERSTRING` is defined at the top level from project version plus date; `genet.device/CMakeLists.txt` only consumes it, and `device.c` refuses to build without it.
 
 ## Architecture
 
-- Speaks the **netdev ABI** (`<devices/netdev.h>`) only. Packets move zero-copy between the stack's DMA memory and the hardware rings — no openers, no packet copies, no per-protocol queues.
-- The datapath is lock-free: every object crossing the unit task and the caller context is a single-producer/single-consumer ring. Be conservative with anything that touches that contract.
+- Two personalities on one core: **netdev** (`<devices/netdev.h>`, `netdev_api.c`: zero-copy, packets move by reference between the stack's DMA memory and the rings) and **SANA-II** (`sana2_*.c`: openers, read queues, copies through the driver's buffers).
+- **The claim:** netdev holds the unit iff `ndStackOps != NULL` (ATTACH to DETACH); SANA-II holds it iff `s2->claimers != 0` (an opener's `S2_CONFIGINTERFACE` or `S2_ONLINE`, until it closes). Opening holds nothing. ATTACH while SANA-II holds it answers `NDERR_BUSY`; SANA-II configuration, multicast and datapath while netdev holds it answer `S2ERR_OUTOFSERVICE` — never `S2ERR_BAD_STATE`, which stacks read as "already configured / online". Queries (`S2_DEVICEQUERY`, the S2 statistics, netdev `GET_*`, `SET_COALESCE`) answer in any mode. The claim rule is the one `netdev.h` defines.
+- **netdev's hot path must not pay for SANA-II.** The unit task's datapath gate tests `ndStarted` first (one load and branch, as 4.x); SANA-II per-wake work sits only in its branch. SANA-II state lives in `struct GenetS2` behind `unit->s2`, so `GenetUnit`'s hot field order stays 4.x's. A datapath change is compared by disassembly against the previous release, then on hardware.
+- The netdev datapath is lock-free: every object crossing the unit task and the caller context is a single-producer/single-consumer ring. Be conservative with anything that touches that contract. SANA-II writes go out in the caller under one `Forbid()`; a full ring queues them for the unit task.
+- An `IOSana2Req`-sized open gets an Opener, left in `ios2_BufferManagement` (the open rule is `netdev.h`'s). `closeLib` takes back only an Opener on `s2->issued`, the list `openLib`/`closeLib` keep under exec's `Forbid()`: never trust that field from a closing request otherwise.
+- SANA-II commands and opener list changes run on the unit task only. `openLib`/`closeLib` reach it through `GENET_CMD_OPENER_CONTROL` (ADD and REMOVE one-way, the opener freed on REMOVE; ABORT synchronous). `closeLib` always queues REMOVE.
+- Interrupt-mask writes stay on the unit task; SANA-II writers only signal it.
+- `RBUF_ALIGN_2B` follows the personality, set at START: SANA-II frames start at +66 (IP header longword-aligned for the copy), netdev's at +64.
 - Upstream proximity is not a blanket rule — it applies where diffing against U-Boot/Linux still pays, and nowhere else:
   - **Keep diffable.** The PHY layer (`phy.c` from U-Boot phylib, `phy_mdio.c` and `phy_bcm54xx.c` from Linux, plus the imported `mii.h`/`ethtool.h`/`phy*.h`), the register and descriptor definitions in `bcmgenet-regs.h`, the MIB table in `bcmgenet-mib.c`, and the bring-up/teardown and UMAC-programming sequences in `bcmgenet.c` / `bcmgenet-mac.c`. These encode hardware behaviour, so upstream is the reference for what the silicon wants and a clean diff is worth preserving.
   - **Ours, deliberately.** The datapath — `bcmgenet-rx.c`, `bcmgenet-tx.c`, `bcmgenet-irq.c`, `bcmgenet-link.c` and the hot paths of `bcmgenet-dma.c`. Zero-copy netdev RX, the lock-free TX cookie FIFO, polled link state, RX interrupt profiles and TX-done masking have no upstream counterpart; the file split is ours too (upstream is one `bcmgenet.c`). Judge changes here on their own merits, not on resemblance to Linux.
@@ -37,10 +43,12 @@ Build through the superbuild's container wrapper from the stack root — never h
 
 ## Licensing (mixed — preserve every file's SPDX header)
 
-- Dual-licensed `MPL-2.0 OR GPL-2.0+` device scaffolding — do not casually relicense: `device.c`, `unit.c`, `unit_task.c`, `netdev_api.c`, `bcmgenet-link.c`, `bcmgenet-mib.c`, `include/device.h`.
+- Dual-licensed `MPL-2.0 OR GPL-2.0+` device scaffolding — do not casually relicense: `device.c`, `unit.c`, `unit_task.c`, `netdev_api.c`, `sana2_api.c`, `sana2_io.c`, `sana2_mcast.c`, `sana2_stats.c`, `bcmgenet-link.c`, `bcmgenet-mib.c`, `bcmgenet-rxpool.c`, `include/device.h`, `include/sana2_unit.h`, `include/genet/genet_specialstats.h`, `tools/genet-stats.c`, `tests/s2check.c`. The SANA-II scaffolding resembles generic SANA-II drivers and WiFiPi.device more specifically.
 - Original repository files, `GPL-2.0+`: `devtree_parse.c`, `include/genet/bcmgenet.h`, `runtime-config/*`.
-- Linux/U-Boot-derived GPL-family: the remaining `bcmgenet*`, `phy*`, and imported `include/genet/*` (mostly `GPL-2.0+`, some `GPL-2.0-only`). `bcmgenet-link.c` and `bcmgenet-mib.c/.h` are the dual-licensed exceptions to the `bcmgenet*` glob.
+- Linux/U-Boot-derived GPL-family: the remaining `bcmgenet*`, `phy*`, and imported `include/genet/*` (mostly `GPL-2.0+`, some `GPL-2.0-only`). `bcmgenet-link.c`, `bcmgenet-mib.c/.h` and `bcmgenet-rxpool.c` are the dual-licensed exceptions to the `bcmgenet*` glob. `sana2_tx.c` and `include/genet/bcmgenet-tx.h` hold Linux-derived TX status-block handling and stay `GPL-2.0-only`: Linux-derived code goes there, not into a dual-licensed file.
+- The SANA-II headers (`devices/sana2*.h`) are the NDK 3.2R4 ones the build image installs: never vendor a copy into this repository.
 
 ## Validation
 
 - Code or CMake changes: build with `./scripts/docker-build.sh --target emu68-genet-driver-netdev`. Runtime-config parsing changes: also exercise `runtime-config/`. Interface changes in shared headers or install outputs: validate through the full `emu68-driver-stack` build. Doc-only changes: a Problems check.
+- Hardware: the stack's benchmark round (`scripts/bench/` in emu68-driver-stack) measures one personality per boot against the previous release, with `s2check` for the SANA-II claim, filter and refusal checks. Alternate the two drivers boot by boot: one run after the other reads as a regression of the first.

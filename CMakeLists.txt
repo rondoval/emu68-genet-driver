@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14.0)
-project(emu68-genet-driver VERSION 4.4)
+project(emu68-genet-driver VERSION 5.0)
 
 string(TIMESTAMP CURRENT_DATE "(%d.%m.%Y)")
 if(EMU68_BUILD_STAMP)   # local-build marker from the stack's build.sh; empty in releases
@@ -18,3 +18,5 @@ endif()
 
 add_subdirectory(runtime-config)
 add_subdirectory(genet.device)
+add_subdirectory(tools)
+add_subdirectory(tests)

@@ -48,43 +48,11 @@
 #include <genet/bcmgenet.h>
 #include <genet/bcmgenet-irq.h>
 #include <genet/bcmgenet-regs.h>
+#include <genet/bcmgenet-tx.h>
 #include <dma_mem.h>
 
 /* Cookies delivered per nso_TxDone call. */
 #define TX_DONE_BATCH 32u
-
-/* Combined address + length/status setter. Relaxed stores (iomem.h):
- * nothing reads a BD back, and the one emu68_barrier() in
- * bcmgenet_netdev_tx_kick orders every BD of the burst - together with the
- * DMAF_NoSync cache cleans - ahead of the doorbell. */
-static inline void dmadesc_set(APTR descriptor_address, dma_addr_t addr, u32 val)
-{
-	mmio_write32_relaxed((u32)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
-	mmio_write32_relaxed(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
-}
-
-/* The ring slot the producer is about to fill. TX_DESCS is 256, so the
- * 16-bit BD index truncates straight to it — no separate write pointer. */
-static inline u8 tx_slot(const struct bcmgenet_tx_ring *ring)
-{
-	return (u8)ring->tx_prod_index;
-}
-
-/* BD RAM address of that slot. */
-static inline APTR tx_desc(const struct GenetUnit *unit, const struct bcmgenet_tx_ring *ring)
-{
-	return BCMGENET_REG(unit, GENET_TX_OFF) + (u32)tx_slot(ring) * DMA_DESC_SIZE;
-}
-
-static inline u16 tx_free_bds(const struct bcmgenet_tx_ring *ring)
-{
-	return (u16)(TX_DESCS - ((u32)(ring->tx_prod_index - ring->hw_cons_cache) & DMA_P_INDEX_MASK));
-}
-
-static inline void tx_advance_prod(struct bcmgenet_tx_ring *ring)
-{
-	ring->tx_prod_index = (u16)(((u32)ring->tx_prod_index + 1U) & DMA_P_INDEX_MASK);
-}
 
 /* FIFO slots the producer may still fill. */
 static inline u32 txdone_free(const struct GenetUnit *unit)
@@ -199,20 +167,27 @@ ULONG bcmgenet_tx_harvest(struct GenetUnit *unit)
  * is not the ISR's own in the task that also runs STOP — a submitter arming
  * it could race the teardown and unmask a line nobody serves any more.
  *
- * The source has been masked, so its status bit holds history. Clear it, then
- * unmask; a completion that fell between the caller's harvest and the clear
- * has just lost its interrupt, so look at the hardware once more and let the
- * task come round again if there is something to collect.
+ * The source has been masked, so its status bit holds history: clear it, then
+ * unmask. A completion that fell between the caller's last look at the ring
+ * and the clear has just lost its interrupt, so the caller looks at the
+ * hardware once more afterwards.
  */
+void bcmgenet_tx_irq_arm(struct GenetUnit *unit)
+{
+	unit->internalStats.tx_irq_arms++;
+	bcmgenet_irq0_clear(unit, UMAC_IRQ_TXDMA_DONE);
+	bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
+}
+
+/* netdev: one TX-done interrupt for the cookies still in flight, and the
+ * task comes round again at once if one completed while it was armed. */
 void bcmgenet_tx_done_arm(struct GenetUnit *unit)
 {
 	struct ExecBase *SysBase = unit->sysBase;
 	if (unit->ndTxDoneCons == unit->ndTxDoneProd)
 		return; /* nothing in flight: no completion to wait for */
 
-	unit->internalStats.tx_irq_arms++;
-	bcmgenet_irq0_clear(unit, UMAC_IRQ_TXDMA_DONE);
-	bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
+	bcmgenet_tx_irq_arm(unit);
 
 	u16 hw_cons = (u16)(mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK);
 	if (txdone_pending(unit, hw_cons))
@@ -354,19 +329,12 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 		 * TSB, submitted as its own SOP descriptor. */
 		u16 need_bds = (u16)(need + 1);
 
-		u16 free_bds = tx_free_bds(ring);
-		if (unlikely(free_bds < TX_CONS_REFRESH_BDS))
-		{
-			ring->hw_cons_cache =
-				(u16)(mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK);
-			free_bds = tx_free_bds(ring);
-			/* Space came back straight off the hardware index, so the unit
-			 * task may not have been woken for any of it: TXDMA_DONE needs
-			 * coalTxFrames buffers, which a bursty low-rate stream can
-			 * go a long time without reaching. Wake it, or those cookies —
-			 * and the stack's pbufs — wait for the housekeeping tick. */
-			kick = TRUE;
-		}
+		/* Space that came back straight off the hardware index (kick) may
+		 * not have woken the unit task: TXDMA_DONE needs coalTxFrames
+		 * buffers, which a bursty low-rate stream can go a long time without
+		 * reaching. Wake it, or those cookies — and the stack's pbufs — wait
+		 * for the housekeeping tick. */
+		u16 free_bds = tx_free_bds_refresh(unit, ring, &kick);
 		if (free_bds <= need_bds || txdone_free(unit) == 0)
 		{
 			full = TRUE; /* the stack retries after nso_TxDone */

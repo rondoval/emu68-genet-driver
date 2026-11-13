@@ -1,15 +1,46 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 /*
  * Broadcom GENETv5 — link-state coordinator. Ties the PHY (phy.c), the MAC
- * (bcmgenet-mac.c) and the stack (netdev_api.c) together: read the PHY, push
- * any change out to the MAC, then notify the stack. Runs in the unit-task
- * context, the only one that calls the stack's nso_* callbacks.
+ * (bcmgenet-mac.c) and the stack together: read the PHY, push any change out
+ * to the MAC, record it, then notify the personality that holds the unit
+ * (netdev_api.c, sana2_api.c). Runs in the unit-task context, the only one that calls the
+ * stack's nso_* callbacks.
  */
 
+#include <debug.h>
 #include <types.h>
 #include <device.h>
+#include <sana2_unit.h>
 #include <genet/bcmgenet.h>
 #include <genet/phy.h>
+
+void bcmgenet_link_publish(struct GenetUnit *unit, BOOL up, BOOL force)
+{
+    struct NetDevLinkState fresh;
+    fresh.ndls_Flags = 0;
+    fresh.ndls_SpeedMbps = 0;
+
+    if (up && unit->phydev != NULL)
+    {
+        fresh.ndls_Flags = NDLF_UP;
+        if (unit->phydev->duplex)
+            fresh.ndls_Flags |= NDLF_FULL_DUPLEX;
+        fresh.ndls_SpeedMbps = (UWORD)unit->phydev->speed;
+    }
+
+    if (!force &&
+        fresh.ndls_Flags == unit->linkState.ndls_Flags &&
+        fresh.ndls_SpeedMbps == unit->linkState.ndls_SpeedMbps)
+        return;
+
+    unit->linkState = fresh;
+    Kprintf("[genet] %s: link %s, %lu Mbps\n", __func__,
+            (fresh.ndls_Flags & NDLF_UP) ? "up" : "down",
+            (ULONG)fresh.ndls_SpeedMbps);
+
+    netdev_link_notify(unit);
+    sana2_link_notify(unit);
+}
 
 /*
  * Re-read the PHY and push any change out to the MAC and the stack.
@@ -49,8 +80,8 @@ void bcmgenet_link_poll(struct GenetUnit *unit, BOOL polling)
     if (!phy->link)
         bcmgenet_mac_link_down(unit);
 
-    /* Only notifies the stack on a real change; safe to call either way. */
-    netdev_link_update(unit, phy->link, FALSE);
+    /* Only notifies on a real change; safe to call either way. */
+    bcmgenet_link_publish(unit, phy->link, FALSE);
 }
 
 /*

@@ -35,12 +35,14 @@
  * bcmgenet_perf_tick(). Order must match genet_perf_names[] in device.c. */
 enum GenetProfSlot
 {
-	GP_RX_DRAIN,  /* whole bcmgenet_netdev_rx ring walk (excl. recycle) */
+	GP_RX_DRAIN,  /* whole RX drain ring walk (netdev: excl. recycle) */
 	GP_RX_SCAN,   /*   its first pass: status reads, buffer swaps, NoSync invalidates */
 	GP_RX_FLUSH,  /* nso_RxInput hand-up (lock wait + stack work) */
-	GP_TX_SUBMIT, /* bcmgenet_netdev_tx_submit cache-prime + ring writes + doorbell */
+	GP_TX_SUBMIT, /* netdev tx_submit / SANA-II write: cache work + ring writes + doorbell */
 	GP_TX_HARVEST,/* bcmgenet_tx_harvest completion sweep + nso_TxDone */
 	GP_RX_WAKE,   /* RX interrupt -> the unit task reaches its RX poll */
+	GP_RX_COPY,   /* SANA-II, per frame: the opener's CopyToBuff */
+	GP_RX_REPLY,  /* SANA-II, per frame: ReplyMsg of the read */
 	GP_SLOT_COUNT
 };
 
@@ -125,6 +127,7 @@ enum GenetProfSlot
 #define GENET_COAL_RX_BULK_USECS 1000u
 
 struct GenetDevice;
+struct GenetS2; /* the SANA-II side, sana2_unit.h */
 
 /*
  * Unit lifecycle. UNCONFIGURED -> CONFIGURED at the first NETDEV_CMD_ATTACH,
@@ -277,8 +280,8 @@ struct GenetUnit
 	 * NetDevRxDesc and hands it to nso_RxInput. CPU-only (metaPool), sized
 	 * at ATTACH to the negotiated ndRxBatch. */
 	struct NetDevRxDesc *ndRxBatchDescs;
-	APTR *ndRxFree;		/* free-buffer stack out of the ndRxSlab pool */
-	u32 ndRxFreeCount;
+	APTR *rxFree;		/* free-buffer stack out of the rxSlab pool (bcmgenet-rxpool.c) */
+	u32 rxFreeCount;
 	u32 ndRxHeld;		/* buffers currently owned by the stack */
 
 	/* RX recycle ring: producer = ndo_RxRelease (stack context), consumer =
@@ -353,7 +356,10 @@ struct GenetUnit
 	u32 irq0_number;
 	struct Interrupt irq0_isr;
 	struct phy_device *phydev;
-	struct NetDevLinkState ndLink;
+	/* The link as last published (bcmgenet_link_publish), whoever holds the
+	 * unit: the personalities are notified of changes to it, and
+	 * NETDEV_CMD_GET_LINK reads it. */
+	struct NetDevLinkState linkState;
 
 	/* Interrupt moderation as the operator set it with NETDEV_CMD_SET_COALESCE,
 	 * seeded from the GENET_COAL_* defaults at UnitOpen. Held here rather than
@@ -372,6 +378,12 @@ struct GenetUnit
 	APTR metaPool;			  /* ordinary Exec pool for CPU-only metadata */
 	u32 unitNumber;
 	u8 currentMacAddress[6];
+	/* RX frames 2 bytes further into the buffer (RBUF_ALIGN_2B), programmed at
+	 * every START: set by a personality that copies frames out, whose copy
+	 * source then has the IP header 4-aligned. netdev hands the buffer up and
+	 * keeps the frame right behind the 64-byte RSB. */
+	BOOL rxAlign2;
+	struct Device *timerBase; /* the unit task's timer.device, for GetSysTime() */
 
 	/* Device tree */
 	CONST_STRPTR compatible;
@@ -387,19 +399,24 @@ struct GenetUnit
 	 * open cannot tear the live stack's attachment down. */
 	struct MsgPort *ndOwnerPort;
 
-	/* RX buffer pool: ndRxPoolBufs × RX_BUF_LENGTH out of one DMA slab.
-	 * Resolved at ATTACH; the hot side of it (ndRxFree/Count/Held) is up with
+	/* RX buffer pool: rxPoolTotal × RX_BUF_LENGTH out of one DMA slab, made
+	 * by bcmgenet_rx_pool_create(). The netdev personality sizes it at ATTACH
+	 * from ndRxPoolBufs; the hot side of it (rxFree/Count, ndRxHeld) is up with
 	 * the RX drain. */
 	u32 ndRxPoolBufs; /* latched prefs value at UnitOpen; 0 = auto,
 	                   * resolved at ATTACH from nda_RxHoldReq */
-	u32 ndRxPoolTotal; /* resolved pool size (ndRxFree capacity) */
-	APTR ndRxSlab;
+	u32 rxPoolTotal;  /* pool size (rxFree capacity) */
+	APTR rxSlab;
 
 	/* Reception filter, reprogrammed only by NETDEV_CMD_SET_RXFILTER. */
 	UWORD ndFilterFlags;	 /* NDFF_* as requested by the stack */
 	BOOL ndPromisc;			 /* effective promiscuity (incl. all-multi fallback) */
 	UWORD ndMcastCount;		 /* exact multicast MACs held in the MDF slots */
 	u8 ndMcastList[GENET_MDF_MCAST_MAX][6];
+
+	/* The SANA-II personality: openers and what only SANA-II keeps. Allocated
+	 * with the unit, freed with it. */
+	struct GenetS2 *s2;
 
 	/* --- cold: telemetry storage, written under PROFILE only -----------
 	 * Last on purpose: the storage is unconditional so every tier shares one
@@ -459,16 +476,43 @@ u32 UnitOnline(struct GenetUnit *unit);
 void UnitOffline(struct GenetUnit *unit);
 u32 UnitClose(struct GenetUnit *unit);
 
-/* netdev command processing (unit task context) */
-void ProcessCommand(struct IOStdReq *io);
+/**
+ * genet_rx_wake_account() - PROFILE: an RX interrupt's wakeup has reached its
+ * poll; account it in the rx_wake slot (GP_RX_WAKE) from the ISR's
+ * gu_RxIrqPending stamp, and clear the stamp.
+ * @unit: the unit.
+ *
+ * Nothing outside PROFILE builds. A poll the task signalled itself carries no
+ * stamp.
+ */
+static inline void genet_rx_wake_account(struct GenetUnit *unit)
+{
+#ifdef PROFILE
+	if (unit->gu_RxIrqPending != 0)
+	{
+		PERF_ADD(&unit->gu_Perf, GP_RX_WAKE, unit->gu_RxIrqPending);
+		unit->gu_RxIrqPending = 0;
+	}
+#else
+	(void)unit;
+#endif
+}
 
-/* netdev plumbing (netdev_api.c) */
-APTR netdev_rx_pop(struct GenetUnit *unit);				  /* unit task */
-void netdev_rx_push(struct GenetUnit *unit, APTR buffer); /* unit task */
-void netdev_drain_recycle(struct GenetUnit *unit); /* unit task */
-/* Publish link state to the stack, unit task only. Notifies on a change, or
- * unconditionally with @force — which START needs, since the ABI requires one
- * callback after it whether or not anything changed. */
-void netdev_link_update(struct GenetUnit *unit, BOOL up, BOOL force);
+/* Command processing (unit task context): ProcessCommand routes a request
+ * from the unit port to its personality and replies when it is done. */
+void ProcessCommand(struct IOStdReq *io);
+BYTE netdev_process_command(struct GenetUnit *unit, struct IOStdReq *io); /* io_Error to set */
+
+/* netdev plumbing (netdev_api.c), unit task only */
+void netdev_drain_recycle(struct GenetUnit *unit);
+/* The datapath half of a unit-task wakeup while the unit is online: TX harvest,
+ * the RX poll its interrupt asked for, and the re-arm. @sigset is what woke it. */
+void netdev_service(struct GenetUnit *unit, ULONG sigset);
+/* Tell the attached stack about unit->linkState (bcmgenet_link_publish). */
+void netdev_link_notify(struct GenetUnit *unit);
+/* Last close while still attached: drop the attachment before the unit task
+ * stops, then stop the datapath once it has, without calling the stack. */
+void netdev_force_detach(struct GenetUnit *unit);
+void netdev_force_stop(struct GenetUnit *unit);
 
 #endif

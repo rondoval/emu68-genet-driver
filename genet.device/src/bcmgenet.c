@@ -8,6 +8,7 @@
  *
  * The datapath and the register plumbing live in the sibling files:
  *   bcmgenet-rx.c   RX drain and RX ring
+ *   bcmgenet-rxpool.c  the RX buffer pool the ring draws from
  *   bcmgenet-tx.c   TX submit and harvest
  *   bcmgenet-dma.c  DMA enable/disable, ring init, coalescing
  *   bcmgenet-mac.c  UMAC/MII programming and the address filter
@@ -308,17 +309,13 @@ void bcmgenet_reset_quiesce(struct GenetUnit *unit)
 }
 
 /* Stop the datapath. Hardware only: the PHY and the ring bookkeeping belong to
- * the probe/unconfigure pair, so a subsequent start finds them intact. Also the
+ * the probe/unconfigure pair, so a subsequent start finds them intact, and
+ * what is still queued on the personality's side - TX completions, buffers it
+ * has lent out - is the personality's to settle around this call. Also the
  * unwind for a failed start, hence the guards — every stage is optional. */
 void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Stopping GENET\n", __func__);
-
-	/* Publish any TX batch the stack staged but has not kicked, before the DMA
-	 * is disabled below — otherwise those frames would be completed as dropped
-	 * without ever reaching the wire. The stack normally kicks at the unlock
-	 * preceding STOP, so this is an idempotent backstop. */
-	bcmgenet_netdev_tx_kick(unit);
 
 	bcmgenet_reset_quiesce(unit);
 
@@ -328,11 +325,7 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 		unit->irq0_installed = FALSE;
 	}
 
-	/* DMA is off: complete every in-flight TX cookie (the stack's memory
-	 * accounting must close), then return the ring's RX buffers to the pool.
-	 * Buffers the stack still holds stay valid until it releases them. */
-	bcmgenet_netdev_tx_quiesce(unit);
-
+	/* DMA is off: return the ring's RX buffers to the pool. */
 	struct bcmgenet_rx_ring *rx_ring = &unit->rx_ring;
 	if (rx_ring->rx_control_block != NULL)
 	{
@@ -340,7 +333,7 @@ void bcmgenet_gmac_eth_stop(struct GenetUnit *unit)
 		{
 			if (rx_ring->rx_control_block[i].data_buffer != 0)
 			{
-				netdev_rx_push(unit, (APTR)rx_ring->rx_control_block[i].data_buffer);
+				bcmgenet_rx_pool_push(unit, (APTR)rx_ring->rx_control_block[i].data_buffer);
 				rx_ring->rx_control_block[i].data_buffer = 0;
 			}
 		}
