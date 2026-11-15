@@ -1,0 +1,5 @@
+bench udp rx: 1 stream(s) to port 5002, 10 s, 1472 byte datagrams
+peer paced at 200 Mb/s per stream
+  stream 0: 232957248 bytes, 186.3 Mb/s
+total: 232957248 bytes, 186.3 Mb/s
+(udp rx: 186.3 of 200 Mb/s target = 93 %; the peer's sent count is the truth)

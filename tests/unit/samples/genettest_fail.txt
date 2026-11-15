@@ -1,0 +1,10 @@
+format=1
+command=mcast
+check.0.name=NETDEV_CMD_ATTACH refused while SANA-II holds the unit
+check.0.ok=yes
+check.1.name=exact filter
+check.1.ok=no
+check.1.detail=239.255.77.17 delivered (12 frames), want none
+checks=2
+checks_failed=1
+FAIL

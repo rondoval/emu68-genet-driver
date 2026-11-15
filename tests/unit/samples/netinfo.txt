@@ -1,0 +1,5 @@
+hostname amiga
+genet	UP  (genet.device unit 0)
+	inet 192.0.2.101  netmask 255.255.255.0  broadcast 192.0.2.255
+	ether 02:00:00:00:00:01  mtu 1500  DHCP
+	dns 192.0.2.20  198.51.100.53

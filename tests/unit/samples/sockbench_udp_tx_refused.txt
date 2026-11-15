@@ -1,0 +1,4 @@
+bench udp tx: 1 stream(s) to port 5001, 10 s, 65536 byte datagrams
+  stream 0: 1190000000 bytes, 952.0 Mb/s
+total: 1190000000 bytes, 952.0 Mb/s
+(the stack refused 37 datagrams with ENOBUFS: interface queue full)

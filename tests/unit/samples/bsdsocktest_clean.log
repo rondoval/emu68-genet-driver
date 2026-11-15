@@ -1,0 +1,9 @@
+TAP version 12
+# bsdsocktest 0.2.3
+# bsdsocket.library: lwip-amiga 1.9
+# --- socket ---
+# Core socket lifecycle: create, bind, listen, connect, accept, close
+ok 1 - socket(): create SOCK_STREAM (TCP) [BSD 4.4]
+ok 2 - socket(): create SOCK_DGRAM (UDP) [BSD 4.4]
+ok 3 - socket(): create SOCK_RAW (ICMP) [BSD 4.4]
+# Results: 142 passed, 0 failed, 0 known, 0 skipped (142 total)

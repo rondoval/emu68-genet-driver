@@ -1,0 +1,13 @@
+format=1
+command=netdev
+check.0.name=S2_DEVICEQUERY answers
+check.0.ok=yes
+check.0.detail=error 0, MTU 1500
+check.1.name=S2_CONFIGINTERFACE refused beside netdev
+check.1.ok=yes
+check.1.detail=error 10, want 10
+  the unit is held by netdev
+attach.error=41
+checks=2
+checks_failed=0
+PASS

@@ -1,0 +1,10 @@
+[genet] rx_drain: n=2116 sum=267366us avg=126.3us max=894us
+[genet] rx_scan: n=2116 sum=6427us avg=3.0us max=131us
+[genet] tx_submit: n=87171 sum=332378us avg=3.8us max=1300us
+[genet] rx_wake: n=2124 sum=148271us avg=69.8us max=595us
+[genet] rx_copy: n=21194 sum=4583us avg=0.2us max=5us
+[genet] rx_wake: n=489 sum=41092us avg=84.0us max=7555us
+[genet] rx_copy: n=4448 sum=1084us avg=0.2us max=4us
+[genet] rx_reply: n=4448 sum=49689us avg=11.1us max=521us
+[genet] hist rx_pending: n=487 <=1:32 <=2:13 <=4:35 <=8:117 <=16:266 <=24:24
+[genet] hist rx_irq_gap_us: n=488 <=300:1 <=400:1 <=480:1 <=520:151 <=560:9 <=640:6 <=800:164 <=1000:88 <=2000:36 <=5000:8 <=20000:8 >20000:15

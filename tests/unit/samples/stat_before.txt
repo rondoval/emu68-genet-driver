@@ -1,0 +1,21 @@
+[4mExecutive 2.10[24m
+
+
+[1mBoottime:[22m             Friday 13-Nov-26 15:39:20
+[1mUptime:               [22m0 mins
+[1mLoad average:[22m         1.73 0.58 0.14
+[1mTotal used CPU time:[22m  0:00:09.02 (34.70%)
+[1mTotal idle CPU time:[22m  0:00:16.97 (65.30%)
+[1mContext switches:[22m     73382
+
+[1mTasks created/terminated:[22m     80/42
+[1mTasks running/sleeping:[22m        6/89
+[1mNumber of clients/handlers:[22m    1/0
+[1mNumber of known windows:[22m       3
+
+[1mScheduler:[22m           Remember   [1mTimer:[22m               timer.device
+[1mCatch range:[22m        -120/5      [1mDynamic range:[22m      -120/1   
+[1mTime resolution:[22m     1/1000s    [1mWatched tasks:[22m        76
+[1mScheduling:[22m          Enabled    
+
+[1mAccounting is [22mdeactivated.
