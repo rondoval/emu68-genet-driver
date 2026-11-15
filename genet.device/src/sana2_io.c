@@ -69,8 +69,9 @@ static inline struct MinList *read_queue_for(struct Opener *opener, u16 packetTy
  * @unit: the unit.
  * @io: the read.
  *
- * Runs in the reader's task. A read it queues loses IOF_QUICK; a full ring
- * sends it to the unit port instead (sana2_queue_read()).
+ * Runs in the reader's task. A read it queues loses IOF_QUICK and is marked
+ * NT_MESSAGE, pending for CheckIO() and WaitIO(); a full ring sends it to the
+ * unit port instead (sana2_queue_read()).
  *
  * Return: COMMAND_SCHEDULED when queued; COMMAND_PROCESSED with
  * S2ERR_BAD_ARGUMENT / S2WERR_NULL_POINTER without an opener, with
@@ -101,7 +102,10 @@ u32 sana2_read(struct GenetUnit *unit, struct IOSana2Req *io)
     }
     else
     {
+        /* Pending from here: CheckIO() and WaitIO() take NT_REPLYMSG for done,
+         * and a read is not on any port until the unit task replies it. */
         io->ios2_Req.io_Flags &= (UBYTE)~IOF_QUICK;
+        io->ios2_Req.io_Message.mn_Node.ln_Type = NT_MESSAGE;
         ULONG producer = opener->readRing.producer;
         if (likely(producer - opener->readRing.consumer <= OPENER_READ_RING_MASK))
         {
@@ -138,7 +142,6 @@ static void drain_read_ring(struct GenetUnit *unit, struct Opener *opener)
     {
         struct IOSana2Req *io = opener->readRing.entries[consumer & OPENER_READ_RING_MASK];
         consumer++;
-        io->ios2_Req.io_Message.mn_Node.ln_Type = NT_MESSAGE;
         if (io->ios2_Req.io_Command == S2_READORPHAN)
             AddTailMinList(&opener->orphanQueue, (struct MinNode *)io);
         else
@@ -178,7 +181,6 @@ u32 sana2_queue_read(struct GenetUnit *unit, struct IOSana2Req *io)
     }
 
     drain_read_ring(unit, opener);
-    io->ios2_Req.io_Message.mn_Node.ln_Type = NT_MESSAGE;
     if (io->ios2_Req.io_Command == S2_READORPHAN)
         AddTailMinList(&opener->orphanQueue, (struct MinNode *)io);
     else

@@ -15,7 +15,11 @@
 #include <genet/phy.h>
 #include <device.h>
 
-/*
+/**
+ * bcmgenet_irq0_enable() - Unmask IRQ0 sources.
+ * @unit: the unit.
+ * @irq_mask: the UMAC_IRQ_* sources to unmask.
+ *
  * IRQ1 is currently unsused, as it only contains per-priority queue RX/TX interrupts.
  * We're not using priority queues, so these are not generated.
  */
@@ -26,19 +30,32 @@ void bcmgenet_irq0_enable(struct GenetUnit *unit, u32 irq_mask)
 		   BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_MASK_CLEAR));
 }
 
-/* Drop latched status. A masked source keeps latching, so whoever unmasks one
+/**
+ * bcmgenet_irq0_clear() - Drop IRQ0 sources' latched status.
+ * @unit: the unit.
+ * @irq_mask: the UMAC_IRQ_* sources to clear.
+ *
+ * Drop latched status. A masked source keeps latching, so whoever unmasks one
  * that has been off for a while clears it first, or takes an interrupt for
- * history instead of for the next event. */
+ * history instead of for the next event.
+ */
 void bcmgenet_irq0_clear(struct GenetUnit *unit, u32 irq_mask)
 {
 	mmio_write32(irq_mask,
 		   BCMGENET_REG(unit, GENET_INTRL2_0_OFF + INTRL2_CPU_CLEAR));
 }
 
-/* Link sources worth an interrupt. UMAC_IRQ_PHY_DET_R only matters with
+/**
+ * bcmgenet_link_irq_mask() - The link sources worth an interrupt.
+ * @unit: the unit.
+ *
+ * Link sources worth an interrupt. UMAC_IRQ_PHY_DET_R only matters with
  * autonegotiation off — a PHY that reset has to have its forced settings
  * pushed again; with autoneg on there is nothing to do about it, and asking
- * for the event would buy an MDIO status read (slow) per occurrence. */
+ * for the event would buy an MDIO status read (slow) per occurrence.
+ *
+ * Return: UMAC_IRQ_LINK_EVENT, with UMAC_IRQ_PHY_DET_R when autonegotiation is off.
+ */
 u32 bcmgenet_link_irq_mask(const struct GenetUnit *unit)
 {
 	u32 mask = UMAC_IRQ_LINK_EVENT;
@@ -47,6 +64,10 @@ u32 bcmgenet_link_irq_mask(const struct GenetUnit *unit)
 	return mask;
 }
 
+/**
+ * bcmgenet_intr_disable() - Mask and clear every source of both interrupt controllers.
+ * @unit: the unit.
+ */
 void bcmgenet_intr_disable(struct GenetUnit *unit)
 {
 	/* Mask all interrupts.*/
@@ -60,9 +81,11 @@ void bcmgenet_intr_disable(struct GenetUnit *unit)
 		   BCMGENET_REG(unit, GENET_INTRL2_1_OFF + INTRL2_CPU_CLEAR));
 }
 
-/*
- * bcmgenet_isr0. Returns 1 if the interrupt was ours, 0 otherwise (the
- * AmigaOS interrupt-server "handled?" convention).
+/**
+ * bcmgenet_isr0() - The interrupt server of GENET's IRQ0: mask what fired and signal the unit task.
+ * @SysBase: exec.library, in a6 as gic400.library calls a server.
+ * @unit: the unit, the server's is_Data.
+ * @irq: the interrupt number; unused.
  *
  * Nothing but signals crosses to the bottom half. Exec's Signal() is the
  * atomic, level-latched interrupt-to-task channel. All handled
@@ -73,6 +96,9 @@ void bcmgenet_intr_disable(struct GenetUnit *unit)
  * already orders the accesses, but may ack a write early, and the CPU_CLEAR
  * has to land before the GIC re-samples the line. Reads carry their own
  * completion, so the not-ours path pays for no barrier at all.
+ *
+ * Return: 1 when the interrupt was ours, 0 otherwise (Z set), so a shared
+ * line's chain walk carries on (the AmigaOS interrupt-server convention).
  */
 EMU68_INTSERVER(bcmgenet_isr0)
 ULONG bcmgenet_isr0(struct ExecBase *SysBase asm("a6"), struct GenetUnit *unit asm("a1"),

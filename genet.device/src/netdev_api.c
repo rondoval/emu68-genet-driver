@@ -37,6 +37,10 @@
 
 /* --------------------------------------------------------- recycle ring --- */
 
+/**
+ * netdev_drain_recycle() - Take the RX buffers the stack released back into the pool.
+ * @unit: the unit.
+ */
 void netdev_drain_recycle(struct GenetUnit *unit)
 {
     struct ExecBase *SysBase = unit->sysBase;
@@ -91,6 +95,10 @@ void netdev_drain_recycle(struct GenetUnit *unit)
 
 /* ------------------------------------------------------------- link state --- */
 
+/**
+ * netdev_link_notify() - Tell the attached netdev stack the link as unit->linkState has it.
+ * @unit: the unit.
+ */
 void netdev_link_notify(struct GenetUnit *unit)
 {
     if (unit->ndStackOps != NULL)
@@ -176,6 +184,14 @@ void netdev_service(struct GenetUnit *unit, ULONG sigset)
 
 /* -------------------------------------------------- direct-call ops table --- */
 
+/**
+ * genet_ndo_txsubmit() - ndo_TxSubmit, marked in progress for the STOP quiesce.
+ * @drvctx: the unit, as the ops table's context.
+ * @descs: the descriptors.
+ * @count: how many.
+ *
+ * Return: bcmgenet_netdev_tx_submit()'s: how many were accepted, from the front.
+ */
 static LONG genet_ndo_txsubmit(APTR drvctx, const struct NetDevTxDesc *descs, ULONG count)
 {
     struct GenetUnit *unit = drvctx;
@@ -194,15 +210,25 @@ static LONG genet_ndo_txsubmit(APTR drvctx, const struct NetDevTxDesc *descs, UL
     return accepted;
 }
 
-/* Ring the deferred TX doorbell for the batch staged by genet_ndo_txsubmit
+/**
+ * genet_ndo_txkick() - ndo_TxKick: ring the deferred TX doorbell.
+ * @drvctx: the unit, as the ops table's context.
+ *
+ * Ring the deferred TX doorbell for the batch staged by genet_ndo_txsubmit
  * calls since the last kick. No ndTxBusy guard: it queues no cookies, just
- * publishes the producer index, so it cannot extend the STOP quiesce. */
+ * publishes the producer index, so it cannot extend the STOP quiesce.
+ */
 static VOID genet_ndo_txkick(APTR drvctx)
 {
     struct GenetUnit *unit = drvctx;
     bcmgenet_netdev_tx_kick(unit);
 }
 
+/**
+ * genet_ndo_rxrelease() - ndo_RxRelease: hand an RX buffer back through the recycle ring.
+ * @drvctx: the unit, as the ops table's context.
+ * @cookie: the buffer, as nso_RxInput gave it.
+ */
 static VOID genet_ndo_rxrelease(APTR drvctx, APTR cookie)
 {
     struct GenetUnit *unit = drvctx;
@@ -216,12 +242,26 @@ static VOID genet_ndo_rxrelease(APTR drvctx, APTR cookie)
     unit->ndRecycleProd = prod + 1;
 }
 
+/**
+ * genet_ndo_dmaalloc() - ndo_DmaAlloc: memory the GENET DMA can reach, from the unit's DMA pool.
+ * @drvctx: the unit, as the ops table's context.
+ * @size: its size.
+ * @align: its alignment.
+ *
+ * Return: the memory, or NULL.
+ */
 static APTR genet_ndo_dmaalloc(APTR drvctx, ULONG size, ULONG align)
 {
     struct GenetUnit *unit = drvctx;
     return dma_alloc(unit->dmaPool, align, size);
 }
 
+/**
+ * genet_ndo_dmafree() - ndo_DmaFree: give ndo_DmaAlloc() memory back.
+ * @drvctx: the unit, as the ops table's context.
+ * @ptr: the memory.
+ * @size: its size; unused.
+ */
 static VOID genet_ndo_dmafree(APTR drvctx, APTR ptr, ULONG size)
 {
     struct GenetUnit *unit = drvctx;
@@ -239,6 +279,10 @@ static const struct NetDevDrvOps genet_netdev_ops = {
 
 /* ------------------------------------------------------- command handlers --- */
 
+/**
+ * netdev_teardown_pool() - Free what ATTACH made: the RX pool, the TX status blocks, the recycle ring, the RX batch, the TX-done FIFO.
+ * @unit: the unit.
+ */
 static void netdev_teardown_pool(struct GenetUnit *unit)
 {
     struct ExecBase *SysBase = unit->sysBase;
@@ -267,18 +311,31 @@ static void netdev_teardown_pool(struct GenetUnit *unit)
     unit->ndTxDoneProd = unit->ndTxDoneCons = 0;
 }
 
-/*
+/**
+ * netdev_is_owner() - Whether @io comes from the opener that attached, which alone may stop, detach or rename the unit.
+ * @unit: the unit.
+ * @io: the request.
+ *
  * Only the opener that attached may stop, detach or rename the unit: a
  * diagnostic tool holding the same unit open must not be able to tear a live
  * stack's attachment down underneath it. Identity is the request's reply port,
  * which is per-opener and stable (BeginIO clears IOF_QUICK, so every netdev
  * command carries one).
+ *
+ * Return: TRUE for the owner, or while nobody is attached.
  */
 static BOOL netdev_is_owner(const struct GenetUnit *unit, const struct IOStdReq *io)
 {
     return unit->ndOwnerPort == NULL || unit->ndOwnerPort == io->io_Message.mn_ReplyPort;
 }
 
+/**
+ * Do_NETDEV_ATTACH() - NETDEV_CMD_ATTACH: take the unit for a netdev stack, configure it, and hand out the ops table.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevAttach.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short or empty NetDevAttach, NDERR_BUSY while another stack or a SANA-II claimer holds the unit, NDERR_BADVERSION without a common ABI version, NDERR_NOMEM when configuring or allocating failed.
+ */
 static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
 {
     struct ExecBase *SysBase = unit->sysBase;
@@ -406,6 +463,13 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
+/**
+ * Do_NETDEV_DETACH() - NETDEV_CMD_DETACH: let the unit go, once the stack has stopped it and returned every RX buffer.
+ * @unit: the unit.
+ * @io: the request.
+ *
+ * Return: 0; NDERR_NOTATTACHED, NDERR_BUSY for another opener or RX buffers still out, NDERR_BADPARAMS before NETDEV_CMD_STOP.
+ */
 static BYTE Do_NETDEV_DETACH(struct GenetUnit *unit, struct IOStdReq *io)
 {
     if (unit->ndStackOps == NULL)
@@ -483,6 +547,12 @@ void netdev_force_stop(struct GenetUnit *unit)
     netdev_teardown_pool(unit);
 }
 
+/**
+ * Do_NETDEV_START() - NETDEV_CMD_START: bring the hardware up and open the datapath gate.
+ * @unit: the unit.
+ *
+ * Return: 0, also when started already; NDERR_NOTATTACHED, NDERR_NOMEM when the start failed.
+ */
 static BYTE Do_NETDEV_START(struct GenetUnit *unit)
 {
     if (unit->ndStackOps == NULL)
@@ -503,6 +573,13 @@ static BYTE Do_NETDEV_START(struct GenetUnit *unit)
     return 0;
 }
 
+/**
+ * Do_NETDEV_STOP() - NETDEV_CMD_STOP: close the datapath gate, take the hardware down, and complete every TX cookie.
+ * @unit: the unit.
+ * @io: the request.
+ *
+ * Return: 0, also when stopped already; NDERR_NOTATTACHED, NDERR_BUSY for another opener.
+ */
 static BYTE Do_NETDEV_STOP(struct GenetUnit *unit, struct IOStdReq *io)
 {
     if (unit->ndStackOps == NULL)
@@ -521,6 +598,13 @@ static BYTE Do_NETDEV_STOP(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
+/**
+ * Do_NETDEV_SET_RXFILTER() - NETDEV_CMD_SET_RXFILTER: the reception filter, exact-match multicast or promiscuous.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevRxFilter.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short filter or a list it does not point to, NDERR_NOTATTACHED.
+ */
 static BYTE Do_NETDEV_SET_RXFILTER(struct GenetUnit *unit, struct IOStdReq *io)
 {
     const struct NetDevRxFilter *filter = io->io_Data;
@@ -558,6 +642,13 @@ static BYTE Do_NETDEV_SET_RXFILTER(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
+/**
+ * Do_NETDEV_SET_COALESCE() - NETDEV_CMD_SET_COALESCE: store interrupt moderation, and program it on a running unit.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevCoalesce, 0 for a driver default.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short request or a value the hardware cannot take, NDERR_NOTATTACHED while nobody holds the unit.
+ */
 static BYTE Do_NETDEV_SET_COALESCE(struct GenetUnit *unit, struct IOStdReq *io)
 {
     const struct NetDevCoalesce *coal = io->io_Data;
@@ -591,8 +682,16 @@ static BYTE Do_NETDEV_SET_COALESCE(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
-/* Frequent by design - the stack follows its conversations - so it is quiet
- * and touches the RX half only. */
+/**
+ * Do_NETDEV_SET_RX_PROFILE() - NETDEV_CMD_SET_RX_PROFILE: the stack's RX intent, which picks the RX moderation.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevRxProfile.
+ *
+ * Frequent by design - the stack follows its conversations - so it is quiet
+ * and touches the RX half only.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short request or an unknown profile, NDERR_NOTATTACHED.
+ */
 static BYTE Do_NETDEV_SET_RX_PROFILE(struct GenetUnit *unit, struct IOStdReq *io)
 {
     const struct NetDevRxProfile *prof = io->io_Data;
@@ -613,6 +712,13 @@ static BYTE Do_NETDEV_SET_RX_PROFILE(struct GenetUnit *unit, struct IOStdReq *io
     return 0;
 }
 
+/**
+ * Do_NETDEV_GET_STATS() - NETDEV_CMD_GET_STATS: the portable counters.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevStats.
+ *
+ * Return: 0, or NDERR_BADPARAMS for a short request.
+ */
 static BYTE Do_NETDEV_GET_STATS(struct GenetUnit *unit, struct IOStdReq *io)
 {
     struct NetDevStats *stats = io->io_Data;
@@ -656,9 +762,15 @@ static BYTE Do_NETDEV_GET_STATS(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
-/*
+/**
+ * Do_NETDEV_GET_COUNTERS() - NETDEV_CMD_GET_COUNTERS: every counter by name, sized in two calls.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevCounterSet.
+ *
  * The self-describing counter list: everything NetDevStats has no field for.
  * Two-call sizing — ndcs_Max 0 probes for ndcs_Count without a buffer.
+ *
+ * Return: 0, or NDERR_BADPARAMS when the set does not fit io_Length.
  */
 static BYTE Do_NETDEV_GET_COUNTERS(struct GenetUnit *unit, struct IOStdReq *io)
 {
@@ -679,6 +791,13 @@ static BYTE Do_NETDEV_GET_COUNTERS(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
+/**
+ * Do_NETDEV_GET_LINK() - NETDEV_CMD_GET_LINK: the link as last published.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevLinkState.
+ *
+ * Return: 0, or NDERR_BADPARAMS for a short request.
+ */
 static BYTE Do_NETDEV_GET_LINK(struct GenetUnit *unit, struct IOStdReq *io)
 {
     struct NetDevLinkState *link = io->io_Data;
@@ -691,6 +810,13 @@ static BYTE Do_NETDEV_GET_LINK(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
+/**
+ * Do_NETDEV_SET_MAC() - NETDEV_CMD_SET_MAC: the station address for the next start.
+ * @unit: the unit.
+ * @io: the request; io_Data is the address.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short request or a running unit, NDERR_BUSY for another opener or while SANA-II holds the unit.
+ */
 static BYTE Do_NETDEV_SET_MAC(struct GenetUnit *unit, struct IOStdReq *io)
 {
     if (io->io_Data == NULL || io->io_Length < sizeof(unit->currentMacAddress))

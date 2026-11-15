@@ -54,10 +54,17 @@ enum genet_rx_mode
 	GENET_RX_SANA2,	 /* copying: the frame goes to the openers' reads, the buffer stays */
 };
 
-/* netdev zero-copy RX: hand completed buffers to the stack and swap fresh
+/**
+ * netdev_rx_flush() - Hand a batch of received frames up to the netdev stack.
+ * @unit: the unit.
+ * @batch: the frames' descriptors.
+ * @n: how many.
+ *
+ * netdev zero-copy RX: hand completed buffers to the stack and swap fresh
  * pool buffers into the ring slots. A batch of descriptors per nso_RxInput
  * call; refused or unswappable frames recycle in place (counted). Unit task
- * context only. */
+ * context only.
+ */
 static void netdev_rx_flush(struct GenetUnit *unit, struct NetDevRxDesc *batch, ULONG n)
 {
 	PERF_T0(t_flush);
@@ -77,6 +84,14 @@ static void netdev_rx_flush(struct GenetUnit *unit, struct NetDevRxDesc *batch, 
 	}
 }
 
+/**
+ * bcmgenet_rx_drain() - Take the frames the RX DMA has completed, for the personality @mode serves.
+ * @unit: the unit.
+ * @limit: the most frames to take.
+ * @mode: the personality: netdev's zero-copy or SANA-II's copy.
+ *
+ * Return: the frames taken, or -EAGAIN when the ring had none.
+ */
 static inline __attribute__((always_inline)) s32 bcmgenet_rx_drain(struct GenetUnit *unit, u16 limit,
 																	const enum genet_rx_mode mode)
 {
@@ -304,16 +319,36 @@ static inline __attribute__((always_inline)) s32 bcmgenet_rx_drain(struct GenetU
 	return to_process;
 }
 
+/**
+ * bcmgenet_netdev_rx() - An RX pass for the netdev personality.
+ * @unit: the unit.
+ * @limit: the most frames to take.
+ *
+ * Return: bcmgenet_rx_drain()'s.
+ */
 s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 {
 	return bcmgenet_rx_drain(unit, limit, GENET_RX_NETDEV);
 }
 
+/**
+ * bcmgenet_sana2_rx() - An RX pass for the SANA-II personality.
+ * @unit: the unit.
+ * @limit: the most frames to take.
+ *
+ * Return: bcmgenet_rx_drain()'s.
+ */
 s32 bcmgenet_sana2_rx(struct GenetUnit *unit, u16 limit)
 {
 	return bcmgenet_rx_drain(unit, limit, GENET_RX_SANA2);
 }
 
+/**
+ * bcmgenet_init_rx_ring() - Give every RX ring slot a pool buffer, and reset the ring's indices.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or ENOMEM when the pool runs out before the ring is full.
+ */
 static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Initializing RX ring\n", __func__);
@@ -362,6 +397,12 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 	return GENET_OK;
 }
 
+/**
+ * bcmgenet_init_rx_queues() - Set up the RX ring and enable it as a descriptor ring.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or bcmgenet_init_rx_ring()'s error.
+ */
 u32 bcmgenet_init_rx_queues(struct GenetUnit *unit)
 {
 	u32 ret = bcmgenet_init_rx_ring(unit);

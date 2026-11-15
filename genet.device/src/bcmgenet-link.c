@@ -14,6 +14,12 @@
 #include <genet/bcmgenet.h>
 #include <genet/phy.h>
 
+/**
+ * bcmgenet_link_publish() - Record the link as the PHY has it, and tell both personalities when it changed.
+ * @unit: the unit.
+ * @up: whether the PHY has a link.
+ * @force: publish and notify even without a change.
+ */
 void bcmgenet_link_publish(struct GenetUnit *unit, BOOL up, BOOL force)
 {
     struct NetDevLinkState fresh;
@@ -42,7 +48,11 @@ void bcmgenet_link_publish(struct GenetUnit *unit, BOOL up, BOOL force)
     sana2_link_notify(unit);
 }
 
-/*
+/**
+ * bcmgenet_link_poll() - Re-read the PHY, and push a change out to the MAC and the stack.
+ * @unit: the unit.
+ * @polling: the periodic poll (TRUE) or the link interrupt (FALSE).
+ *
  * Re-read the PHY and push any change out to the MAC and the stack.
  *
  * Link state is level-triggered, never edge-replayed: the link interrupt only
@@ -84,7 +94,10 @@ void bcmgenet_link_poll(struct GenetUnit *unit, BOOL polling)
     bcmgenet_link_publish(unit, phy->link, FALSE);
 }
 
-/*
+/**
+ * bcmgenet_phy_refresh_forced() - Re-apply forced PHY settings after the PHY has (re)appeared.
+ * @unit: the unit.
+ *
  * Re-apply forced PHY settings after the PHY has (re)appeared.
  *
  * Only meaningful with autonegotiation off: a PHY that reset — which is what

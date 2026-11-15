@@ -31,7 +31,15 @@ static const struct link_mode_name link_modes[] = {
     {"1000fd", 1000, DUPLEX_FULL_CFG},
 };
 
-/* TRUE and the config updated, FALSE for a name that is not in the table. */
+/**
+ * ParseLinkMode() - Read a LINK_MODE value from the table of names.
+ * @config: the settings; link_speed and link_duplex are set.
+ * @val: the value.
+ *
+ * TRUE and the config updated, FALSE for a name that is not in the table.
+ *
+ * Return: TRUE and the config updated, FALSE for a name that is not in the table.
+ */
 static BOOL ParseLinkMode(struct GenetRuntimeConfig *config, const char *val)
 {
     for (u32 i = 0; i < sizeof(link_modes) / sizeof(link_modes[0]); i++)
@@ -45,6 +53,10 @@ static BOOL ParseLinkMode(struct GenetRuntimeConfig *config, const char *val)
     return FALSE;
 }
 
+/**
+ * ApplyDefaults() - Set every setting to its default.
+ * @config: the settings.
+ */
 static void ApplyDefaults(struct GenetRuntimeConfig *config)
 {
     config->unit_task_priority = DEFAULT_UNIT_TASK_PRIORITY;
@@ -56,6 +68,11 @@ static void ApplyDefaults(struct GenetRuntimeConfig *config)
     config->use_miami_workaround = DEFAULT_USE_MIAMI_WORKAROUND;
 }
 
+/**
+ * LoadGenetRuntimeConfig() - The settings: the defaults, then what ENV:genet.prefs says, clamped and checked.
+ * @config: the settings, filled in.
+ * @SysBase: exec.library, for prefs_open().
+ */
 void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *SysBase)
 {
     KprintfT("[genet] %s: Loading defaults\n", __func__);
@@ -158,6 +175,10 @@ void LoadGenetRuntimeConfig(struct GenetRuntimeConfig *config, struct ExecBase *
 }
 
 #ifdef DEBUG
+/**
+ * DumpGenetRuntimeConfig() - Print the settings (debug builds only).
+ * @config: the settings.
+ */
 void DumpGenetRuntimeConfig(const struct GenetRuntimeConfig *config)
 {
     Kprintf("[genet] config: pri=%ld rx_pool_bufs=%lu\n",

@@ -141,7 +141,11 @@ void ProcessCommand(struct IOStdReq *io)
 
 /* ----------------------------------------------------------- the task --- */
 
-/*
+/**
+ * UnitTask() - The unit task: both personalities' commands, the interrupt bottom half and the housekeeping tick.
+ * @unit: the unit.
+ * @parent: the task that spawned it, told when it is up (drv_task_spawn()).
+ *
  * The unit task: command processing for both personalities, interrupt
  * bottom half (RX delivery, TX-done), periodic housekeeping. It is the ONLY
  * context that calls the stack's nso_* callbacks.
@@ -319,6 +323,13 @@ free_signals:
     drv_task_exit(SysBase, &unit->task, parent, unit->task != NULL);
 }
 
+/**
+ * UnitTaskStart() - Start the unit task at the configured priority, and wait until it is up.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK once the task reached its loop; ENOMEM when it could not be
+ * started or its set-up failed.
+ */
 u32 UnitTaskStart(struct GenetUnit *unit)
 {
     struct ExecBase *SysBase = unit->sysBase;
@@ -329,6 +340,10 @@ u32 UnitTaskStart(struct GenetUnit *unit)
                : ENOMEM;
 }
 
+/**
+ * UnitTaskStop() - Stop the unit task and wait until it has gone.
+ * @unit: the unit; the task clears unit->task as it ends.
+ */
 void UnitTaskStop(struct GenetUnit *unit)
 {
     struct ExecBase *SysBase = unit->sysBase;

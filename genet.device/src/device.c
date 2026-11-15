@@ -47,10 +47,14 @@
 #endif
 LONG __attribute__((used, section(".text.entry"))) doNotExecute(void);
 
-/*
-    Put the function at the very beginning of the file in order to avoid
-    unexpected results when user executes the device by mistake
-*/
+/**
+ * doNotExecute() - The module's entry at offset 0: a device run as a program returns at once.
+ *
+ * Put the function at the very beginning of the file in order to avoid
+ * unexpected results when user executes the device by mistake
+ *
+ * Return: -1.
+ */
 LONG __attribute__((used, section(".text.entry"))) doNotExecute(void)
 {
     return -1;
@@ -136,6 +140,10 @@ static const APTR funcTable[] = {
     (APTR)abortIO,
     (APTR)-1};
 
+/**
+ * genet_close_libraries() - Close the libraries the opens use.
+ * @base: the device.
+ */
 static void genet_close_libraries(struct GenetDevice *base)
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -152,6 +160,12 @@ static void genet_close_libraries(struct GenetDevice *base)
     }
 }
 
+/**
+ * genet_open_libraries() - Open utility.library and gic400.library, unless both are open already.
+ * @base: the device.
+ *
+ * Return: 0, or -1 when one would not open.
+ */
 static s32 genet_open_libraries(struct GenetDevice *base)
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -178,8 +192,13 @@ static s32 genet_open_libraries(struct GenetDevice *base)
     return 0;
 }
 
-/* reset_guard prepare: stop RX/TX DMA before the machine resets, so the
- * GENET stops writing into RAM the next OS session will reuse. */
+/**
+ * genet_reset_prepare() - The reset guard's prepare hook: stop the DMA of an online unit before the machine resets.
+ * @user: the device.
+ *
+ * reset_guard prepare: stop RX/TX DMA before the machine resets, so the
+ * GENET stops writing into RAM the next OS session will reuse.
+ */
 static void genet_reset_prepare(APTR user)
 {
     struct GenetDevice *base = user;
@@ -189,6 +208,14 @@ static void genet_reset_prepare(APTR user)
         bcmgenet_reset_quiesce(unit);
 }
 
+/**
+ * initFunction() - The device's init: refuse an Emu68 without the range cache operations, then set the base up.
+ * @base: the device base exec made.
+ * @segList: the device's segment list.
+ * @SysBase: exec.library.
+ *
+ * Return: @base, or NULL when the device refused to load (the base freed).
+ */
 APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *SysBase asm("a6"))
 {
     /* the id string carries the build date — the log's deploy beacon */
@@ -216,6 +243,13 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     return base;
 }
 
+/**
+ * openLib() - OpenDevice(): open the unit, and give an IOSana2Req-sized request an opener.
+ * @io: the opening request.
+ * @unitNumber: the unit; only 0.
+ * @flags: the open flags (SANA2OPF_MINE, SANA2OPF_PROM).
+ * @base: the device.
+ */
 void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
              ULONG flags asm("d1"), struct GenetDevice *base asm("a6"))
 {
@@ -363,6 +397,13 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
     return;
 }
 
+/**
+ * closeLib() - CloseDevice(): take the opener back, close the unit, and expunge at the last close if one is pending.
+ * @io: the closing request.
+ * @base: the device.
+ *
+ * Return: expungeLib()'s segment list when the close expunged, else 0.
+ */
 ULONG closeLib(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -398,6 +439,12 @@ ULONG closeLib(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6")
     return 0;
 }
 
+/**
+ * expungeLib() - Expunge the device, or mark it to go at the last close.
+ * @base: the device.
+ *
+ * Return: the segment list to unload, or 0 while it is open or its reset guard cannot be removed.
+ */
 ULONG expungeLib(struct GenetDevice *base asm("a6"))
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -434,17 +481,27 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
     }
 }
 
+/**
+ * extFunc() - The reserved vector.
+ * @base: the device.
+ *
+ * Return: @base.
+ */
 APTR extFunc(struct GenetDevice *base asm("a6"))
 {
     return base;
 }
 
-/*
-    netdev packets move through the direct-call surface exchanged at
-    NETDEV_CMD_ATTACH, so none reaches BeginIO. The netdev control ops,
-    NSCMD_DEVICEQUERY and the SANA-II commands are serialized by the unit
-    task; everything else is IOERR_NOCMD.
-*/
+/**
+ * beginIO() - BeginIO(): serve the SANA-II reads and writes in the caller's task, queue the other commands for the unit task.
+ * @io: the request.
+ * @base: the device.
+ *
+ * netdev packets move through the direct-call surface exchanged at
+ * NETDEV_CMD_ATTACH, so none reaches BeginIO. The netdev control ops,
+ * NSCMD_DEVICEQUERY and the SANA-II commands are serialized by the unit
+ * task; everything else is IOERR_NOCMD.
+ */
 void beginIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -499,11 +556,17 @@ void beginIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
         ReplyMsg(&io->io_Message);
 }
 
-/*
-    Queued requests are the commands waiting at the unit port and the SANA-II
-    writes waiting for ring room. Best-effort: take a still-queued one back,
-    otherwise let it complete.
-*/
+/**
+ * abortIO() - AbortIO(): take a request back where it waits, or let it complete.
+ * @io: the request.
+ * @base: the device.
+ *
+ * Queued requests are the commands waiting at the unit port and the SANA-II
+ * writes waiting for ring room. Best-effort: take a still-queued one back,
+ * otherwise let it complete.
+ *
+ * Return: 0.
+ */
 LONG abortIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     struct ExecBase *SysBase = base->sysBase;

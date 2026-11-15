@@ -19,6 +19,10 @@
 #include <minlist.h>
 #include <runtime_config.h>
 
+/**
+ * SetupMDIO() - Route the MDIO bus's pins to GENET.
+ * @unit: the unit.
+ */
 static void SetupMDIO(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Setting up MDIO bus\n", __func__);
@@ -28,6 +32,10 @@ static void SetupMDIO(struct GenetUnit *unit)
 	gpioSetPull(unit->gpioBase, PIN_RGMII_MDC, GPIO_PULL_DOWN);
 }
 
+/**
+ * SetupRGMII() - Route the RGMII pins to GENET, with their pulls.
+ * @unit: the unit.
+ */
 static void SetupRGMII(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Setting up RGMII bus\n", __func__);
@@ -43,6 +51,14 @@ static void SetupRGMII(struct GenetUnit *unit)
 	}
 }
 
+/**
+ * UnitOpen() - Open the unit: count one more open, or set the first one up.
+ * @unit: the unit.
+ * @unitNumber: the unit's number, the device tree's ethernetN.
+ * @flags: the OpenDevice() flags; unused.
+ *
+ * Return: GENET_OK, or the error of the step that failed (ENOMEM, DevTreeParse()'s, UnitTaskStart()'s), with everything undone.
+ */
 u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags)
 {
 	struct ExecBase *SysBase = unit->sysBase;
@@ -136,6 +152,12 @@ fail:
 	return result;
 }
 
+/**
+ * UnitConfigure() - Bring the hardware up: the pins, then the UMAC and the PHY.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or bcmgenet_eth_probe()'s error.
+ */
 u32 UnitConfigure(struct GenetUnit *unit)
 {
 	SetupMDIO(unit);
@@ -153,6 +175,12 @@ u32 UnitConfigure(struct GenetUnit *unit)
 	return GENET_OK;
 }
 
+/**
+ * UnitOnline() - Start the UMAC and the DMA.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or bcmgenet_gmac_eth_start()'s error, the start undone.
+ */
 u32 UnitOnline(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: About to start UMAC\n", __func__);
@@ -170,6 +198,10 @@ u32 UnitOnline(struct GenetUnit *unit)
 	return GENET_OK;
 }
 
+/**
+ * UnitOffline() - Stop the UMAC and the DMA; the unit stays configured.
+ * @unit: the unit.
+ */
 void UnitOffline(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Stopping UMAC\n", __func__);
@@ -177,6 +209,12 @@ void UnitOffline(struct GenetUnit *unit)
 	unit->state = STATE_CONFIGURED;
 }
 
+/**
+ * UnitClose() - Close the unit: count one open less, and take everything down at the last.
+ * @unit: the unit.
+ *
+ * Return: the opens left.
+ */
 u32 UnitClose(struct GenetUnit *unit)
 {
 	struct ExecBase *SysBase = unit->sysBase;
