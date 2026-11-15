@@ -19,7 +19,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from . import values
-from .baselines import Baseline, write
+from emu68test.baselines import Baseline, write
 from .matrix import FIGURES
 
 TESTS = Path(__file__).resolve().parent.parent
@@ -31,7 +31,7 @@ def collect(rundirs: list[Path], machine: str) -> tuple[dict[str, list[list[floa
     per_boot: dict[str, dict[str, list[float]]] = defaultdict(dict)
     drivers: dict[str, set[str]] = defaultdict(set)
     for rundir in rundirs:
-        for path in sorted(Path(rundir).glob(f"*/{values.NAME}")):
+        for path in sorted(Path(rundir).glob(f"*/*/{values.NAME}")):
             data = values.read(path)
             if data["machine"] != machine:
                 continue

@@ -41,7 +41,7 @@
 
 #include <genet/ethtool.h>
 
-#include "kv.h"
+#include <emu68test/kv.h>
 #include "support.h"
 
 #define OPENERS_MAX 8u
@@ -262,7 +262,7 @@ static void print_outcome(const char *prefix, const struct IOSana2Req *io, BOOL 
 {
     char key[LOGIC_KEY_TEXT];
     logic_key(key, prefix, ".request");
-    kv_snum(key, request_id(&io->ios2_Req.io_Message));
+    kv_num(key, request_id(&io->ios2_Req.io_Message));
     logic_print_flag(prefix, ".kept", kept);
     logic_print_text(prefix, ".error", logic_error_name(io->ios2_Req.io_Error));
     logic_print_text(prefix, ".wire_error", logic_wire_error_name(io->ios2_WireError));
@@ -270,14 +270,15 @@ static void print_outcome(const char *prefix, const struct IOSana2Req *io, BOOL 
 
 /**
  * step_open() - OpenDevice() of an IOSana2Req: the opener from its tags, attached.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: prom, decline, nocopy, copyfail, sendfail; NULL for none.
  *
  * Return: FALSE when there is no room for one more.
  */
-static BOOL step_open(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_open(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     struct TagItem tags[TAGS_MAX];
     ULONG count = 0;
 
@@ -306,14 +307,15 @@ static BOOL step_open(struct GenetUnit *unit, const char *prefix, const char *op
 
 /**
  * step_close() - CloseDevice() of a request whose ios2_BufferManagement is an opener's, foreign or NULL.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the opener's letter, foreign or null.
  *
  * Return: FALSE for another name.
  */
-static BOOL step_close(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_close(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     APTR cookie;
     (void)prefix;
     if (!cookie_of(operands, &cookie))
@@ -324,14 +326,15 @@ static BOOL step_close(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * step_task() - The unit task takes every message on its port, in order, as ProcessCommand() would.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: none.
  *
  * Return: FALSE for operands.
  */
-static BOOL step_task(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_task(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     struct ExecBase *SysBase = unit->sysBase;
     struct Message *message;
 
@@ -377,40 +380,43 @@ static BOOL make_read(struct GenetUnit *unit, const char *prefix, const char *op
 
 /**
  * step_read() - CMD_READ: read=<opener>,<type>[,raw].
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the operands.
  *
  * Return: FALSE for operands that name no opener.
  */
-static BOOL step_read(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_read(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     return make_read(unit, prefix, operands, CMD_READ);
 }
 
 /**
  * step_orphan() - S2_READORPHAN: orphan=<opener>.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the opener.
  *
  * Return: FALSE for operands that name no opener.
  */
-static BOOL step_orphan(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_orphan(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     return make_read(unit, prefix, operands, S2_READORPHAN);
 }
 
 /**
  * step_reads() - Several reads of one type: reads=<opener>,<type>,<count>, printed as none.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the operands.
  *
  * Return: FALSE for operands that are not that.
  */
-static BOOL step_reads(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_reads(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     char read[LOGIC_KEY_TEXT];
     const char *count = operands != NULL ? strrchr(operands, ',') : NULL;
 
@@ -543,7 +549,7 @@ static void print_query(const char *prefix)
 
 /**
  * step_cmd() - A command for the unit task: cmd=<opener>|null,<command>[,<argument>].
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the operands.
  *
@@ -552,8 +558,9 @@ static void print_query(const char *prefix)
  *
  * Return: FALSE for operands that are not that.
  */
-static BOOL step_cmd(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_cmd(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     struct ExecBase *SysBase = unit->sysBase;
     const char *name = operands != NULL ? strchr(operands, ',') : NULL;
     APTR cookie;
@@ -595,7 +602,7 @@ static BOOL frame_destination(const struct GenetUnit *unit, UBYTE *frame, const 
 
 /**
  * step_frame() - A frame arrives: frame=<destination>,<type>[,<payload bytes>].
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the operands.
  *
@@ -603,8 +610,9 @@ static BOOL frame_destination(const struct GenetUnit *unit, UBYTE *frame, const 
  *
  * Return: FALSE for operands that are not that.
  */
-static BOOL step_frame(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_frame(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     UBYTE *frame = frameRoom + FRAME_ALIGNMENT;
     const char *type = operands != NULL ? strchr(operands, ',') : NULL;
     char *end;
@@ -630,14 +638,15 @@ static BOOL step_frame(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * step_abort() - AbortIO() of a kept request or a waiting write: abort=<request>.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the request's number.
  *
  * Return: FALSE for a number not made.
  */
-static BOOL step_abort(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_abort(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     ULONG id;
     (void)prefix;
     if (!logic_numbers(operands, &id, 1) || id >= requestCount)
@@ -727,14 +736,15 @@ static BOOL write_destination(const char *text, UBYTE *destination)
 
 /**
  * step_write() - A write: write=<opener>,<destination>,<type>,<length>[,raw].
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the operands; the destination is broadcast or an address.
  *
  * Return: FALSE for operands that are not that.
  */
-static BOOL step_write(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_write(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     UBYTE destination[ETH_ALEN];
     ULONG numbers[WRITE_NUMBERS];
     char rest[LOGIC_KEY_TEXT];
@@ -762,14 +772,15 @@ static BOOL step_write(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * step_writes() - So many 46-byte writes to another station: writes=<opener>,<count>.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the operands.
  *
  * Return: FALSE for operands that are not that.
  */
-static BOOL step_writes(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_writes(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     static const ULONG numbers[WRITE_NUMBERS] = {0x0800, FILLER_LENGTH};
     APTR cookie;
     ULONG count;
@@ -786,14 +797,15 @@ static BOOL step_writes(struct GenetUnit *unit, const char *prefix, const char *
 
 /**
  * step_consumed() - The hardware has sent everything on the TX ring: TDMA_CONS_INDEX catches up.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: none.
  *
  * Return: FALSE for operands.
  */
-static BOOL step_consumed(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_consumed(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     (void)prefix;
     logic_register_set(unit, TDMA_CONS_INDEX, unit->tx_ring.tx_prod_index);
     return operands == NULL;
@@ -801,14 +813,15 @@ static BOOL step_consumed(struct GenetUnit *unit, const char *prefix, const char
 
 /**
  * step_service() - The unit task's pass on its TX signal: the backlog, and the events the writers raised.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: none.
  *
  * Return: FALSE for operands.
  */
-static BOOL step_service(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_service(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     sana2_service(unit, 1UL << unit->tx_signal);
     print_ring(unit, prefix);
     return operands == NULL;
@@ -817,14 +830,15 @@ static BOOL step_service(struct GenetUnit *unit, const char *prefix, const char 
 /**
  * step_link() - The PHY's link comes up at 1000 Mb/s full duplex or goes, and the link poll
  * publishes it (bcmgenet_link_publish()).
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: up or down.
  *
  * Return: FALSE for neither.
  */
-static BOOL step_link(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_link(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     BOOL up;
     (void)prefix;
     if (!logic_switch(operands, &up))
@@ -838,14 +852,15 @@ static BOOL step_link(struct GenetUnit *unit, const char *prefix, const char *op
 
 /**
  * step_miami() - USE_MIAMI_WORKAROUND on or off.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: on or off.
  *
  * Return: FALSE for neither.
  */
-static BOOL step_miami(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_miami(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     BOOL on;
     (void)prefix;
     if (!logic_switch(operands, &on))
@@ -856,14 +871,15 @@ static BOOL step_miami(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * step_netdev() - A netdev stack holds the unit, or lets it go.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: on or off.
  *
  * Return: FALSE for neither.
  */
-static BOOL step_netdev(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_netdev(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     BOOL on;
     (void)prefix;
     if (!logic_switch(operands, &on))
@@ -912,7 +928,7 @@ static void print_reply(const char *prefix, ULONG index, const struct Message *m
 
     logic_key(reply, prefix, ".reply.%lu", (unsigned long)index);
     logic_key(key, reply, ".request");
-    kv_snum(key, id);
+    kv_num(key, id);
     if (id < 0)
         return;
     const struct IOSana2Req *io = &requests[id].io;
@@ -970,11 +986,12 @@ static ULONG list_length(const struct MinList *list)
 
 /**
  * print_state() - The unit's SANA-II side after a step.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  */
-static void print_state(const struct GenetUnit *unit, const char *prefix)
+static void print_state(const void *context, const char *prefix)
 {
+    const struct GenetUnit *unit = context;
     const struct GenetS2 *s2 = unit->s2;
     char key[LOGIC_KEY_TEXT];
 
@@ -994,7 +1011,7 @@ static void print_state(const struct GenetUnit *unit, const char *prefix)
     logic_print_number(prefix, ".tx_dropped", (ULONG)unit->internalStats.tx_dropped);
     logic_print_number(prefix, ".tx_waiting", list_length(&s2->txBacklog));
     logic_key(key, prefix, ".forbids");
-    kv_snum(key, logic_forbids());
+    kv_num(key, logic_forbids());
 }
 
 static const struct LogicStep steps[] = {

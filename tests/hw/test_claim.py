@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness.results import parse
+from emu68test.results import parse
 from harness.stack import NETDEV, SANA2, Script, rc_of
 from harness.tools import GENETTEST, genettest
 

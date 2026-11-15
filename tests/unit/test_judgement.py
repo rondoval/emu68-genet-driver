@@ -1,74 +1,10 @@
 # SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
-"""Baselines: the seeding boots' bounds, their seeding, and the compare tier's criterion."""
-import json
-
+"""The compare tier's criterion, the blocks a speed test is measured in, and what a profile build is known by."""
 import pytest
 
-from harness.baselines import Baseline, Baselines
 from harness.compare import judge
 
 pytestmark = pytest.mark.unit
-
-
-def test_a_figure_must_reach_the_worst_seeding_boot():
-    base = Baselines("amiga-pi4", {"netdev.tcp_tx.mbps": Baseline(940.1, 928.8, 9, 27)})
-    base.check("netdev.tcp_tx.mbps", 928.8, higher=True)
-    with pytest.raises(AssertionError, match="below 928.8, the worst of 9 seeding boots"):
-        base.check("netdev.tcp_tx.mbps", 928.7, higher=True)
-
-
-def test_lower_is_better_against_the_highest_seeding_boot():
-    base = Baselines("amiga-pi4", {"sana2.rr_1.p50_us": Baseline(902, 902, 4, 12)})
-    base.check("sana2.rr_1.p50_us", 902, higher=False)
-    with pytest.raises(AssertionError, match="above 902"):
-        base.check("sana2.rr_1.p50_us", 903, higher=False)
-
-
-def test_a_shown_figure_has_no_bound_to_reach():
-    base = Baselines("amiga-pi4", {"netdev.tcp_tx.ctxsw_s": Baseline(4250.0, None, 6, 18)})
-    with pytest.raises(ValueError, match="no bound"):
-        base.check("netdev.tcp_tx.ctxsw_s", 5000.0, higher=False)
-
-
-def test_near_the_median_within_a_tolerance():
-    base = Baselines("amiga-pi4", {"netdev.tcp_tx.tx_submit.avg_us": Baseline(0.9, None, 1, 1)})
-    base.check_near("netdev.tcp_tx.tx_submit.avg_us", 1.05, higher=False, tolerance="20%")
-    with pytest.raises(AssertionError, match="above the baseline 0.9"):
-        base.check_near("netdev.tcp_tx.tx_submit.avg_us", 1.1, higher=False, tolerance="20%")
-    base.check_near("netdev.tcp_tx.tx_submit.avg_us", 0.8, higher=False, tolerance=0.1)
-
-
-def test_a_missing_baseline_only_warns_and_seeding_neither_judges_nor_warns():
-    base = Baselines("amiga-cm4")
-    base.check("netdev.tcp_rx.mbps", 940.0, higher=True)
-    assert base.measured == {"netdev.tcp_rx.mbps": 940.0} and "no baseline" in base.warnings[0]
-    seeding = Baselines("amiga-pi4", {"netdev.tcp_rx.mbps": Baseline(945.0, 944.0, 4, 12)}, seeding=True)
-    seeding.check("netdev.tcp_rx.mbps", 100.0, higher=True)
-    assert seeding.measured == {"netdev.tcp_rx.mbps": 100.0} and not seeding.warnings
-
-
-def test_a_bad_tolerance():
-    with pytest.raises(ValueError):
-        Baselines.tolerance_of("5 percent", 100)
-
-
-def test_writing_keeps_the_other_machines_and_reads_back(tmp_path):
-    from harness.baselines import write
-    path = tmp_path / "baselines.json"
-    path.write_text(json.dumps({"format": 2, "amiga-cm4": {"x.y.mbps": {"median": 1.0, "boots": 1, "runs": 1}}}))
-    write(path, "amiga-pi4", {"netdev.tcp_tx.mbps": Baseline(940.1, 928.8, 9, 27),
-                              "netdev.tcp_tx.ctxsw_s": Baseline(4250.0, None, 6, 18)})
-    data = json.loads(path.read_text())
-    assert data["amiga-cm4"] == {"x.y.mbps": {"median": 1.0, "boots": 1, "runs": 1}}
-    assert data["amiga-pi4"]["netdev.tcp_tx.ctxsw_s"] == {"median": 4250.0, "boots": 6, "runs": 18}
-    assert Baselines.load(path, "amiga-pi4").base["netdev.tcp_tx.mbps"] == Baseline(940.1, 928.8, 9, 27)
-
-
-def test_a_baselines_file_of_another_format(tmp_path):
-    path = tmp_path / "baselines.json"
-    path.write_text(json.dumps({"format": 1, "amiga-pi4": {"netdev.tcp_tx.mbps": 934.0}}))
-    with pytest.raises(ValueError, match="run.sh seed"):
-        Baselines.load(path, "amiga-pi4")
 
 
 def test_compare_throughput_against_the_reference_minimum():

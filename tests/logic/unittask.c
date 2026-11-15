@@ -15,7 +15,7 @@
 
 #include <string.h>
 
-#include "kv.h"
+#include <emu68test/kv.h>
 #include "support.h"
 
 static struct NSDeviceQueryResult result;
@@ -40,14 +40,15 @@ static void print_commands(const char *prefix, const UWORD *commands)
 
 /**
  * step_query() - NSCMD_DEVICEQUERY through ProcessCommand(), quick, so nothing is replied.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: io_Length, null for no io_Data, NULL for the whole structure.
  *
  * Return: FALSE for operands that are none of them.
  */
-static BOOL step_query(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_query(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     struct IOStdReq io;
     ULONG length = sizeof(result);
 
@@ -77,16 +78,17 @@ static BOOL step_query(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * print_state() - The calls the step made.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  */
-static void print_state(const struct GenetUnit *unit, const char *prefix)
+static void print_state(const void *context, const char *prefix)
 {
+    const struct GenetUnit *unit = context;
     char key[LOGIC_KEY_TEXT];
     (void)unit;
     logic_key(key, prefix, ".forbids");
-    kv_snum(key, logic_forbids());
-    logic_print_calls(prefix);
+    kv_num(key, logic_forbids());
+    logic_print_calls(prefix, logic_name_call);
 }
 
 static const struct LogicStep steps[] = {

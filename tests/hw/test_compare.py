@@ -22,9 +22,9 @@ import pytest
 
 from harness import compare, sockbench, values
 from harness.compare import BUILD
-from harness.install import DRIVER
 from harness.matrix import Tally, measure
 from harness.stack import NETDEV, SANA2
+from harness.suite import DRIVER
 
 pytestmark = [pytest.mark.hw, pytest.mark.compare]
 
@@ -73,13 +73,13 @@ def verdicts_written(references: list[str], tally: Tally, test_dir: Path, record
 @pytest.mark.timeout(TIMEOUT_S)
 @pytest.mark.parametrize("kind", [NETDEV, SANA2], ids=["netdev", "sana2"])
 @pytest.mark.covers("datapath")
-def test_the_build_keeps_up_with_the_reference(request, device, interface, artefacts, peer, test_dir, kind,
+def test_the_build_keeps_up_with_the_reference(request, installed, interface, artefacts, peer, test_dir, kind,
                                                record_property):
     paths = request.config.getoption(f"--reference-{kind.lower()}")
     if not paths:
         pytest.skip(f"no reference driver for {kind} (--reference-{kind.lower()} FILE)")
     drivers = {label: Path(path).read_bytes() for label, path in zip(compare.labels(paths), paths)}
-    drivers[BUILD] = device.installed[DRIVER]
+    drivers[BUILD] = installed[DRIVER]
     tests = matrix_part(request, kind)
     tally = Tally()
     for _ in range(request.config.getoption("--compare-rounds")):

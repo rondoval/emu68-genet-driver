@@ -11,7 +11,7 @@ import time
 
 import pytest
 
-from harness.install import GENET_STATS
+from harness.suite import GENET_STATS
 from harness.stack import NETDEV, SANA2
 
 pytestmark = [pytest.mark.hw, pytest.mark.full]
@@ -27,14 +27,17 @@ def front_tree(device) -> str:
     """The front screen's window tree once the window is there: ui_tree reads the front screen only, and a
     screen blanker in front gives the front back only on mouse movement, so move it until the window shows
     (up to WAKE_TRIES times)."""
-    tree = device.ami.ui_tree()
+    def nudge():
+        device.ami.input_move_rel(WAKE_PIXELS, 0)
+        device.ami.input_move_rel(-WAKE_PIXELS, 0)
+
+    tree = device.retry(device.ami.ui_tree)
     for _ in range(WAKE_TRIES):
         if TITLE in tree:
             break
-        device.ami.input_move_rel(WAKE_PIXELS, 0)
-        device.ami.input_move_rel(-WAKE_PIXELS, 0)
+        device.retry(nudge)
         time.sleep(WAKE_STEP_S)
-        tree = device.ami.ui_tree()
+        tree = device.retry(device.ami.ui_tree)
     return tree
 
 

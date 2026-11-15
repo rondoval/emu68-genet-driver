@@ -15,7 +15,7 @@
 #include <device.h>
 #include <sana2_unit.h>
 
-#include "kv.h"
+#include <emu68test/kv.h>
 #include "support.h"
 
 #define POOL_PUDDLE_BYTES 4096u
@@ -40,7 +40,7 @@ static APTR allocated(ULONG size)
     if (memory == NULL)
     {
         kv_environment("no memory for the unit");
-        exit(kv_end());
+        exit(kv_end(KV_RC_ENVIRONMENT));
     }
     return memory;
 }
@@ -83,7 +83,7 @@ struct GenetUnit *logic_unit_create(void)
     if (unit->metaPool == NULL)
     {
         kv_environment("no memory for the unit's pool");
-        exit(kv_end());
+        exit(kv_end(KV_RC_ENVIRONMENT));
     }
     for (ULONG index = 0; index < ADDRESS_BYTES; index++)
         unit->currentMacAddress[index] = stationAddress[index];
@@ -117,23 +117,6 @@ ULONG logic_register(const struct GenetUnit *unit, ULONG offset)
 void logic_register_set(struct GenetUnit *unit, ULONG offset, ULONG value)
 {
     mmio_write32(value, (UBYTE *)unit->genetBase + offset);
-}
-
-/**
- * logic_key() - A key under a prefix: <prefix><format>, cut at LOGIC_KEY_TEXT.
- * @key: room for LOGIC_KEY_TEXT characters.
- * @prefix: the prefix, such as step.3.
- * @format: the printf() format of the rest, from its dot.
- * @...: the format's arguments.
- */
-void logic_key(char *key, const char *prefix, const char *format, ...)
-{
-    va_list arguments;
-    int used = snprintf(key, LOGIC_KEY_TEXT, "%s", prefix);
-    va_start(arguments, format);
-    if (used >= 0 && used < (int)LOGIC_KEY_TEXT)
-        vsnprintf(key + used, LOGIC_KEY_TEXT - (size_t)used, format, arguments);
-    va_end(arguments);
 }
 
 /**
@@ -217,22 +200,18 @@ ULONG logic_parse_range(const char *text, UBYTE *lower, UBYTE *upper)
 }
 
 /**
- * logic_call_name() - A recorded call's kind as the output names it.
- * @kind: the kind.
+ * logic_name_call() - Name one of the driver stand-ins' calls, for logic_print_calls().
+ * @call: the call.
+ * @value: room for LOGIC_VALUE_TEXT characters: the events by name, else left empty (printed as hex).
  *
- * Return: its name.
+ * Return: the kind's name, or NULL for a kind that is not genet's.
  */
-const char *logic_call_name(enum LogicCallKind kind)
+const char *logic_name_call(const struct LogicCall *call, char *value)
 {
-    switch (kind)
+    switch (call->kind)
     {
-    case LOGIC_SIGNAL:
-        return "signal";
-    case LOGIC_PUTMSG:
-        return "putmsg";
-    case LOGIC_REPLYMSG:
-        return "reply";
     case LOGIC_EVENTS:
+        logic_events_text(value, call->value);
         return "events";
     case LOGIC_SET_RX_MODE:
         return "set_rx_mode";
@@ -242,36 +221,7 @@ const char *logic_call_name(enum LogicCallKind kind)
         return "tx_abort";
     case LOGIC_TX_IRQ_ARM:
         return "tx_irq_arm";
+    default:
+        return NULL;
     }
-    return "?";
-}
-
-/**
- * logic_print_calls() - Print the calls recorded as <prefix>.call.N.kind and
- * .value and <prefix>.calls, and forget them.
- * @prefix: the keys' prefix, such as step.3.
- */
-void logic_print_calls(const char *prefix)
-{
-    const struct LogicCall *calls;
-    ULONG count = logic_calls(&calls);
-    char key[LOGIC_KEY_TEXT];
-
-    for (ULONG index = 0; index < count; index++)
-    {
-        logic_key(key, prefix, ".call.%lu.kind", (unsigned long)index);
-        kv_str(key, logic_call_name(calls[index].kind));
-        logic_key(key, prefix, ".call.%lu.value", (unsigned long)index);
-        if (calls[index].kind == LOGIC_EVENTS)
-        {
-            char events[LOGIC_EVENTS_TEXT];
-            logic_events_text(events, calls[index].value);
-            kv_str(key, events);
-        }
-        else
-            kv_hex(key, calls[index].value);
-    }
-    logic_key(key, prefix, ".calls");
-    kv_num(key, count);
-    logic_calls_clear();
 }

@@ -16,10 +16,12 @@ ends; restore() puts it back again in case a script did not get that far.
 """
 from __future__ import annotations
 
-from .amiga import RAM, Device
+from emu68test.install import Installer
+from emu68test.machine import Device
+
 from .build import Artefacts
-from .install import DRIVER, INTERFACE, PREFS
 from .stack import AUTO, NAME, NETDEV, SANA2, Script, interface_type, rc_of, rescued, set_type
+from .suite import DRIVER, INTERFACE, PREFS, RAM
 from .tools import genettest, push
 
 MACHINE = "machine"  # the machine's own interface file, its own prefs
@@ -35,8 +37,9 @@ class SwitchFailed(AssertionError):
 class Interface:
     """The genet interface's personality on one Amiga."""
 
-    def __init__(self, device: Device):
+    def __init__(self, device: Device, installer: Installer):
         self.device = device
+        self.installer = installer  # for a boot on another driver (the compare tier)
         self.original = device.download(INTERFACE).decode("latin-1")
         self.machine_type = interface_type(self.original)
         self.prefs = self._read(PREFS)
@@ -48,7 +51,7 @@ class Interface:
     def fresh_boot(self, artefacts: Artefacts, driver: bytes | None = None) -> None:
         """A boot of its own, @driver installed first when given (the installer reboots when the file
         changed, and a reboot follows otherwise), then the tools and the RAM: copies back."""
-        changed = driver is not None and any(p.changed for p in self.device.installer.install({DRIVER: driver}))
+        changed = driver is not None and any(p.changed for p in self.installer.install({DRIVER: driver}))
         if not changed:
             self.device.reboot()
         push(self.device, artefacts)

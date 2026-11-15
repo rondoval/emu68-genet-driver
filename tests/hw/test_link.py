@@ -19,7 +19,7 @@ import pytest
 from harness import netdevstats, sockbench
 from harness.limits import (FAST, GIGABIT, HALF_DUPLEX_LEAST_MBPS, LINK_100_LEAST_MBPS, LINK_100_MOST_MBPS,
                             TCP_FLOOR_MBPS)
-from harness.results import parse
+from emu68test.results import parse
 from harness.stack import NETDEV, SANA2, Script, rc_of, section
 from harness.tools import GENETTEST, PRIORITY
 

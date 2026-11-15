@@ -5,7 +5,7 @@ import json
 import pytest
 
 from harness import values
-from harness.baselines import Baseline, Baselines
+from emu68test.baselines import Baseline, Baselines
 from harness.seed import FEW_BOOTS, seed
 
 pytestmark = pytest.mark.unit
@@ -15,7 +15,7 @@ DRIVER = b"genet 5.0"
 
 def run(tmp_path, name: str, boots: list[tuple[int, dict]], driver: bytes = DRIVER, machine: str = "amiga-pi4"):
     """A run directory with one test directory holding @boots in its values.json."""
-    test_dir = tmp_path / name / "test_x"
+    test_dir = tmp_path / name / "test_perf" / "test_x"
     test_dir.mkdir(parents=True)
     values.write(test_dir, machine, driver, boots)
     return tmp_path / name

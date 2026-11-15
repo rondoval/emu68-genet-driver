@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .install import digest
+from emu68test.install import digest
 
 FORMAT = 1
 NAME = "values.json"

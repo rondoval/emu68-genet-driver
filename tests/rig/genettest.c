@@ -22,7 +22,7 @@
  */
 
 #include "rig.h"
-#include "../common/kv.h"
+#include <emu68test/kv.h>
 
 #include <proto/exec.h>
 
@@ -159,13 +159,13 @@ static void rig_close(struct Rig *rig)
 /**
  * usage() - Print the usage line.
  *
- * Return: KV_RC_USAGE.
+ * Return: KV_RC_ERROR.
  */
 static int usage(void)
 {
     printf("usage: GenetTest QUERY|HOLDER|NETDEV|SANA2|BAREOPEN|CLOSE|MCAST [secs]|ONLINECYCLE [n]|"
            "CABLE [secs]|ABORT|MIAMI ON|OFF\n");
-    return KV_RC_USAGE;
+    return KV_RC_ERROR;
 }
 
 /**
@@ -173,7 +173,7 @@ static int usage(void)
  * @argc: the argument count.
  * @argv: the command and its optional number.
  *
- * Return: kv_end()'s code; KV_RC_USAGE for a usage error.
+ * Return: kv_end()'s code; KV_RC_ERROR for a usage error.
  */
 int main(int argc, char **argv)
 {
@@ -187,5 +187,5 @@ int main(int argc, char **argv)
     if (rig_open(&rig))
         command->run(&rig, argument);
     rig_close(&rig);
-    return kv_end();
+    return kv_end(KV_RC_PASS);
 }

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness.vamos import grouped
+from emu68test.vamos import grouped
 
 pytestmark = pytest.mark.logic
 
@@ -17,6 +17,7 @@ GROUP = "01:00:5e:00:00:fb"
 BROADCAST = "ff:ff:ff:ff:ff:ff"
 PAYLOAD_FIRST = 0x10111213              # what the openers' CopyFromBuff writes first (sana2.c)
 HEADER = 14
+IPV4 = 0x800                            # the Ethernet type the writes carry
 MAX_DATA = 2048 - 2 - 64 - HEADER - 4   # S2_TX_MAX_DATALEN: a staging slot less its pad, TSB, header, round-up
 RING_ROOM = 255                         # a 256-BD ring with one BD always left free
 ABORTED = ("IOERR_ABORTED", "S2WERR_GENERIC_ERROR")
@@ -62,7 +63,7 @@ def test_a_write_goes_on_the_ring_behind_an_ethernet_header(steps):
     step = steps(*online(""), f"write=a,{OTHER},0x800,50")[-1]
     assert outcome(step) == ("S2ERR_NO_ERROR", "S2WERR_GENERIC_ERROR") and step["kept"] == "no"
     assert ring(step) == {"produced": "1", "doorbell": "1", "length": str(HEADER + 50), "destination": OTHER,
-                          "source": STATION, "type": "0x800", "after_header": hex(PAYLOAD_FIRST)}
+                          "source": STATION, "type": f"{IPV4:#010x}", "after_header": f"{PAYLOAD_FIRST:#010x}"}
     assert [r["request"] for r in replies(step)] == [step["request"]] and step["tx_packets"] == "1"
 
 
@@ -123,7 +124,7 @@ def test_a_full_ring_keeps_writes_waiting_in_order_until_the_hardware_has_sent(s
     assert (first["kept"], second["kept"], second["tx_waiting"]) == ("yes", "yes", "2")
     assert replies(first) == [] and replies(consumed) == []
     assert [r["request"] for r in replies(drained)] == [first["request"], second["request"]]
-    assert ring(drained)["produced"] == str(RING_ROOM + 2) and ring(drained)["type"] == "0x806"
+    assert ring(drained)["produced"] == str(RING_ROOM + 2) and int(ring(drained)["type"], 16) == 0x806
     assert drained["tx_waiting"] == "0"
 
 

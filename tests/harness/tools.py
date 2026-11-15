@@ -10,11 +10,13 @@ priority instead (Script.pri()).
 """
 from __future__ import annotations
 
+from emu68test.machine import Device
+from emu68test.results import Result
+
 from . import netdevstats, sockbench
-from .amiga import RAM, Device
 from .build import Artefacts
-from .results import Result
 from .stack import NETDEV_STATS, SOCKBENCH
+from .suite import RAM
 
 GENETTEST = f"{RAM}/GenetTest"
 BSDSOCKTEST = f"{RAM}/bsdsocktest"

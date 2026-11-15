@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness.vamos import grouped
+from emu68test.vamos import grouped
 
 pytestmark = pytest.mark.logic
 
@@ -63,7 +63,7 @@ def test_each_type_reaches_the_read_waiting_for_it(steps):
     found = steps(*online(""), f"read=a,{ARP}", f"read=a,{IPV6}", f"read=a,{IPV4}",
                   f"frame=station,{IPV6}", f"frame=station,{IPV4}", f"frame=station,{ARP}")[-3:]
     assert [replied(step) for step in found] == [[2], [3], [1]]
-    assert [replies(step)[0]["type"] for step in found] == [hex(IPV6), hex(IPV4), hex(ARP)]
+    assert [int(replies(step)[0]["type"], 16) for step in found] == [IPV6, IPV4, ARP]
 
 
 @pytest.mark.covers("CMD_READ", "SANA-II RX routing")
@@ -84,7 +84,7 @@ def test_every_opener_waiting_for_the_type_gets_a_copy(steps):
 def test_any_8023_read_takes_any_8023_frame_and_no_ethernet_ii_one(steps):
     taken, untouched = steps(*online(""), "read=a,100", f"frame=station,{LENGTH_8023}", "read=a,0x88b5",
                              f"frame=station,{LENGTH_8023}")[-3::2]
-    assert replied(taken) == [1] and replies(taken)[0]["type"] == hex(LENGTH_8023)
+    assert replied(taken) == [1] and int(replies(taken)[0]["type"], 16) == LENGTH_8023
     assert replied(untouched) == [] and untouched["rx_orphan"] == "1"
 
 
@@ -108,7 +108,7 @@ def test_a_read_is_told_whether_the_frame_was_broadcast_or_multicast(steps):
 @pytest.mark.covers("S2_READORPHAN", "SANA-II RX routing")
 def test_a_frame_no_read_waits_for_goes_to_the_orphan_reads_and_is_counted(steps):
     other, ip = steps(*online("", ""), "orphan=a", "orphan=b", f"frame=station,{IPV6}", f"frame=station,{IPV4}")[-2:]
-    assert replied(other) == [1, 2] and replies(other)[0]["type"] == hex(IPV6)
+    assert replied(other) == [1, 2] and int(replies(other)[0]["type"], 16) == IPV6
     assert (other["rx_orphan"], other["rx_ip_arp_dropped"]) == ("1", "0")
     assert replied(ip) == [] and (ip["rx_orphan"], ip["rx_ip_arp_dropped"]) == ("2", "1")
 

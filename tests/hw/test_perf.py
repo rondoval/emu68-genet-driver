@@ -20,11 +20,10 @@ import statistics
 import pytest
 
 from harness import speedtest, values
-from harness.amiga import RAM
-from harness.install import DRIVER
 from harness.matrix import FIGURES, Block, key, measure
 from harness.sockbench import matrix
 from harness.stack import NETDEV, SANA2
+from harness.suite import DRIVER, RAM
 from harness.tools import PRIORITY
 
 pytestmark = [pytest.mark.hw, pytest.mark.perf]
@@ -78,7 +77,7 @@ def kept(test_dir, machine: str, driver: bytes, kind: str, test: str, blocks: li
 
 @pytest.mark.parametrize("kind,test", cases())
 @pytest.mark.covers("datapath")
-def test_the_matrix_holds_its_baselines(request, device, peer, baselines, interface, artefacts, test_dir, kind,
+def test_the_matrix_holds_its_baselines(request, device, installed, peer, baselines, interface, artefacts, test_dir, kind,
                                         test, record_property):
     opt = request.config.getoption
     blocks = [(interface.boots, measure(device, test, peer, opt("--reps"), opt("--stat"), opt("--ps")))]
@@ -90,7 +89,7 @@ def test_the_matrix_holds_its_baselines(request, device, peer, baselines, interf
         interface.use(kind)
         blocks.append((interface.boots, measure(device, test, peer, opt("--reps"), opt("--stat"), opt("--ps"))))
         misses = misses_of(baselines, kind, test.name, merged(blocks))
-    kept(test_dir, opt("--server"), device.installed[DRIVER], kind, test.name, blocks)
+    kept(test_dir, opt("--server"), installed[DRIVER], kind, test.name, blocks)
     for figure, runs in merged(blocks).items():
         record_property(figure, f"{statistics.median(runs):g} ({', '.join(f'{v:g}' for v in runs)})")
     for name, count in (("runs without a result", sum(b.missed for _, b in blocks)),
@@ -102,7 +101,7 @@ def test_the_matrix_holds_its_baselines(request, device, peer, baselines, interf
 
 @pytest.mark.parametrize("kind", [pytest.param(k, marks=pytest.mark.personality(k, boot=True), id=k.lower())
                                   for k in KINDS])
-def test_amispeedtest_is_recorded(request, device, baselines, interface, test_dir, kind, record_property):
+def test_amispeedtest_is_recorded(request, device, installed, baselines, interface, test_dir, kind, record_property):
     command = request.config.getoption("--speedtest")
     if not command:
         pytest.skip("no AmiSpeedTest (--speedtest '')")
@@ -113,7 +112,7 @@ def test_amispeedtest_is_recorded(request, device, baselines, interface, test_di
         for direction, mbps in speedtest.parse(text).items():
             found.setdefault(key(kind, "amispeedtest", f"{direction}_mbps"), []).append(mbps)
     assert found, "AmiSpeedTest printed no average"
-    values.write(test_dir, request.config.getoption("--server"), device.installed[DRIVER],
+    values.write(test_dir, request.config.getoption("--server"), installed[DRIVER],
                  [(interface.boots, found)])
     for name, runs in found.items():
         median = statistics.median(runs)

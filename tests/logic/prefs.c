@@ -12,7 +12,7 @@
 
 #include <proto/exec.h>
 
-#include "kv.h"
+#include <emu68test/kv.h>
 
 /**
  * main() - Load the settings and print each of them.
@@ -25,12 +25,12 @@ int main(void)
 
     LoadGenetRuntimeConfig(&config, SysBase);
     kv_begin("prefs");
-    kv_snum("prefs.unit_task_priority", config.unit_task_priority);
-    kv_num("prefs.rx_pool_bufs", config.rx_pool_bufs);
-    kv_num("prefs.link_speed", config.link_speed);
+    kv_num("prefs.unit_task_priority", config.unit_task_priority);
+    kv_unum("prefs.rx_pool_bufs", config.rx_pool_bufs);
+    kv_unum("prefs.link_speed", config.link_speed);
     kv_str("prefs.link_duplex", config.link_duplex == DUPLEX_FULL_CFG ? "full" : "half");
-    kv_str("prefs.link_autoneg", config.link_autoneg ? "yes" : "no");
-    kv_str("prefs.flow_control", config.flow_control ? "yes" : "no");
-    kv_str("prefs.use_miami_workaround", config.use_miami_workaround ? "yes" : "no");
-    return kv_end();
+    kv_bool("prefs.link_autoneg", config.link_autoneg);
+    kv_bool("prefs.flow_control", config.flow_control);
+    kv_bool("prefs.use_miami_workaround", config.use_miami_workaround);
+    return kv_end(KV_RC_PASS);
 }

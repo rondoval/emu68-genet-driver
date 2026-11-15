@@ -11,13 +11,12 @@ add_executable(GenetTest
     rig/mcast.c
     rig/events.c
     rig/miami.c
-    common/kv.c
 )
 target_compile_options(GenetTest PRIVATE -Os ${GENET_TEST_WARNINGS})
 target_link_options(GenetTest PRIVATE -s)
 target_compile_definitions(GenetTest PRIVATE
     VERSTAG="$VER: GenetTest ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR} ${CURRENT_DATE}")
-target_link_libraries(GenetTest PRIVATE Netdev::netdev_headers)
+target_link_libraries(GenetTest PRIVATE Emu68Common::kv Netdev::netdev_headers)
 
 # The logic tier's programs, run under vamos on the host.
 add_subdirectory(logic)

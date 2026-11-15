@@ -7,7 +7,9 @@ import re
 
 import pytest
 
-from harness.vamos import COMPONENT_DIR, listed
+from emu68test.vamos import listed
+
+from harness.suite import COMPONENT_DIR
 
 pytestmark = pytest.mark.logic
 

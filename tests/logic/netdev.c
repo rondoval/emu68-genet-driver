@@ -31,7 +31,7 @@
 
 #include <sana2_unit.h>
 
-#include "kv.h"
+#include <emu68test/kv.h>
 #include "support.h"
 
 #define DEFAULT_RX_BATCH 32u /* a stack's poll batch until a step says otherwise */
@@ -70,14 +70,15 @@ static void send_command(struct GenetUnit *unit, const char *prefix, UWORD comma
 
 /**
  * step_valid() - Whether bcmgenet_coalesce_valid() takes <tx>,<rx>,<usecs>.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the three numbers.
  *
  * Return: FALSE for operands that are not three numbers.
  */
-static BOOL step_valid(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_valid(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     ULONG numbers[COALESCE_NUMBERS];
     (void)unit;
     if (!logic_numbers(operands, numbers, COALESCE_NUMBERS))
@@ -88,14 +89,15 @@ static BOOL step_valid(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * step_coalesce() - NETDEV_CMD_SET_COALESCE of <tx>,<rx>,<usecs>.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the three numbers.
  *
  * Return: FALSE for operands that are not three numbers.
  */
-static BOOL step_coalesce(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_coalesce(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     ULONG numbers[COALESCE_NUMBERS];
     if (!logic_numbers(operands, numbers, COALESCE_NUMBERS))
         return FALSE;
@@ -108,14 +110,15 @@ static BOOL step_coalesce(struct GenetUnit *unit, const char *prefix, const char
 
 /**
  * step_profile() - NETDEV_CMD_SET_RX_PROFILE of an NDRP_* number.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the number.
  *
  * Return: FALSE for operands that are not one number.
  */
-static BOOL step_profile(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_profile(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     ULONG number;
     if (!logic_numbers(operands, &number, 1))
         return FALSE;
@@ -126,14 +129,15 @@ static BOOL step_profile(struct GenetUnit *unit, const char *prefix, const char 
 
 /**
  * step_holder() - A netdev stack, a SANA-II claimer or nobody holds the unit.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: netdev, sana2 or none.
  *
  * Return: FALSE for another word.
  */
-static BOOL step_holder(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_holder(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     (void)prefix;
     if (operands == NULL)
         return FALSE;
@@ -146,14 +150,15 @@ static BOOL step_holder(struct GenetUnit *unit, const char *prefix, const char *
 
 /**
  * step_start() - The unit goes online, and ring init programs the moderation (bcmgenet_apply_coalesce()).
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: none.
  *
  * Return: FALSE for operands.
  */
-static BOOL step_start(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_start(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     (void)prefix;
     unit->state = STATE_ONLINE;
     bcmgenet_apply_coalesce(unit);
@@ -162,14 +167,15 @@ static BOOL step_start(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * step_stop() - The unit goes back to configured.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: none.
  *
  * Return: FALSE for operands.
  */
-static BOOL step_stop(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_stop(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     (void)prefix;
     unit->state = STATE_CONFIGURED;
     return operands == NULL;
@@ -177,14 +183,15 @@ static BOOL step_stop(struct GenetUnit *unit, const char *prefix, const char *op
 
 /**
  * step_frames() - So many frames wait in the RX ring: RDMA_PROD_INDEX past the consumer.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the number.
  *
  * Return: FALSE for operands that are not one number.
  */
-static BOOL step_frames(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_frames(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     ULONG frames;
     (void)prefix;
     if (!logic_numbers(operands, &frames, 1))
@@ -195,14 +202,15 @@ static BOOL step_frames(struct GenetUnit *unit, const char *prefix, const char *
 
 /**
  * step_held() - The stack holds so many RX buffers.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the number.
  *
  * Return: FALSE for operands that are not one number.
  */
-static BOOL step_held(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_held(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     ULONG held;
     (void)prefix;
     if (!logic_numbers(operands, &held, 1))
@@ -213,14 +221,15 @@ static BOOL step_held(struct GenetUnit *unit, const char *prefix, const char *op
 
 /**
  * step_batch() - The stack's poll batch.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the number.
  *
  * Return: FALSE for operands that are not one number.
  */
-static BOOL step_batch(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_batch(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     ULONG batch;
     (void)prefix;
     if (!logic_numbers(operands, &batch, 1))
@@ -231,14 +240,15 @@ static BOOL step_batch(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * step_moderate() - An RX pass is about to re-arm its interrupt: bcmgenet_rx_moderate().
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: none.
  *
  * Return: FALSE for operands.
  */
-static BOOL step_moderate(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_moderate(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     (void)prefix;
     bcmgenet_rx_moderate(unit);
     return operands == NULL;
@@ -246,14 +256,15 @@ static BOOL step_moderate(struct GenetUnit *unit, const char *prefix, const char
 
 /**
  * step_filter() - NETDEV_CMD_SET_RXFILTER: filter=<flags>,<count>[,null].
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the NDFF_* flags, how many groups (01:00:5e:00:00:01 on), and null for a NULL list.
  *
  * Return: FALSE for operands that are not that.
  */
-static BOOL step_filter(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_filter(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     ULONG numbers[FILTER_NUMBERS];
     char given[LOGIC_KEY_TEXT];
     const char *null = operands != NULL ? strstr(operands, ",null") : NULL;
@@ -279,14 +290,15 @@ static BOOL step_filter(struct GenetUnit *unit, const char *prefix, const char *
 
 /**
  * step_mac() - NETDEV_CMD_SET_MAC: mac=<address>, or mac=short for a request one byte short.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the address, or short.
  *
  * Return: FALSE for operands that are neither.
  */
-static BOOL step_mac(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_mac(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     static UBYTE address[ADDRESS_BYTES];
     BOOL whole = operands != NULL && strcmp(operands, "short") != 0;
     if (operands == NULL || (whole && !logic_parse_address(operands, address)))
@@ -297,14 +309,15 @@ static BOOL step_mac(struct GenetUnit *unit, const char *prefix, const char *ope
 
 /**
  * step_owner() - Another opener attached, or nobody did (ndOwnerPort).
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: other or none.
  *
  * Return: FALSE for neither.
  */
-static BOOL step_owner(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_owner(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     (void)prefix;
     if (operands == NULL)
         return FALSE;
@@ -314,14 +327,15 @@ static BOOL step_owner(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * step_notask() - There is no unit task to signal.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: none.
  *
  * Return: FALSE for operands.
  */
-static BOOL step_notask(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_notask(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     (void)prefix;
     unit->task = NULL;
     return operands == NULL;
@@ -329,11 +343,12 @@ static BOOL step_notask(struct GenetUnit *unit, const char *prefix, const char *
 
 /**
  * print_state() - The unit after a step: its moderation, the registers, its filter and address.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  */
-static void print_state(const struct GenetUnit *unit, const char *prefix)
+static void print_state(const void *context, const char *prefix)
 {
+    const struct GenetUnit *unit = context;
     char key[LOGIC_KEY_TEXT];
 
     logic_print_number(prefix, ".tx_frames", unit->coalTxFrames);
@@ -360,8 +375,8 @@ static void print_state(const struct GenetUnit *unit, const char *prefix)
     logic_key(key, prefix, ".mac");
     logic_print_address(key, unit->currentMacAddress);
     logic_key(key, prefix, ".forbids");
-    kv_snum(key, logic_forbids());
-    logic_print_calls(prefix);
+    kv_num(key, logic_forbids());
+    logic_print_calls(prefix, logic_name_call);
 }
 
 static const struct LogicStep steps[] = {

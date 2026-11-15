@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from harness import install, stack
-from harness.build import BuildInfo
-from harness.results import HarnessError
+from emu68test import install
+
+from harness import stack, suite
 
 pytestmark = pytest.mark.unit
 
@@ -52,15 +52,6 @@ def test_rc_of():
     assert (stack.rc_of(log, "remove"), stack.rc_of(log, "add"), stack.rc_of(log, "gone")) == (0, 10, None)
 
 
-def test_build_info(tmp_path):
-    (tmp_path / "CMakeCache.txt").write_text("EMU68_DEBUG_BACKEND:STRING=pistorm\nEMU68_TIER:STRING=off\n"
-                                             "EMU68_PROFILE:STRING=emu68-genet-driver-netdev;lwip-amiga\n"
-                                             "EMU68_FORCE_LVO_CACHE_OPS:BOOL=OFF\n")
-    info = BuildInfo.read(tmp_path)
-    assert info.profile and info.flavour == "rangeops"
-    assert not BuildInfo.read(tmp_path / "none").profile
-
-
 class FakeDevice:
     """Files in a dict, a reboot that only counts."""
 
@@ -91,44 +82,6 @@ class FakeDevice:
 
     def version_of(self, remote):
         return f"{remote} 5.0"
-
-
-@pytest.fixture
-def quick(monkeypatch):
-    monkeypatch.setattr(install, "PFS3_SETTLE_S", 0)
-
-
-def test_install_keeps_the_originals_once(tmp_path, quick):
-    device = FakeDevice({install.DRIVER: b"4.4"})
-    installer = install.Installer(device, tmp_path)
-    placed = installer.install({install.DRIVER: b"5.0", install.GENET_STATS: b"stats"})
-    assert [p.changed for p in placed] == [True, True] and device.reboots == 1
-    assert installer.original(install.DRIVER) == b"4.4" and installer.original(install.GENET_STATS) is None
-    installer.install({install.DRIVER: b"5.1"})
-    assert installer.original(install.DRIVER) == b"4.4"
-
-
-def test_install_of_what_is_there_does_not_reboot(tmp_path, quick):
-    device = FakeDevice({install.DRIVER: b"5.0"})
-    placed = install.Installer(device, tmp_path).install({install.DRIVER: b"5.0"})
-    assert not placed[0].changed and device.reboots == 0
-
-
-def test_install_refuses_to_reboot_over_a_lost_write(tmp_path, quick):
-    device = FakeDevice({install.DRIVER: b"4.4"})
-    device.lose_writes = True
-    with pytest.raises(HarnessError, match="did not read back before the reboot"):
-        install.Installer(device, tmp_path).install({install.DRIVER: b"5.0"})
-    assert device.reboots == 0
-
-
-def test_restore_puts_back_what_the_machine_had(tmp_path, quick):
-    device = FakeDevice({install.DRIVER: b"4.4"})
-    installer = install.Installer(device, tmp_path)
-    installer.install({install.DRIVER: b"5.0", install.GENET_STATS: b"stats"})
-    installer.restore([install.DRIVER, install.GENET_STATS])
-    assert device.files[install.DRIVER] == b"4.4" and device.reboots == 2
-    assert install.GENET_STATS not in device.files
 
 
 def test_a_failed_add_puts_the_machine_interface_back():
@@ -167,15 +120,15 @@ class ScriptedDevice(FakeDevice):
         return self.logs.pop(0)
 
     def run(self, command, args="", timeout=120):
-        from harness.results import parse
+        from emu68test.results import parse
         return parse(f"format=1\nholder={self.holders.pop(0)}\nPASS\n", 0)
 
 
 def test_a_switch_runs_once_and_a_failed_one_is_not_tried_again():
     from harness.interface import Interface, SwitchFailed
-    device = ScriptedDevice({install.INTERFACE: INTERFACE.encode()},
+    device = ScriptedDevice({suite.INTERFACE: INTERFACE.encode()},
                             ["add rc 0\n", "add rc 10\nrescue rc 0\n"], ["sana2", "netdev"])
-    iface = Interface(device)
+    iface = Interface(device, None)
     assert iface.machine_type == "AUTO" and iface.prefs is None
     assert device.files[iface.path("SANA2")].decode().endswith("TYPE=SANA2\n")
     iface.use("SANA2")
@@ -188,16 +141,6 @@ def test_a_switch_runs_once_and_a_failed_one_is_not_tried_again():
     assert device.scripts == ["use-sana2", "use-netdev"] and iface.current is None
 
 
-def test_output_files_are_named_by_the_command_s_file_part(tmp_path):
-    from harness.amiga import Device, amiga_file_part
-    assert [amiga_file_part(c) for c in ("C:genet-stats", "RAM:gt/GenetTest", "Execute")] == \
-        ["genet-stats", "GenetTest", "Execute"]
-    device = Device(None, None, tmp_path)
-    device.test_name = "test_genet_stats[netdev]"
-    out = device._out_name("C:genet-stats")
-    assert out == "RAM:gt/out/test_genet_stats_netdev_-1-genet-stats.txt" and out.count(":") == 1
-
-
 def test_a_fresh_boot_installs_the_driver_or_reboots_and_puts_the_copies_back(monkeypatch):
     import harness.interface as interface_module
     installs, pushed = [], []
@@ -208,13 +151,12 @@ def test_a_fresh_boot_installs_the_driver_or_reboots_and_puts_the_copies_back(mo
             installs.append(files)
             return [install.Placed(r, files[r] != device.files.get(r), "d") for r in files]
 
-    device = ScriptedDevice({install.INTERFACE: INTERFACE.encode(), install.DRIVER: b"5.0"}, ["add rc 0\n"],
+    device = ScriptedDevice({suite.INTERFACE: INTERFACE.encode(), suite.DRIVER: b"5.0"}, ["add rc 0\n"],
                             ["netdev"])
-    device.installer = FakeInstaller()
-    iface = interface_module.Interface(device)
+    iface = interface_module.Interface(device, FakeInstaller())
     iface.failed["SANA2"] = "earlier"
     iface.fresh_boot("ART", b"4.4")
-    assert installs == [{install.DRIVER: b"4.4"}] and device.reboots == 0
+    assert installs == [{suite.DRIVER: b"4.4"}] and device.reboots == 0
     iface.fresh_boot("ART", b"5.0")
     assert device.reboots == 1 and pushed == ["ART", "ART"]
     assert iface.current == "machine" and not iface.failed

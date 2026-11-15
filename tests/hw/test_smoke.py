@@ -22,8 +22,8 @@ BOTH = [pytest.param(AUTO, marks=pytest.mark.personality(AUTO), id="netdev"),
 
 
 @pytest.mark.install
-def test_the_build_under_test_is_installed(device, record_property):
-    for remote, data in device.installed.items():
+def test_the_build_under_test_is_installed(device, installed, record_property):
+    for remote, data in installed.items():
         assert device.download(remote) == data, f"{remote} is not the build under test"
         record_property(remote, device.version_of(remote))
 

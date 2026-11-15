@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness.vamos import grouped, listed
+from emu68test.vamos import grouped, listed
 
 pytestmark = pytest.mark.logic
 

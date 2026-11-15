@@ -5,7 +5,7 @@
  */
 
 #include "rig.h"
-#include "../common/kv.h"
+#include <emu68test/kv.h>
 
 #include <proto/exec.h>
 
@@ -38,9 +38,9 @@ static void check_device_query_full(struct IOSana2Req *io)
     query.SizeAvailable = sizeof(query);
     io->ios2_StatData = &query;
     BYTE error = rig_command(io, S2_DEVICEQUERY);
-    kv_num("query.mtu", query.MTU);
-    kv_num("query.raw_mtu", query.RawMTU);
-    kv_num("query.bps", query.BPS);
+    kv_unum("query.mtu", query.MTU);
+    kv_unum("query.raw_mtu", query.RawMTU);
+    kv_unum("query.bps", query.BPS);
     kv_check(error == 0 && query.HardwareType == S2WireType_Ethernet && query.MTU == EXPECTED_MTU &&
                  query.SizeSupplied == sizeof(query) && query.RawMTU >= EXPECTED_MTU + ETHER_HEADER_BYTES,
              "S2_DEVICEQUERY answers in full", "error %d, type %lu, MTU %lu, raw MTU %lu, %lu of %lu bytes", error,
@@ -108,8 +108,8 @@ static void check_global_stats(struct IOSana2Req *io)
     memset(&stats, 0, sizeof(stats));
     io->ios2_StatData = &stats;
     BYTE error = rig_command(io, S2_GETGLOBALSTATS);
-    kv_num("stats.packets_received", stats.PacketsReceived);
-    kv_num("stats.packets_sent", stats.PacketsSent);
+    kv_unum("stats.packets_received", stats.PacketsReceived);
+    kv_unum("stats.packets_sent", stats.PacketsSent);
     kv_check(error == 0 && stats.PacketsReceived != 0, "S2_GETGLOBALSTATS answers",
              "error %d, %lu frames received, %lu sent", error, stats.PacketsReceived, stats.PacketsSent);
 
@@ -118,7 +118,7 @@ static void check_global_stats(struct IOSana2Req *io)
     extended.s2xds_Length = sizeof(extended);
     io->ios2_StatData = &extended;
     error = rig_command(io, S2_GETEXTENDEDGLOBALSTATS);
-    kv_num("stats.reconfigurations", extended.s2xds_Reconfigurations.s2q_Low);
+    kv_unum("stats.reconfigurations", extended.s2xds_Reconfigurations.s2q_Low);
     kv_check(error == 0 && extended.s2xds_Actual == sizeof(extended), "S2_GETEXTENDEDGLOBALSTATS answers",
              "error %d, %lu of %lu bytes", error, extended.s2xds_Actual, (ULONG)sizeof(extended));
 }
@@ -164,7 +164,7 @@ static void check_special_stats(struct IOSana2Req *io)
             continue;
         char key[SPECIAL_KEY_BYTES];
         snprintf(key, sizeof(key), "special.%s", (const char *)record->String);
-        kv_num(key, record->Count);
+        kv_unum(key, record->Count);
         named++;
     }
     kv_check(error == 0 && special.header.RecordCountSupplied != 0, "S2_GETSPECIALSTATS answers",

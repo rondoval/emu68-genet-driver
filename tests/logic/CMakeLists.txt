@@ -1,24 +1,19 @@
 # The logic tier's programs (tests/README.md): the driver's own sources built as CLI programs for
-# vamos on the host, never installed. Each includes the source under test, so its static functions
-# are in reach. No debug sink (Kprintf writes to the PiStorm's debug port, which vamos does not
-# have), and the exec LVO cache operations (vamos runs no LINE-F opcode).
+# vamos on the host, never installed (emu68-common's emu68_logic_program()). Each includes the
+# source under test, so its static functions are in reach.
 
-# The support every program but LogicPrefs links: fake exec and utility, the unit, names, the step
-# loop, weak stubs.
-set(GENET_LOGIC_SUPPORT fakelib.c fakeexec.c unit.c names.c steps.c stubs.c)
+# What every program but LogicPrefs adds to emu68-common's logic library: the unit, the driver's
+# numbers by name, weak stand-ins for the driver functions a program does not link.
+set(GENET_LOGIC_SUPPORT unit.c names.c stubs.c)
 
-# genet_logic_program(<name> <sources>...): one program, with kv.c and the driver's include paths.
+# genet_logic_program(<name> <sources>...): one program, with the driver's include paths.
 function(genet_logic_program name)
-    add_executable(${name} ${ARGN} ${PROJECT_SOURCE_DIR}/tests/common/kv.c)
-    target_compile_options(${name} PRIVATE -O2 -Wextra ${GENET_TEST_WARNINGS})
-    target_compile_definitions(${name} PRIVATE EMU68_FORCE_LVO_CACHE_OPS)
-    target_include_directories(${name} PRIVATE
-        ${PROJECT_SOURCE_DIR}
-        ${PROJECT_SOURCE_DIR}/genet.device/include
-        ${PROJECT_SOURCE_DIR}/runtime-config/include
-        ${PROJECT_SOURCE_DIR}/tests/common
-    )
-    target_link_libraries(${name} PRIVATE Emu68Common::common GIC400::gic400_headers Netdev::netdev_headers)
+    emu68_logic_program(${name}
+        SOURCES ${ARGN}
+        INCLUDES ${PROJECT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/genet.device/include
+                 ${PROJECT_SOURCE_DIR}/runtime-config/include
+        LIBRARIES GIC400::gic400_headers Netdev::netdev_headers
+        OPTIONS ${GENET_TEST_WARNINGS})
 endfunction()
 
 genet_logic_program(LogicPrefs prefs.c)

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from harness.vamos import grouped, listed
+from emu68test.vamos import grouped, listed
 
 pytestmark = pytest.mark.logic
 
@@ -61,8 +61,8 @@ def test_an_address_added_offline_is_kept_and_reaches_the_registers_only_online(
     offline, online, second = steps(f"add={group(1)}", "online=on", f"add={group(2)}")
     assert outcome(offline) == ("S2ERR_NO_ERROR", "S2WERR_GENERIC_ERROR") and offline["processed"] == "yes"
     assert ranges(offline) == [(group(1), group(1), 1)] and listed(offline, "slot") == [group(1)]
-    assert offline["mdf_ctrl"] == "0x0" and listed(offline, "mdf") == []
-    assert online["mdf_ctrl"] == "0x0"
+    assert int(offline["mdf_ctrl"], 16) == 0 and listed(offline, "mdf") == []
+    assert int(online["mdf_ctrl"], 16) == 0
     assert int(second["mdf_ctrl"], 16) == enabled(4)
     assert listed(second, "mdf") == [BROADCAST, STATION, group(1), group(2)]
     assert second["promiscuous"] == "no" and second["umac_promiscuous"] == "no"
@@ -106,7 +106,7 @@ def test_fifteen_addresses_fit_and_a_sixteenth_makes_the_unit_promiscuous_until_
     assert int(exact["mdf_ctrl"], 16) == enabled(MDF_SLOTS)
     assert listed(exact, "mdf")[2:] == [group(n) for n in range(1, 16)]
     assert overflow["promiscuous"] == "yes" and overflow["umac_promiscuous"] == "yes"
-    assert overflow["mdf_ctrl"] == "0x0" and listed(overflow, "slot") == []
+    assert int(overflow["mdf_ctrl"], 16) == 0 and listed(overflow, "slot") == []
     assert back["promiscuous"] == "no" and back["umac_promiscuous"] == "no"
     assert int(back["mdf_ctrl"], 16) == enabled(MDF_SLOTS)
 

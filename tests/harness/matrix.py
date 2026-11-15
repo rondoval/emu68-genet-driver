@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import stat
-from .amiga import Device
+from emu68test.machine import Device
 from .sockbench import RequestResponse, Test, Throughput
 from .tools import bench
 

@@ -14,7 +14,7 @@ import pytest
 from harness import netdevstats, sockbench
 from harness.limits import SHORT, TCP_FLOOR_MBPS
 from harness.peers import mcast_sender
-from harness.results import parse
+from emu68test.results import parse
 from harness.stack import SANA2, Script, rc_of, section
 from harness.tools import GENETTEST, PRIORITY, bench, genettest, netdev_stats
 

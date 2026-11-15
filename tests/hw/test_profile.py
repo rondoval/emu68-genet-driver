@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 """
 The profile tier: a profile build of the driver (genet in EMU68_PROFILE, the
-pistorm debug backend), its perf slots read off the Pi's UART (uart.py) while
+pistorm debug backend), its perf slots read off the debug log (the Pi's UART) while
 one sockbench run of each profiled test goes, in each personality; each slot's
 time per call judged against its baseline's median, within 20 % (one sample
 per boot: a diagnosis, not the speed verdict), and kept in values.json. Only
@@ -16,19 +16,21 @@ import time
 
 import pytest
 
-from harness import perf, values
+from emu68test import perf
+
+from harness import values
 from harness.build import profiled
-from harness.install import DRIVER
 from harness.sockbench import Throughput, matrix
 from harness.stack import NETDEV, SANA2
+from harness.suite import DRIVER
 from harness.tools import bench
-from harness.uart import Capture
 
 pytestmark = [pytest.mark.hw, pytest.mark.profile]
 
 PROFILED = ("tcp_tx", "tcp_rx", "udp_tx_1472", "udp_rx_200", "udp_rx_64k", "udp_rx_64k_300")
 REPORT_PERIOD_S = 2.5   # perf.h reports every ~2 s: one more after the run
 TOLERANCE = "20%"
+LOG_PREFIX = "genet"    # the driver's lines in the debug log: [genet] ...
 
 
 def cases():
@@ -38,34 +40,31 @@ def cases():
 
 
 @pytest.fixture(scope="session")
-def capture(request, rundir, device):
-    """The session's serial capture; skips the tier when the driver does not profile or the port is missing."""
-    if not profiled(device.installed[DRIVER]):
+def perf_log(installed, capture):
+    """The session's debug log, with genet's perf reports in it; skips the tier when the driver does not
+    profile or the log is not captured."""
+    if not profiled(installed[DRIVER]):
         pytest.skip("the driver under test reports no perf slots: build genet with EMU68_PROFILE and BACKEND=pistorm")
-    port = request.config.getoption("--serial")
-    try:
-        found = Capture(rundir / "serial.log", port)
-    except Exception as e:  # noqa: BLE001 - no adapter, a busy port, no pyserial: the tier cannot run
-        pytest.skip(f"no serial capture on {port}: {e}")
-    yield found
-    found.close()
+    if not capture.ok:
+        pytest.skip(f"no debug log capture: {capture.why}")
+    return capture
 
 
 @pytest.mark.parametrize("kind,test", cases())
 @pytest.mark.covers("datapath")
-def test_the_per_call_costs_hold_their_baselines(request, device, peer, baselines, capture, interface, test_dir,
-                                                 kind, test, record_property):
-    start = capture.position()
+def test_the_per_call_costs_hold_their_baselines(request, device, installed, peer, baselines, perf_log, interface,
+                                                 test_dir, kind, test, record_property):
+    start = perf_log.mark()
     run = bench(device, test.args.format(peer=peer), timeout=test.deadline)
     time.sleep(REPORT_PERIOD_S)
-    text = capture.text_since(start)
+    text = perf_log.text(start)
     (test_dir / "serial.txt").write_text(text, encoding="latin-1")
     assert isinstance(run, Throughput), f"{test.name}: sockbench printed no total"
-    slots = perf.totals(text)
+    slots = perf.totals(text, LOG_PREFIX)
     assert slots, "no [genet] perf report on the serial line while the test ran (adapter attached? its machine?)"
     misses = []
     found = {f"{kind.lower()}.{test.name}.{name}.avg_us": [round(slot.avg_us, 2)] for name, slot in slots.items()}
-    values.write(test_dir, request.config.getoption("--server"), device.installed[DRIVER],
+    values.write(test_dir, request.config.getoption("--server"), installed[DRIVER],
                  [(interface.boots, found)])
     for name, slot in sorted(slots.items()):
         record_property(name, f"{slot.avg_us:.2f} us x {slot.calls}")

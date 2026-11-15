@@ -1,11 +1,13 @@
 # genet.device test suite
 
-`run.sh` is the entry point; its header lists the tiers. The host tier needs nothing but this
-checkout. The hardware tiers run on an Amiga through amimcp's Python client, and only after the
-machine's owner has agreed to the round.
+`run.sh` is the entry point; its header lists the tiers. The suite builds on the stack's common
+test harness in emu68-common (its `testing/README.md`: the `emu68test` package, the grammar, the
+logic-program support), which it takes from the stack's install tree, so the stack has to be built
+once (`scripts/docker-build.sh`). The host tier needs nothing more. The hardware tiers run on an
+Amiga through amimcp's Python client, and only after the machine's owner has agreed to the round.
 
 ```sh
-tests/run.sh host                                # the harness's own tests, the logic tier, the gates; no Amiga
+tests/run.sh host                                # genet's harness modules, the logic tier, the gates; no Amiga
 tests/run.sh hw --tier install                   # the build installed and checked, nothing tested
 tests/run.sh hw --tier smoke --peer <PC address> # both personalities up, a little data (~8 min)
 tests/run.sh hw --tier full  --peer <PC address> # smoke, then everything below (~16 min)
@@ -30,7 +32,7 @@ tests/run.sh seed runs/<a> runs/<b> ...          # baselines.json from the seedi
 `--driver FILE` tests another genet.device (a profile build, another build) in place of the
 install tree's; the tools still come from the install and build trees.
 
-The first run creates `tests/.venv` from `requirements.txt`.
+The first run creates `tests/.venv` from the harness's `requirements.txt`.
 
 ## What a hardware round needs
 
@@ -72,7 +74,8 @@ each switch happens once.
 ## What comes out
 
 `tests/runs/<timestamp>/`: `report.md` (the build, the files replaced, one row per test, the
-baseline warnings, the values measured), `run.json`, `measured.json`, and each program's output.
+baseline warnings, the values measured), `run.json`, `measured.json`, and a directory per hardware
+test, `<module>/<test>/`, with each program's output and what the test measured (`values.json`).
 
 ## Baselines
 
@@ -92,7 +95,7 @@ once and are not measured again.
 ## The logic tier
 
 The programs in `logic/` are the driver's own sources built by the stack as m68k CLI programs
-(never installed), and run on the host under amitools' vamos (`harness/vamos.py`). Each includes the
+(never installed), and run on the host under amitools' vamos (emu68test's `vamos.py`). Each includes the
 source under test, so its static functions are in reach, and links the sources beside it that the
 behaviour needs: `LogicPrefs` (`runtime_config.c`), `LogicMcast` (`sana2_mcast.c` and
 `bcmgenet-mac.c`), `LogicNetdev` (`bcmgenet-dma.c` and `netdev_api.c`), `LogicSana2`
@@ -103,7 +106,7 @@ behaviour needs: `LogicPrefs` (`runtime_config.c`), `LogicMcast` (`sana2_mcast.c
   as `step.N.*` facts in the grammar below, and the test judges them. Each program's header lists
   its steps. Errors, events and commands print by their NDK names.
 - **exec and utility.library:** the driver reaches them through `unit->sysBase` and the device's
-  `utilityBase`, so the programs hand it fake bases (`fakelib.c`, `fakeexec.c`): memory and list
+  `utilityBase`, so the programs hand it the harness's fake bases (`Emu68Common::logic`): memory and list
   calls go on to vamos's exec; `Signal()`, `PutMsg()` and `ReplyMsg()` are recorded (and what was
   posted waits for a `task` step); `Forbid()` and `Disable()` count their nesting, which every
   test wants back at 0; `CallHookPkt()` and the tag calls are done here. A call to anything else
@@ -122,7 +125,7 @@ behaviour needs: `LogicPrefs` (`runtime_config.c`), `LogicMcast` (`sana2_mcast.c
 
 The host tier ends with the code gates over the component's own C: the device scaffolding, both
 personalities, the datapath files, the prefs reader, genet-stats, GenetTest and the logic programs
-(`harness/gates.py`). The upstream-diffable files (the PHY layer, `bcmgenet.c`, `bcmgenet-mac.c`, the
+(`harness/gates.py` names them; the rules are emu68test's). The upstream-diffable files (the PHY layer, `bcmgenet.c`, `bcmgenet-mac.c`, the
 imported headers) are left out.
 
 - **Kernel-doc:** a `/**` comment above every function: `name() - what it does`, an `@param:` line
@@ -131,7 +134,7 @@ imported headers) are left out.
   functions allowed more, each with its ceiling and the reason: at most 15 for a new entry; the
   5.0 code's (marked `5.0:`) at what they had. A ceiling above what its function needs is a finding
   until lowered, so the list only goes down.
-- **Traceability** (`harness/trace.py`): the items the suite must cover, most read from the
+- **Traceability** (`harness/trace.py` lists the items): what the suite must cover, most read from the
   sources (the commands each dispatcher serves, the events SANA-II raises, the prefs keys), the
   claim's rules and the refusal codes AGENTS.md names; a test covers an item with
   `@pytest.mark.covers(...)`. Every host run rewrites `TRACEABILITY.md` and fails while an item has
@@ -139,33 +142,31 @@ imported headers) are left out.
 
 ## The grammar
 
-GenetTest and the logic programs print `format=1`, then `key=value` lines (prose indented two
-spaces), then `PASS` or `FAIL`. Every check is a group entry: `check.N.name` (the same text every
-run), `check.N.ok=yes|no` and `check.N.detail` (what was seen); `checks` and `checks_failed` come
-last. Return codes: 0 passed, 5 a check failed, 10 the environment (a device or timer did not
-open), 20 usage, printed before the format line. `harness/results.py` reads it.
+GenetTest and the logic programs print the harness's grammar (`Emu68Common::kv`; emu68-common's
+`testing/README.md` describes it): `format=1`, `key=value` facts, each check as `check.N.*`, then
+`PASS` or `FAIL`.
 
 ## Layout
 
 - `rig/`: GenetTest, the program the hardware tiers run on the Amiga. Its first argument names the
   command (`QUERY`, `HOLDER`, `NETDEV`, `SANA2`, `BAREOPEN`, `CLOSE`, `MCAST`, `ONLINECYCLE`,
   `CABLE`, `ABORT`, `MIAMI`); `rig/genettest.c` says what each checks and what it needs.
-- `common/`: what the Amiga-side programs share: `kv.c`, the grammar.
-- `logic/`: the logic tier: its programs, their support (`support.h`: the fake exec and utility,
-  the unit, the step loop, the names, the weak stubs), `CMakeLists.txt`, and the tests, a file
-  per area (`logic/conftest.py` finds the programs in the build dir).
+- `logic/`: the logic tier: its programs, what they add to the harness's support (`support.h`:
+  the unit, the driver's numbers by name, the weak stubs), `CMakeLists.txt`, and the tests, a
+  file per area.
 - `gates/`: the code gates and traceability on every host run.
 - `runs/` (not in git): every run's output, and
   in `runs/bench/` what the 5.0 rounds' scripts left: their results, the builds they compared and the
   PI4's own files from before the 5.0 work (`NOTE.md`).
 - `complexity-allow.txt`, `TRACEABILITY.md` (written by the host tier), `baselines.json`.
-- `harness/`: the host side, one module per concern: the machine (`amiga.py`), the install
-  (`install.py`), the stack and its detached scripts (`stack.py`), the interface's personality
-  (`interface.py`), the programs in `RAM:gt` (`tools.py`), the floors the short runs must reach
-  (`limits.py`), a test measured for the perf and compare tiers (`matrix.py`), the serial capture
-  (`uart.py`), the PC peers (`peers.py`), the grammar (`results.py`), the parsers of what
-  sockbench, Executive's `Stat`, bsdsocktest, netdev-stats, AmiSpeedTest and the profile build
-  print, baselines, the compare criterion, the report, the logic tier's programs (`vamos.py`), the
-  code gates (`gates.py`) and traceability (`trace.py`).
+- `harness/`: the host side that is genet's own, one module per concern: what the suite is
+  (`suite.py`), the build's artefacts (`build.py`), the stack and its detached scripts
+  (`stack.py`), the interface's personality (`interface.py`), the programs in `RAM:gt`
+  (`tools.py`), the floors the short runs must reach (`limits.py`), a test measured for the perf
+  and compare tiers (`matrix.py`), the PC peers (`peers.py`), the parsers of what sockbench,
+  Executive's `Stat`, bsdsocktest, netdev-stats and AmiSpeedTest print, the values a speed test
+  keeps (`values.py`), the seeding of baselines (`seed.py`), the compare criterion (`compare.py`),
+  the gates' scope (`gates.py`) and the traceability items (`trace.py`). The machine, the
+  install, the debug log, the grammar, baselines and the report are emu68test's.
 - `hw/`: the hardware tiers' tests, one file per area, and their fixtures (`hw/conftest.py`).
-- `unit/`: the harness's own tests, on outputs recorded from the hardware rounds (`samples/`).
+- `unit/`: the tests of genet's own harness modules, on outputs recorded from the hardware rounds (`samples/`).

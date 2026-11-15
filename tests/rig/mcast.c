@@ -6,7 +6,7 @@
  */
 
 #include "rig.h"
-#include "../common/kv.h"
+#include <emu68test/kv.h>
 
 #include <proto/exec.h>
 

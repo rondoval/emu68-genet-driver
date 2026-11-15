@@ -24,7 +24,7 @@
 
 #include <genet/unimac.h>
 
-#include "kv.h"
+#include <emu68test/kv.h>
 #include "support.h"
 
 #define SLOT_REGISTERS 2u     /* an MDF slot: the address's top two bytes, then the other four */
@@ -69,40 +69,43 @@ static BOOL range_request(struct GenetUnit *unit, const char *prefix, const char
 
 /**
  * step_add() - S2_ADDMULTICASTADDRESS(ES): add=<address>[-<address>].
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the address or range.
  *
  * Return: FALSE for operands that are neither.
  */
-static BOOL step_add(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_add(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     return operands != NULL && range_request(unit, prefix, operands, TRUE);
 }
 
 /**
  * step_del() - S2_DELMULTICASTADDRESS(ES): del=<address>[-<address>].
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the address or range.
  *
  * Return: FALSE for operands that are neither.
  */
-static BOOL step_del(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_del(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     return operands != NULL && range_request(unit, prefix, operands, FALSE);
 }
 
 /**
  * step_promiscuous() - The promiscuous opener comes or goes, and the filter is updated.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: on or off.
  *
  * Return: FALSE for neither.
  */
-static BOOL step_promiscuous(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_promiscuous(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     struct ExecBase *SysBase = unit->sysBase;
     BOOL on;
 
@@ -122,14 +125,15 @@ static BOOL step_promiscuous(struct GenetUnit *unit, const char *prefix, const c
 
 /**
  * step_online() - The SANA-II side online or not: online, the filter reaches the registers.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: on or off.
  *
  * Return: FALSE for neither.
  */
-static BOOL step_online(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_online(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     BOOL on;
     (void)prefix;
     if (!logic_switch(operands, &on))
@@ -140,14 +144,15 @@ static BOOL step_online(struct GenetUnit *unit, const char *prefix, const char *
 
 /**
  * step_netdev() - A netdev stack holds the unit, with a filter of its own, or lets it go.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: on or off.
  *
  * Return: FALSE for neither.
  */
-static BOOL step_netdev(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_netdev(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     BOOL on;
     (void)prefix;
     if (!logic_switch(operands, &on))
@@ -164,14 +169,15 @@ static BOOL step_netdev(struct GenetUnit *unit, const char *prefix, const char *
 
 /**
  * step_nomem() - The next allocation fails.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: none.
  *
  * Return: FALSE for operands.
  */
-static BOOL step_nomem(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_nomem(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     (void)unit;
     (void)prefix;
     logic_fail_allocations(1);
@@ -180,14 +186,15 @@ static BOOL step_nomem(struct GenetUnit *unit, const char *prefix, const char *o
 
 /**
  * step_wanted() - Whether sana2_multicast_wanted() takes a frame to an address.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: the address.
  *
  * Return: FALSE for operands that are no address.
  */
-static BOOL step_wanted(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_wanted(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     UBYTE address[MAC_ADDRESS_BYTES];
     if (operands == NULL || !logic_parse_address(operands, address))
         return FALSE;
@@ -197,14 +204,15 @@ static BOOL step_wanted(struct GenetUnit *unit, const char *prefix, const char *
 
 /**
  * step_clear() - sana2_multicast_clear(), as the last close makes it.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  * @operands: none.
  *
  * Return: FALSE for operands.
  */
-static BOOL step_clear(struct GenetUnit *unit, const char *prefix, const char *operands)
+static BOOL step_clear(void *context, const char *prefix, const char *operands)
 {
+    struct GenetUnit *unit = context;
     (void)prefix;
     sana2_multicast_clear(unit);
     return operands == NULL;
@@ -231,7 +239,7 @@ static void print_ranges(const struct GenetUnit *unit, const char *prefix)
         logic_key(key, prefix, ".range.%lu.upper", (unsigned long)count);
         logic_print_address(key, address);
         logic_key(key, prefix, ".range.%lu.uses", (unsigned long)count);
-        kv_num(key, range->useCount);
+        kv_unum(key, range->useCount);
         count++;
     }
     logic_print_number(prefix, ".ranges", count);
@@ -266,11 +274,12 @@ static void print_registers(const struct GenetUnit *unit, const char *prefix)
 
 /**
  * print_state() - The unit's filter after a step: ranges, the core's filter, the registers, the calls.
- * @unit: the unit.
+ * @context: the unit.
  * @prefix: the step's prefix.
  */
-static void print_state(const struct GenetUnit *unit, const char *prefix)
+static void print_state(const void *context, const char *prefix)
 {
+    const struct GenetUnit *unit = context;
     char key[LOGIC_KEY_TEXT];
 
     print_ranges(unit, prefix);
@@ -283,8 +292,8 @@ static void print_state(const struct GenetUnit *unit, const char *prefix)
     logic_print_number(prefix, ".slots", unit->ndMcastCount);
     print_registers(unit, prefix);
     logic_key(key, prefix, ".forbids");
-    kv_snum(key, logic_forbids());
-    logic_print_calls(prefix);
+    kv_num(key, logic_forbids());
+    logic_print_calls(prefix, logic_name_call);
 }
 
 static const struct LogicStep steps[] = {

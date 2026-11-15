@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from harness import bsdsocktest, netdevstats, perf, sockbench, speedtest, stat
+from harness import bsdsocktest, netdevstats, sockbench, speedtest, stat
 
 pytestmark = pytest.mark.unit
 
@@ -101,14 +101,6 @@ def test_netdev_stats_counters_and_coalescing():
 
 def test_amispeedtest_averages():
     assert speedtest.parse(sample("amispeedtest.txt")) == {"download": 852.8, "upload": 81.6}
-
-
-def test_perf_totals_add_the_reports_up():
-    slots = perf.totals(sample("perf_serial.txt"))
-    assert slots["rx_wake"].calls == 2124 + 489
-    assert slots["rx_wake"].max_us == 7555
-    assert slots["rx_reply"].avg_us == pytest.approx(49689 / 4448)
-    assert "hist" not in slots
 
 
 PS_SAMPLE = """\x1b[4m  PID  PPID    TIME     CSW NAME              \x1b[24m

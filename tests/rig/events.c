@@ -11,7 +11,7 @@
  */
 
 #include "rig.h"
-#include "../common/kv.h"
+#include <emu68test/kv.h>
 
 #include <proto/exec.h>
 #include <proto/timer.h>
@@ -167,8 +167,8 @@ void command_cable(struct Rig *rig, ULONG argument)
     ULONG gone = wait_event(rig, event, S2EVENT_DISCONNECT, seconds);
     ULONG back = gone != 0 ? wait_event(rig, event, S2EVENT_CONNECT, seconds) : 0;
     rig_request_delete(event);
-    kv_num("cable.disconnect_ms", gone);
-    kv_num("cable.connect_ms", back);
+    kv_unum("cable.disconnect_ms", gone);
+    kv_unum("cable.connect_ms", back);
     kv_check(gone != 0, "pulling the cable raises S2EVENT_DISCONNECT", "after %lu ms", gone);
     kv_check(back != 0, "putting it back raises S2EVENT_CONNECT", "after %lu ms", back);
 }
