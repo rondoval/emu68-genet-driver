@@ -1,0 +1,23 @@
+# Functions allowed a cyclomatic complexity above 10 (harness/gates.py), one per line:
+#   <file>:<function> <ceiling> <reason>
+# A new entry is at most 15, with the reason splitting it would make it harder to read. The entries
+# marked "5.0:" are what the 5.0 code had, listed at that as a ceiling: they may only go down, and a
+# function that gets simpler has its ceiling lowered with it. Splitting one is the owner's call; the
+# datapath ones (bcmgenet_rx_drain, bcmgenet_netdev_tx_submit) only with the perf and compare tiers.
+tools/genet-stats.c:main 37 5.0: the viewer's window, gadgets and event loop in one function
+genet.device/src/bcmgenet-rx.c:bcmgenet_rx_drain 32 5.0: the RX drain of both personalities, one always-inlined loop
+genet.device/src/unit_task.c:UnitTask 24 5.0: the unit task's loop: signals, commands, the datapath, the housekeeping tick
+runtime-config/src/runtime_config.c:LoadGenetRuntimeConfig 24 5.0: a branch per prefs key, then the cross-key rules
+genet.device/src/netdev_api.c:Do_NETDEV_ATTACH 23 5.0: ATTACH's checks and the resources it takes, undone in order on failure
+genet.device/src/device.c:openLib 21 5.0: the open's checks, the first open's unit, the opener
+genet.device/src/bcmgenet-tx.c:bcmgenet_netdev_tx_submit 20 5.0: the netdev TX hot path, one loop over the descriptors
+genet.device/src/sana2_api.c:sana2_process_command 19 5.0: the SANA-II dispatch, one case per command
+genet.device/src/device.c:beginIO 18 5.0: a request routed by personality and command, the quick ones answered in place
+genet.device/src/device.c:abortIO 18 5.0: an abort routed by where the request waits
+genet.device/src/devtree_parse.c:DevTreeParse 15 5.0: the device tree's properties, each checked as it is read
+tools/genet-stats.c:fetch_stats 14 5.0: one sample of every statistics query the viewer shows
+genet.device/src/netdev_api.c:netdev_process_command 12 5.0: the netdev dispatch, one case per command
+genet.device/src/sana2_io.c:sana2_receive_frame 12 5.0: the delivery of one frame to every opener, then the orphans
+genet.device/src/netdev_api.c:Do_NETDEV_SET_RXFILTER 11 5.0: the filter's checks and the fallback to promiscuous
+genet.device/src/netdev_api.c:Do_NETDEV_SET_COALESCE 11 5.0: the command's checks, defaults and pin
+genet.device/src/sana2_api.c:Do_S2_ONLINE 11 5.0: S2_ONLINE's refusals, the claim and the wait for the link

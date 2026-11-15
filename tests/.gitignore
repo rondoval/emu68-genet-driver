@@ -1,0 +1,6 @@
+# the suite's venv, its runs and the machines' own files kept before an install
+.venv/
+.pytest_cache/
+__pycache__/
+runs/
+.machine/

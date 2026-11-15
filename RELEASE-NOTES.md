@@ -48,6 +48,10 @@ configuration.
   the programs that asked for promiscuous mode.
 - **Aborting a read on a quiet network returns at once.** It used to wait for
   the next packet, so a program could hang while quitting.
+- **A program that checks a read with `CheckIO()` just after sending it no
+  longer crashes the machine.** The read looked finished before any packet had
+  arrived, and waiting for it then corrupted memory (Guru 8000000B, or a
+  freeze). The usual network stacks never check a read that early.
 - **A failed open no longer pulls the port from under the programs that already
   have it open.**
 

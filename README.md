@@ -149,8 +149,12 @@ is mainly an example of how to use the driver's SANA-II statistics.
 - `runtime-config/`: `ENV:genet.prefs` parsing and defaults, kept apart from the
   hardware-facing code.
 - `tools/genet-stats.c`: the statistics viewer.
-- `tests/s2check.c`: SANA-II checks the stack's bench rounds run on the Amiga (built,
-  not installed).
+- `tests/`: the regression suite (`tests/README.md`). `run.sh host` needs no Amiga: the
+  harness's own tests, the driver's sources run under vamos (`tests/logic/`), and the code
+  gates.
+  `run.sh hw` runs on an Amiga, through amiagent: the functional tiers, and the perf tier,
+  which judges speed against `tests/baselines.json`. `tests/rig/` is GenetTest, the suite's
+  program on the Amiga (built, not installed).
 - `docs/offloads.md`: how the GENET offload machinery works and the platform constraints
   that govern it.
 
