@@ -65,6 +65,13 @@ static struct ColumnInfo s_ci[] = {
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * fmt_dec1() - Write a value in a unit with one decimal.
+ * @out: room for VAL_SZ characters.
+ * @val: the value.
+ * @div: the unit's size.
+ * @unit: the unit's name.
+ */
 static void fmt_dec1(char *out, unsigned long long val,
                      unsigned long long div, const char *unit)
 {
@@ -72,6 +79,11 @@ static void fmt_dec1(char *out, unsigned long long val,
              val / div, (val % div) * 10ULL / div, unit);
 }
 
+/**
+ * fmt_rate() - Write a byte rate in B/s, KiB/s or MiB/s.
+ * @out: room for VAL_SZ characters.
+ * @bps: bytes per second.
+ */
 static void fmt_rate(char *out, unsigned long long bps)
 {
     if      (bps >= 1048576ULL) fmt_dec1(out, bps, 1048576ULL, "MiB/s");
@@ -79,11 +91,21 @@ static void fmt_rate(char *out, unsigned long long bps)
     else                        snprintf(out, VAL_SZ, "%llu B/s", bps);
 }
 
+/**
+ * fmt_count_rate() - Write a rate of events per second.
+ * @out: room for VAL_SZ characters.
+ * @rate: events per second.
+ */
 static void fmt_count_rate(char *out, unsigned long long rate)
 {
     snprintf(out, VAL_SZ, "%llu/s", rate);
 }
 
+/**
+ * fmt_bytes() - Write a byte count in B, KiB, MiB or GiB.
+ * @out: room for VAL_SZ characters.
+ * @bytes: the count.
+ */
 static void fmt_bytes(char *out, unsigned long long bytes)
 {
     if      (bytes >= 1073741824ULL) fmt_dec1(out, bytes, 1073741824ULL, "GiB");
@@ -94,6 +116,11 @@ static void fmt_bytes(char *out, unsigned long long bytes)
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * clear_list() - Detach the rows from the list browser and free them.
+ * @lb: the list browser.
+ * @win: its window.
+ */
 static void clear_list(struct Gadget *lb, struct Window *win)
 {
     SetGadgetAttrs(lb, win, NULL, LISTBROWSER_Labels, ~0UL, TAG_DONE);
@@ -103,11 +130,21 @@ static void clear_list(struct Gadget *lb, struct Window *win)
     s_row_count = 0;
 }
 
+/**
+ * attach_list() - Hand the rows to the list browser.
+ * @lb: the list browser.
+ * @win: its window.
+ */
 static void attach_list(struct Gadget *lb, struct Window *win)
 {
     SetGadgetAttrs(lb, win, NULL, LISTBROWSER_Labels, (ULONG)&s_list, TAG_DONE);
 }
 
+/**
+ * add_row() - Add a row of two columns, past MAX_ROWS none.
+ * @label: the first column.
+ * @value: the second, or NULL for none.
+ */
 static void add_row(const char *label, const char *value)
 {
     if (s_row_count >= MAX_ROWS) return;
@@ -130,6 +167,10 @@ static void add_row(const char *label, const char *value)
     if (node) AddTail(&s_list, node);
 }
 
+/**
+ * add_section() - Add a section heading row.
+ * @title: its title.
+ */
 static void add_section(const char *title)
 {
     char buf[LBL_SZ];
@@ -139,6 +180,11 @@ static void add_section(const char *title)
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * resize_lb() - Fit the list browser to the window's inner size.
+ * @lb: the list browser.
+ * @win: its window.
+ */
 static void resize_lb(struct Gadget *lb, struct Window *win)
 {
     WORD bw = (WORD)(win->BorderLeft + win->BorderRight);
@@ -156,6 +202,12 @@ static void resize_lb(struct Gadget *lb, struct Window *win)
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * section_for_type() - The section a special statistic belongs in, by its type.
+ * @type: the statistic's type, (S2WireType_Ethernet << 16) | sub.
+ *
+ * Return: the section's title.
+ */
 static const char *section_for_type(ULONG type)
 {
     /* type = (S2WireType_Ethernet << 16) | sub */
@@ -166,6 +218,15 @@ static const char *section_for_type(ULONG type)
     return "MAC misc";
 }
 
+/**
+ * fetch_stats() - Take one sample of every statistic the viewer shows, and show it.
+ * @lb: the list browser.
+ * @win: its window.
+ * @io: the open request.
+ * @xs: room for the extended statistics.
+ * @ts: room for the throughput sample.
+ * @ssbuf: room for the special statistics.
+ */
 static void fetch_stats(struct Gadget *lb, struct Window *win,
                         struct IOSana2Req *io,
                         struct Sana2ExtDeviceStats *xs,
@@ -279,6 +340,13 @@ static void fetch_stats(struct Gadget *lb, struct Window *win,
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * main() - Open the device and a window, and show the statistics once a second until the window closes.
+ * @argc: unused.
+ * @argv: unused.
+ *
+ * Return: RETURN_OK, or RETURN_FAIL when the device, the timer or the window would not open.
+ */
 int main(int argc, char **argv)
 {
     /* Declared up front: all touched by cleanup. */
