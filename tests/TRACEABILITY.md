@@ -2,7 +2,7 @@
 
 Written by the suite's host tier (`run.sh host` rewrites it): every item the suite must cover, with the tests that cover it.
 
-**Uncovered: 0** of 70 items.
+**Uncovered: 0** of 70 items; known gaps: 0.
 
 ## netdev commands
 
