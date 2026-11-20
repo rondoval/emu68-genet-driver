@@ -39,6 +39,7 @@
 #include <devices/sana2.h>
 #include <exec/errors.h>
 
+#include <byteorder.h>
 #include <cache_ops.h>
 #include <debug.h>
 #include <dma_mem.h>
@@ -135,7 +136,7 @@ static inline void build_eth_header(u8 *buf, const u8 *dst_mac,
     *(UWORD *)(buf + 4) = *(const UWORD *)&dst_mac[4];
     *(ULONG *)(buf + 6) = *(const ULONG *)src_mac;
     *(UWORD *)(buf + 10) = *(const UWORD *)&src_mac[4];
-    *(UWORD *)(buf + 12) = ethertype;
+    *(__be16 *)(buf + 12) = be16(ethertype);
 #pragma GCC diagnostic pop
 }
 

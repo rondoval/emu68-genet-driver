@@ -61,6 +61,8 @@ configuration.
 
 - `genet-stats` builds in this repository; the separate 3.x repository is no
   longer needed.
+- Building needs emu68-common 2.5 or newer (`be16()` for the EtherType);
+  `find_package()` names it.
 
 ---
 

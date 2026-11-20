@@ -24,6 +24,7 @@
 #include <exec/errors.h>
 #include <devices/sana2.h>
 
+#include <byteorder.h>
 #include <debug.h>
 #include <memory.h>
 #include <types.h>
@@ -225,7 +226,7 @@ static inline BOOL copy_packet(struct GenetUnit *unit, struct IOSana2Req *io, u8
     *(ULONG *)(io->ios2_DstAddr + 2) = *(const ULONG *)(frame + 2);
     *(ULONG *)io->ios2_SrcAddr = *(const ULONG *)(frame + 6);
     *(UWORD *)(io->ios2_SrcAddr + 4) = *(const UWORD *)(frame + 10);
-    io->ios2_PacketType = *(const UWORD *)(frame + 12);
+    io->ios2_PacketType = be16(*(const __be16 *)(frame + 12));
 #pragma GCC diagnostic pop
 
     io->ios2_Req.io_Flags = (UBYTE)((io->ios2_Req.io_Flags & ~(SANA2IOF_BCAST | SANA2IOF_MCAST)) | castFlags);
@@ -393,7 +394,7 @@ void sana2_receive_frame(struct GenetUnit *unit, u8 *frame, u32 length)
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstrict-aliasing"
-    u16 packetType = *(const UWORD *)(frame + 12);
+    u16 packetType = be16(*(const __be16 *)(frame + 12));
 #pragma GCC diagnostic pop
 
     /* every opener that waits for the type gets a copy */
