@@ -40,6 +40,10 @@
  * only writable while its ring is disabled (the ring inits rely on that). */
 #define GENET_DMA_OFF (DMA_EN | (1u << (DEFAULT_Q + DMA_RING_BUF_EN_SHIFT)))
 
+/**
+ * bcmgenet_disable_dma() - Stop both DMA engines, let them drain, and flush the TX queues.
+ * @unit: the unit.
+ */
 void bcmgenet_disable_dma(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Disabling DMA\n", __func__);
@@ -76,6 +80,10 @@ void bcmgenet_disable_dma(struct GenetUnit *unit)
 	mmio_write32(0, BCMGENET_REG(unit, UMAC_TX_FLUSH));
 }
 
+/**
+ * bcmgenet_enable_dma() - Start both DMA engines.
+ * @unit: the unit.
+ */
 static void bcmgenet_enable_dma(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Enabling DMA\n", __func__);
@@ -83,12 +91,20 @@ static void bcmgenet_enable_dma(struct GenetUnit *unit)
 	mmio_set32(BCMGENET_REG(unit, TDMA_REG_BASE + DMA_CTRL), DMA_EN);
 }
 
-/* Are these settings programmable? Pure test, so a stopped unit can accept and
+/**
+ * bcmgenet_coalesce_valid() - Whether interrupt-moderation settings are programmable.
+ * @tx_max_coalesced_frames: the TX-done frame threshold.
+ * @rx_max_coalesced_frames: the RX frame threshold.
+ * @rx_coalesce_usecs: the RX timeout in microseconds.
+ *
+ * Are these settings programmable? Pure test, so a stopped unit can accept and
  * store values it will only apply at the next start.
  *
  * Base system clock is 125MHz and the DMA timeout counts that reference clock
  * divided by 1024, roughly 8.192us per tick, so the usec figure has to reduce
  * to something that fits DMA_TIMEOUT_MASK.
+ *
+ * Return: GENET_OK, or EINVAL for a value the hardware cannot take.
  */
 u32 bcmgenet_coalesce_valid(u32 tx_max_coalesced_frames, u32 rx_max_coalesced_frames,
 							u32 rx_coalesce_usecs)
@@ -170,14 +186,27 @@ static const struct
 /* The consumer is behind: it holds this many poll batches unread while the wire is idle. */
 #define GENET_RX_BEHIND_BATCHES 2
 
+/**
+ * bcmgenet_rx_pending() - Whether frames wait in the RX ring.
+ * @unit: the unit.
+ *
+ * Return: TRUE when the producer index is past the consumer's.
+ */
 static inline BOOL bcmgenet_rx_pending(struct GenetUnit *unit)
 {
 	u16 prod = (u16)(mmio_read32(BCMGENET_REG(unit, RDMA_PROD_INDEX)) & DMA_P_INDEX_MASK);
 	return prod != unit->rx_ring.rx_cons_index;
 }
 
-/* RDMA has a frame threshold and a timeout. The timeout register counts the
- * 125MHz reference divided by 1024, so ~8.192us per tick. */
+/**
+ * bcmgenet_rx_coalesce_write() - Program the RX frame threshold and timeout.
+ * @unit: the unit.
+ * @frames: the frame threshold.
+ * @usecs: the timeout in microseconds.
+ *
+ * RDMA has a frame threshold and a timeout. The timeout register counts the
+ * 125MHz reference divided by 1024, so ~8.192us per tick.
+ */
 static void bcmgenet_rx_coalesce_write(struct GenetUnit *unit, u32 frames, u32 usecs)
 {
 	mmio_write32(frames, BCMGENET_REG(unit, RDMA_RING_REG_BASE + DMA_MBUF_DONE_THRESH));
@@ -188,12 +217,20 @@ static void bcmgenet_rx_coalesce_write(struct GenetUnit *unit, u32 frames, u32 u
 	mmio_write32(reg, BCMGENET_REG(unit, RDMA_REG_BASE + DMA_RING16_TIMEOUT));
 }
 
+/**
+ * bcmgenet_rx_level_write() - Program the burst ladder's level in force.
+ * @unit: the unit.
+ */
 static void bcmgenet_rx_level_write(struct GenetUnit *unit)
 {
 	bcmgenet_rx_coalesce_write(unit, genet_rx_ladder[unit->rxLevel].frames,
 							   genet_rx_ladder[unit->rxLevel].usecs);
 }
 
+/**
+ * bcmgenet_rx_moderate() - The latency profile's ladder, as an RX pass is about to re-arm: a level up while a burst lasts, level 0 on a quiet ring, the bulk level while the consumer is behind.
+ * @unit: the unit.
+ */
 void bcmgenet_rx_moderate(struct GenetUnit *unit)
 {
 	struct ExecBase *SysBase = unit->sysBase;
@@ -226,6 +263,10 @@ void bcmgenet_rx_moderate(struct GenetUnit *unit)
 		Signal(unit->task, 1UL << unit->rx_signal);
 }
 
+/**
+ * bcmgenet_rx_moderation_reset() - Program the RX moderation the pin and the profile call for.
+ * @unit: the unit.
+ */
 void bcmgenet_rx_moderation_reset(struct GenetUnit *unit)
 {
 	struct ExecBase *SysBase = unit->sysBase;
@@ -263,7 +304,10 @@ void bcmgenet_rx_moderation_reset(struct GenetUnit *unit)
 	}
 }
 
-/*
+/**
+ * bcmgenet_apply_coalesce() - Program interrupt moderation in both directions from the unit's settings.
+ * @unit: the unit.
+ *
  * The one place interrupt moderation is programmed from the unit's settings,
  * in both directions: from bcmgenet_init_dma() once the rings exist, and again
  * whenever NETDEV_CMD_SET_COALESCE lands on a running unit. The settings live
@@ -284,6 +328,12 @@ void bcmgenet_apply_coalesce(struct GenetUnit *unit)
 	bcmgenet_rx_moderation_reset(unit);
 }
 
+/**
+ * bcmgenet_init_tx_ring() - Reset the TX ring's indices and program its geometry.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK.
+ */
 static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Initializing TX ring\n", __func__);
@@ -310,6 +360,12 @@ static u32 bcmgenet_init_tx_ring(struct GenetUnit *unit)
 	return GENET_OK;
 }
 
+/**
+ * bcmgenet_init_tx_queues() - Set up the TX ring as the one strict-priority queue, and enable it.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or bcmgenet_init_tx_ring()'s error.
+ */
 static u32 bcmgenet_init_tx_queues(struct GenetUnit *unit)
 {
 	// We'll only setup queue 0
@@ -338,6 +394,12 @@ static u32 bcmgenet_init_tx_queues(struct GenetUnit *unit)
 	return GENET_OK;
 }
 
+/**
+ * bcmgenet_init_dma() - Set both DMA engines up from scratch: stop, flush, the rings, the moderation, start.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or the error of the ring set-up that failed.
+ */
 u32 bcmgenet_init_dma(struct GenetUnit *unit)
 {
 	/* Disable RX/TX DMA and flush TX queues */

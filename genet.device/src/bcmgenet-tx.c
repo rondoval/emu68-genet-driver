@@ -48,55 +48,38 @@
 #include <genet/bcmgenet.h>
 #include <genet/bcmgenet-irq.h>
 #include <genet/bcmgenet-regs.h>
+#include <genet/bcmgenet-tx.h>
 #include <dma_mem.h>
 
 /* Cookies delivered per nso_TxDone call. */
 #define TX_DONE_BATCH 32u
 
-/* Combined address + length/status setter. Relaxed stores (iomem.h):
- * nothing reads a BD back, and the one emu68_barrier() in
- * bcmgenet_netdev_tx_kick orders every BD of the burst - together with the
- * DMAF_NoSync cache cleans - ahead of the doorbell. */
-static inline void dmadesc_set(APTR descriptor_address, dma_addr_t addr, u32 val)
-{
-	mmio_write32_relaxed((u32)addr, descriptor_address + DMA_DESC_ADDRESS_LO);
-	mmio_write32_relaxed(val, descriptor_address + DMA_DESC_LENGTH_STATUS);
-}
-
-/* The ring slot the producer is about to fill. TX_DESCS is 256, so the
- * 16-bit BD index truncates straight to it — no separate write pointer. */
-static inline u8 tx_slot(const struct bcmgenet_tx_ring *ring)
-{
-	return (u8)ring->tx_prod_index;
-}
-
-/* BD RAM address of that slot. */
-static inline APTR tx_desc(const struct GenetUnit *unit, const struct bcmgenet_tx_ring *ring)
-{
-	return BCMGENET_REG(unit, GENET_TX_OFF) + (u32)tx_slot(ring) * DMA_DESC_SIZE;
-}
-
-static inline u16 tx_free_bds(const struct bcmgenet_tx_ring *ring)
-{
-	return (u16)(TX_DESCS - ((u32)(ring->tx_prod_index - ring->hw_cons_cache) & DMA_P_INDEX_MASK));
-}
-
-static inline void tx_advance_prod(struct bcmgenet_tx_ring *ring)
-{
-	ring->tx_prod_index = (u16)(((u32)ring->tx_prod_index + 1U) & DMA_P_INDEX_MASK);
-}
-
-/* FIFO slots the producer may still fill. */
+/**
+ * txdone_free() - The TX-done FIFO slots the producer may still fill.
+ * @unit: the unit.
+ *
+ * FIFO slots the producer may still fill.
+ *
+ * Return: how many.
+ */
 static inline u32 txdone_free(const struct GenetUnit *unit)
 {
 	return ND_TXDONE_RING_N - (unit->ndTxDoneProd - unit->ndTxDoneCons);
 }
 
-/* Does the unit task have completions waiting as of `hw_cons`? Producer-side
+/**
+ * txdone_pending() - Whether the unit task has TX completions waiting.
+ * @unit: the unit.
+ * @hw_cons: the hardware consumer index read.
+ *
+ * Does the unit task have completions waiting as of `hw_cons`? Producer-side
  * peek at the consumer's head entry: the consumer only ever advances, and an
  * entry is not rewritten until the producer wraps onto it (which needs the
  * consumer to have passed it), so a stale read costs at most one redundant
- * Signal to a task that is by definition already awake. */
+ * Signal to a task that is by definition already awake.
+ *
+ * Return: TRUE when the oldest queued cookie has completed.
+ */
 static inline BOOL txdone_pending(const struct GenetUnit *unit, u16 hw_cons)
 {
 	u32 cons = unit->ndTxDoneCons;
@@ -107,9 +90,17 @@ static inline BOOL txdone_pending(const struct GenetUnit *unit, u16 hw_cons)
 	return (u16)(hw_cons - unit->ndTxDone[cons & ND_TXDONE_RING_MASK].gtd_End) < 0x8000u;
 }
 
-/* Queue a cookie for the unit task, complete once the hardware consumer
+/**
+ * txdone_push() - Queue a cookie for the unit task, complete once the hardware consumer reaches @end.
+ * @unit: the unit.
+ * @cookie: the stack's cookie.
+ * @end: the BD index just past the packet.
+ * @bytes: the frame's length, 0 for a packet the sanity gate rejected.
+ *
+ * Queue a cookie for the unit task, complete once the hardware consumer
  * reaches `end`. Producer side; the caller has checked txdone_free().
- * `bytes` is 0 for a packet the sanity gate rejected. */
+ * `bytes` is 0 for a packet the sanity gate rejected.
+ */
 static inline void txdone_push(struct GenetUnit *unit, APTR cookie, u16 end, u16 bytes)
 {
 	u32 prod = unit->ndTxDoneProd;
@@ -121,10 +112,15 @@ static inline void txdone_push(struct GenetUnit *unit, APTR cookie, u16 end, u16
 	unit->ndTxDoneProd = prod + 1;
 }
 
-/* ndo_TxSubmit is about to return short. The ABI tells the stack to retry
+/**
+ * tx_refused() - Count a short ndo_TxSubmit and wake the unit task, which owes the stack an nso_TxDone.
+ * @unit: the unit.
+ *
+ * ndo_TxSubmit is about to return short. The ABI tells the stack to retry
  * after the next nso_TxDone, so it is owed one without delay: count the
  * refusal and wake the unit task, which harvests whatever has completed and
- * arms the TX-done interrupt if that was nothing. Producer side. */
+ * arms the TX-done interrupt if that was nothing. Producer side.
+ */
 static inline void tx_refused(struct GenetUnit *unit)
 {
 	struct ExecBase *SysBase = unit->sysBase;
@@ -132,7 +128,10 @@ static inline void tx_refused(struct GenetUnit *unit)
 	Signal(unit->task, 1UL << unit->tx_signal);
 }
 
-/*
+/**
+ * bcmgenet_tx_harvest() - Deliver every TX cookie the hardware has finished with.
+ * @unit: the unit.
+ *
  * Deliver every TX cookie the hardware has finished with. Unit task only.
  *
  * The hardware consumer index is sampled ONCE, which bounds the pass: a
@@ -141,6 +140,8 @@ static inline void tx_refused(struct GenetUnit *unit)
  * unharvested entry's distance can never approach the 16-bit half-window
  * (the FIFO holds at most ND_TXDONE_RING_N packets of ND_TX_MAX_SEGS + 1
  * BDs each, i.e. well under 32768 BDs of producer advance).
+ *
+ * Return: the cookies delivered.
  */
 ULONG bcmgenet_tx_harvest(struct GenetUnit *unit)
 {
@@ -193,16 +194,33 @@ ULONG bcmgenet_tx_harvest(struct GenetUnit *unit)
 	return delivered;
 }
 
-/*
+/**
+ * bcmgenet_tx_irq_arm() - Ask the hardware for one TX-done interrupt.
+ * @unit: the unit.
+ *
  * Ask the hardware for ONE TX-done interrupt: the ISR masks the source again
  * when it fires. Unit task only, which keeps every interrupt-mask write that
  * is not the ISR's own in the task that also runs STOP — a submitter arming
  * it could race the teardown and unmask a line nobody serves any more.
  *
- * The source has been masked, so its status bit holds history. Clear it, then
- * unmask; a completion that fell between the caller's harvest and the clear
- * has just lost its interrupt, so look at the hardware once more and let the
- * task come round again if there is something to collect.
+ * The source has been masked, so its status bit holds history: clear it, then
+ * unmask. A completion that fell between the caller's last look at the ring
+ * and the clear has just lost its interrupt, so the caller looks at the
+ * hardware once more afterwards.
+ */
+void bcmgenet_tx_irq_arm(struct GenetUnit *unit)
+{
+	unit->internalStats.tx_irq_arms++;
+	bcmgenet_irq0_clear(unit, UMAC_IRQ_TXDMA_DONE);
+	bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
+}
+
+/**
+ * bcmgenet_tx_done_arm() - One TX-done interrupt for the netdev cookies still in flight.
+ * @unit: the unit.
+ *
+ * netdev: one TX-done interrupt for the cookies still in flight, and the
+ * task comes round again at once if one completed while it was armed.
  */
 void bcmgenet_tx_done_arm(struct GenetUnit *unit)
 {
@@ -210,16 +228,17 @@ void bcmgenet_tx_done_arm(struct GenetUnit *unit)
 	if (unit->ndTxDoneCons == unit->ndTxDoneProd)
 		return; /* nothing in flight: no completion to wait for */
 
-	unit->internalStats.tx_irq_arms++;
-	bcmgenet_irq0_clear(unit, UMAC_IRQ_TXDMA_DONE);
-	bcmgenet_irq0_enable(unit, UMAC_IRQ_TXDMA_DONE);
+	bcmgenet_tx_irq_arm(unit);
 
 	u16 hw_cons = (u16)(mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK);
 	if (txdone_pending(unit, hw_cons))
 		Signal(unit->task, 1UL << unit->tx_signal);
 }
 
-/*
+/**
+ * bcmgenet_netdev_tx_quiesce() - Complete every queued cookie at STOP, the DMA off.
+ * @unit: the unit.
+ *
  * STOP-time quiesce: hardware DMA is already disabled — complete everything
  * still queued so the stack's memory accounting closes exactly. Unit task
  * context, and the ABI requires it to finish before the STOP op replies.
@@ -270,10 +289,18 @@ void bcmgenet_netdev_tx_quiesce(struct GenetUnit *unit)
 	}
 }
 
-/* A descriptor is submittable iff its segment count is in range and every
+/**
+ * tx_desc_ok() - Whether a descriptor is submittable: its segments in range, non-empty and DMA-reachable.
+ * @unit: the unit.
+ * @d: the descriptor.
+ *
+ * A descriptor is submittable iff its segment count is in range and every
  * segment is a non-empty, in-bounds, DMA-reachable buffer. Checked before the
  * segment reaches CachePreDMA: a trashed pointer would fault Emu68's ARM-side
- * cache-clean loop (dc cvac on an unmapped address). */
+ * cache-clean loop (dc cvac on an unmapped address).
+ *
+ * Return: TRUE when it is.
+ */
 static BOOL tx_desc_ok(struct GenetUnit *unit, const struct NetDevTxDesc *d)
 {
 	if (d->ntd_NumSegs == 0 || d->ntd_NumSegs > ND_TX_MAX_SEGS)
@@ -291,8 +318,16 @@ static BOOL tx_desc_ok(struct GenetUnit *unit, const struct NetDevTxDesc *d)
 	return TRUE;
 }
 
-/* The ndo_TxSubmit implementation: accept a prefix of the batch, one
+/**
+ * bcmgenet_netdev_tx_submit() - ndo_TxSubmit: put the front of the batch on the TX ring.
+ * @unit: the unit.
+ * @descs: the descriptors.
+ * @count: how many.
+ *
+ * The ndo_TxSubmit implementation: accept a prefix of the batch, one
  * doorbell. Foreign task context (the stack's core lock serializes callers).
+ *
+ * Return: how many were accepted, from the front; fewer than @count means the ring is full.
  */
 LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc *descs, ULONG count)
 {
@@ -354,19 +389,12 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 		 * TSB, submitted as its own SOP descriptor. */
 		u16 need_bds = (u16)(need + 1);
 
-		u16 free_bds = tx_free_bds(ring);
-		if (unlikely(free_bds < TX_CONS_REFRESH_BDS))
-		{
-			ring->hw_cons_cache =
-				(u16)(mmio_read32(BCMGENET_REG(unit, TDMA_CONS_INDEX)) & DMA_C_INDEX_MASK);
-			free_bds = tx_free_bds(ring);
-			/* Space came back straight off the hardware index, so the unit
-			 * task may not have been woken for any of it: TXDMA_DONE needs
-			 * coalTxFrames buffers, which a bursty low-rate stream can
-			 * go a long time without reaching. Wake it, or those cookies —
-			 * and the stack's pbufs — wait for the housekeeping tick. */
-			kick = TRUE;
-		}
+		/* Space that came back straight off the hardware index (kick) may
+		 * not have woken the unit task: TXDMA_DONE needs coalTxFrames
+		 * buffers, which a bursty low-rate stream can go a long time without
+		 * reaching. Wake it, or those cookies — and the stack's pbufs — wait
+		 * for the housekeeping tick. */
+		u16 free_bds = tx_free_bds_refresh(unit, ring, &kick);
 		if (free_bds <= need_bds || txdone_free(unit) == 0)
 		{
 			full = TRUE; /* the stack retries after nso_TxDone */
@@ -445,10 +473,15 @@ LONG bcmgenet_netdev_tx_submit(struct GenetUnit *unit, const struct NetDevTxDesc
 	return (LONG)accepted;
 }
 
-/* Publish every descriptor staged by prior bcmgenet_netdev_tx_submit() calls:
+/**
+ * bcmgenet_netdev_tx_kick() - ndo_TxKick: publish every descriptor staged since the last kick.
+ * @unit: the unit.
+ *
+ * Publish every descriptor staged by prior bcmgenet_netdev_tx_submit() calls:
  * close the accumulated DMAF_NoSync clean batch with one barrier, then hand the
  * producer index to the hardware. Idempotent — re-writing the current index is
- * harmless, so this is safe to call with nothing staged (STOP backstop). */
+ * harmless, so this is safe to call with nothing staged (STOP backstop).
+ */
 void bcmgenet_netdev_tx_kick(struct GenetUnit *unit)
 {
 	emu68_barrier();

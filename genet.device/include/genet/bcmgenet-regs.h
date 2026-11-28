@@ -61,15 +61,16 @@
  * here needs an explicit le32(). */
 struct genet_status_64
 {
-	u32 length_status;	/* length and peripheral status */
-	u32 ext_status;		/* extended status */
-	u32 rx_csum;		/* STATUS_RX_CSUM_* */
-	u32 unused1[9];
-	u32 tx_csum_info;	/* STATUS_TX_CSUM_* */
-	u32 unused2[3];
+	__le32 length_status;	/* length and peripheral status */
+	__le32 ext_status;		/* extended status */
+	__le32 rx_csum;			/* STATUS_RX_CSUM_* */
+	__le32 unused1[9];		/* reserved: keeps tx_csum_info at byte 48 */
+	__le32 tx_csum_info;	/* STATUS_TX_CSUM_* */
+	__le32 unused2[3];		/* reserved: the rest of the 64-byte block */
 };
 
 #define GENET_STATUS64_LEN 64
+_Static_assert(sizeof(struct genet_status_64) == GENET_STATUS64_LEN, "the status block is 64 bytes");
 
 #define STATUS_RX_CSUM_MASK 0xFFFFu		/* 1's-complement sum, network-order halfword */
 #define STATUS_RX_CSUM_OK 0x10000u		/* L4 verified — L3 parser only, unused w/ RBUF_L3_PARSE_DIS */

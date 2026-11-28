@@ -187,14 +187,22 @@ static const struct genet_sw_counter genet_sw_counters[] = {
 	SW_U32("drv_rx_level_changes", internalStats.rx_level_changes, 0),
 	SW_U32("drv_rx_bulk_arms", internalStats.rx_bulk_arms, 0),
 	/* RX buffer pool, right now */
-	SW_U32("drv_rx_pool_free", ndRxFreeCount, NDCNTF_GAUGE),
+	SW_U32("drv_rx_pool_free", rxFreeCount, NDCNTF_GAUGE),
 	SW_U32("drv_rx_held", ndRxHeld, NDCNTF_GAUGE),
 };
 
 #define GENET_HW_COUNT ((u16)(sizeof(genet_hw_counters) / sizeof(genet_hw_counters[0])))
 #define GENET_SW_COUNT ((u16)(sizeof(genet_sw_counters) / sizeof(genet_sw_counters[0])))
 
-/*
+/**
+ * mib_put() - Append one counter to a NETDEV_CMD_GET_COUNTERS answer.
+ * @out: the counters' room.
+ * @max: how many fit.
+ * @n: the count so far, advanced.
+ * @name: the counter's name.
+ * @value: its value.
+ * @flags: its NDCNTF_* flags (MIBF_* ones dropped).
+ *
  * Append one counter. Everything is counted; only the first `max` are stored,
  * so a max=0 probe returns the total without touching the buffer.
  */
@@ -212,7 +220,10 @@ static void mib_put(struct NetDevCounter *out, u16 max, u16 *n,
 	(*n)++;
 }
 
-/*
+/**
+ * bcmgenet_mib_rbuf_ovfl() - The RBUF FIFO overflows so far, the register folded into its accumulator.
+ * @unit: the unit.
+ *
  * Fold the RBUF FIFO-overflow register into its software accumulator and
  * return the running total. Unit task only.
  *
@@ -221,6 +232,8 @@ static void mib_put(struct NetDevCounter *out, u16 max, u16 *n,
  * which NetDevStats forbids for nds_RxFifoOvfl. Accumulating on read keeps the
  * reported figure monotonic without a periodic sweep: every reader passes
  * through here, and the delta is taken against the value this function last saw.
+ *
+ * Return: the running total.
  */
 u32 bcmgenet_mib_rbuf_ovfl(struct GenetUnit *unit)
 {
@@ -245,7 +258,10 @@ u32 bcmgenet_mib_rbuf_ovfl(struct GenetUnit *unit)
 	return is->rx_fifo_errors;
 }
 
-/*
+/**
+ * bcmgenet_mib_rbuf_ovfl_rebase() - Take the overflow accumulator's delta baseline from the live register.
+ * @unit: the unit.
+ *
  * Take the delta baseline from the live register, so the next accumulate
  * counts only what arrives after this point. Called wherever the accumulator
  * is rebased independently of the register: after the UMAC reset zeroes it,
@@ -256,13 +272,18 @@ void bcmgenet_mib_rbuf_ovfl_rebase(struct GenetUnit *unit)
 	unit->internalStats.rx_fifo_last = mmio_read32(BCMGENET_REG(unit, UMAC_RBUF_OVFL_CNT));
 }
 
-/*
+/**
+ * bcmgenet_mib_tx_errors() - The MAC's own count of transmit failures, for NetDevStats' nds_TxErrors.
+ * @unit: the unit.
+ *
  * The MAC's own view of transmit failures, for NetDevStats' nds_TxErrors.
  *
  * These are free-running 32-bit registers reset once per bring-up, so the sum
  * is meaningful for the session and cannot be accumulated further without a
  * periodic sweep. Late and excessive collisions and jabber are the ones that
  * indicate a real wiring or duplex fault; the rest round it out.
+ *
+ * Return: the sum of the transmit-error MIB registers.
  */
 u32 bcmgenet_mib_tx_errors(struct GenetUnit *unit)
 {
@@ -278,6 +299,14 @@ u32 bcmgenet_mib_tx_errors(struct GenetUnit *unit)
 	return total;
 }
 
+/**
+ * bcmgenet_mib_fill() - Every counter, the UniMAC's MIB and the driver's own, for NETDEV_CMD_GET_COUNTERS.
+ * @unit: the unit.
+ * @out: the counters' room.
+ * @max: how many fit; 0 to ask how many there are.
+ *
+ * Return: how many counters there are, those past @max counted but not stored.
+ */
 u16 bcmgenet_mib_fill(struct GenetUnit *unit, struct NetDevCounter *out, u16 max)
 {
 	u16 n = 0;
@@ -337,6 +366,10 @@ u16 bcmgenet_mib_fill(struct GenetUnit *unit, struct NetDevCounter *out, u16 max
 	return n;
 }
 
+/**
+ * bcmgenet_mib_reset() - Zero the MIB block and the three misc counters, at every start.
+ * @unit: the unit.
+ */
 void bcmgenet_mib_reset(struct GenetUnit *unit)
 {
 	/* The control pulse zeroes the RX, TX and RUNT blocks... */
@@ -354,4 +387,16 @@ void bcmgenet_mib_reset(struct GenetUnit *unit)
 	/* The overflow accumulator survives the start; only its delta baseline
 	 * follows the register back to zero. */
 	bcmgenet_mib_rbuf_ovfl_rebase(unit);
+}
+
+/**
+ * bcmgenet_mib_read() - Read one MIB register as it is.
+ * @unit: the unit.
+ * @reg: its offset (UMAC_MIB_* or a misc counter).
+ *
+ * Return: its value.
+ */
+u32 bcmgenet_mib_read(struct GenetUnit *unit, u16 reg)
+{
+	return mmio_read32(BCMGENET_REG(unit, reg));
 }

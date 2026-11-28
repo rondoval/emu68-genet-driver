@@ -1,0 +1,6 @@
+rx : pkts 112448  bytes 167883208
+     errs 0  drops 0
+tx : pkts 4469  bytes 254041
+     errs 0  drops 0
+loss: rdma 0  rbovfl 0
+link: up 1000 Mb/s FD

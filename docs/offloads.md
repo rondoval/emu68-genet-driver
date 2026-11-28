@@ -25,9 +25,15 @@ simply all-zeros. The struct layout is `struct genet_status_64`
 (`bcmgenet-regs.h`), byte-identical to Linux's `struct status_64`.
 
 Layout note: Linux additionally sets `RBUF_ALIGN_2B` (2-byte pad so the IP
-header lands 4-byte aligned). We deliberately leave it OFF: Emu68 reads
-unaligned 32-bit words for free, and a fixed +64 payload offset is simpler
-than +66.
+header lands 4-byte aligned). Here it follows the personality, set at START:
+
+- **netdev: off.** The buffer itself goes up to the stack, Emu68 reads
+  unaligned 32-bit words for free, and a fixed +64 payload offset is simpler
+  than +66.
+- **SANA-II: on.** The frame is copied out of the ring buffer, and at +66 the
+  copy source has the IP header longword-aligned (16 mod 64), so the
+  `CopyToBuff` copies and the cache invalidate see the alignment the 3.x driver
+  had.
 
 ### Endianness — read this before touching either block
 
@@ -79,6 +85,12 @@ last. Equivalent; costs +1 descriptor per frame. `DMA_SOP`,
 `DMA_TX_DO_CSUM` go on the TSB descriptor, `DMA_EOP` on the last data segment,
 `DMA_TX_APPEND_CRC` on all.
 
+SANA-II transmits the Linux way: each ring slot is a staging buffer laid out
+as `[2-byte pad][64-byte TSB][frame]`, and one descriptor covers TSB and frame
+(its length counts the TSB). The TSB is zeroed once when the staging is
+allocated and never written again: a SANA-II stack hands over finished
+frames, checksums included, so `DMA_TX_DO_CSUM` is never set there.
+
 Not offloaded on TX: the IPv4 **header** checksum (software in lwIP, cheap —
 20 bytes) — GENET has no IP-header insert. No TSO/GSO either: the silicon has
 no segmentation engine (Linux doesn't advertise one; don't go looking).
@@ -114,13 +126,18 @@ the sum in software before dropping and logs
 stay silent. If it ever fires: sw==swap(hw) means an endianness regression;
 sw confirming the drop means genuine wire corruption reaching the MAC.
 
+SANA-II has no way to hand a checksum up: its stacks verify in software, and
+the RSB sum goes unused.
+
 ## Interrupt coalescing
 
 - **RX**: `DMA_MBUF_DONE_THRESH` (frames) + the RDMA timeout register (usecs,
   in 8.192 µs hardware units). Seeded from `GENET_COAL_RX_USECS` (500) and
   `GENET_COAL_RX_FRAMES` (64) in `device.h`, and set at runtime by the netdev
   `SET_COALESCE` op (`NDCF_COALESCE`) — which `netdev-stats RXUSECS <n>
-  RXFRAMES <n> TXFRAMES <n>` issues by hand.
+  RXFRAMES <n> TXFRAMES <n>` issues by hand. `SET_COALESCE` is accepted while
+  either personality holds the unit, so the same command tunes a SANA-II
+  stack's interrupts; SANA-II itself never changes them.
 - **RX profile** (`NDCF_RX_PROFILE`, `NETDEV_CMD_SET_RX_PROFILE`): the timeout
   counts from the first pending frame and is not postponed by frames that keep
   arriving, so a lone small frame — the reply a task is blocked on — always
@@ -181,6 +198,9 @@ sw confirming the drop means genuine wire corruption reaching the MAC.
   threshold, `GENET_COAL_TX_FRAMES` = 32 unless `SET_COALESCE` moved it).
   Counter: `drv_tx_irq_arms`. Without receive traffic the tail of a burst is
   completed by the tick, at most `GENET_PERIODIC_TASK_MS` later.
+  SANA-II arms the same interrupt only while writes wait for ring space: a
+  write that finds the ring full queues behind any already waiting, and the
+  unit task sends them as descriptors complete.
 
 ## Capability inventory
 
@@ -193,7 +213,7 @@ Used by this driver:
 | FCS generation | `DMA_TX_APPEND_CRC` | always (also gives hardware runt padding) |
 | Interrupt coalescing | MBUF_DONE_THRESH + RDMA timeout | `NDCF_COALESCE` + `NDCF_RX_PROFILE` |
 | Link events | PHY IRQ → `UMAC_IRQ_LINK_UP/DOWN` | `NDCF_LINK_EVENTS` → `nso_LinkChange` |
-| MAC address filter | MDF (17 exact-match slots) | broadcast + own MAC + up to 15 joined multicast groups (`NDCF_MCAST_FILTER`); promiscuous only for `NDFF_PROMISC`/`NDFF_ALLMULTI` or a list that overruns the slots — the UniMAC has no multicast-only accept bit, so `CMD_PROMISC` is our all-multi |
+| MAC address filter | MDF (17 exact-match slots) | broadcast + own MAC + up to 15 joined multicast groups (`NDCF_MCAST_FILTER`); promiscuous only for `NDFF_PROMISC`/`NDFF_ALLMULTI` or a list that overruns the slots — the UniMAC has no multicast-only accept bit, so `CMD_PROMISC` is our all-multi. SANA-II's multicast addresses and ranges fill the same slots; past 15 addresses, or for a `SANA2OPF_PROM` opener, the MAC goes promiscuous and the driver delivers a frame nobody joined or addressed only to promiscuous openers |
 
 Present in silicon, deliberately unused:
 

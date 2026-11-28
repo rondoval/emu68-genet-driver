@@ -16,8 +16,10 @@
 #include <exec/errors.h>
 #include <dos/dosextens.h>
 #include <devices/newstyle.h>
+#include <devices/sana2.h>
 
 #include <device.h>
+#include <sana2_unit.h>
 #include <emu68_features.h>
 #include <minlist.h>
 #include <debug.h>
@@ -27,23 +29,32 @@
 #define DEVICE_NAME "genet.device"
 #endif
 
-#ifndef DEVICE_IDSTRING
-#define DEVICE_IDSTRING "genet.device 4.0"
-#endif
-
+/* The version comes from CMake (the repository's one version, root CMakeLists.txt); an editor's parser gets placeholders. */
+#if !defined(DEVICE_VERSION) || !defined(DEVICE_REVISION) || !defined(DEVICE_IDSTRING)
+#ifdef __INTELLISENSE__
 #ifndef DEVICE_VERSION
-#define DEVICE_VERSION 4
+#define DEVICE_VERSION 0
 #endif
-
 #ifndef DEVICE_REVISION
 #define DEVICE_REVISION 0
 #endif
+#ifndef DEVICE_IDSTRING
+#define DEVICE_IDSTRING "genet.device"
+#endif
+#else
+#error "DEVICE_VERSION, DEVICE_REVISION and DEVICE_IDSTRING are set by CMake"
+#endif
+#endif
 LONG __attribute__((used, section(".text.entry"))) doNotExecute(void);
 
-/*
-    Put the function at the very beginning of the file in order to avoid
-    unexpected results when user executes the device by mistake
-*/
+/**
+ * doNotExecute() - The module's entry at offset 0: a device run as a program returns at once.
+ *
+ * Put the function at the very beginning of the file in order to avoid
+ * unexpected results when user executes the device by mistake
+ *
+ * Return: -1.
+ */
 LONG __attribute__((used, section(".text.entry"))) doNotExecute(void)
 {
     return -1;
@@ -65,6 +76,7 @@ static const APTR initTable[4];
 /* [genet] perf slot names — rodata; order matches enum GenetProfSlot. */
 static const char *const genet_perf_names[GP_SLOT_COUNT] = {
     "rx_drain", "rx_scan", "rx_flush", "tx_submit", "tx_harvest", "rx_wake",
+    "rx_copy", "rx_reply",
 };
 
 /* perf_hist bounds — rodata. Frames: fine around the default timeout's worth of
@@ -128,6 +140,10 @@ static const APTR funcTable[] = {
     (APTR)abortIO,
     (APTR)-1};
 
+/**
+ * genet_close_libraries() - Close the libraries the opens use.
+ * @base: the device.
+ */
 static void genet_close_libraries(struct GenetDevice *base)
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -144,6 +160,12 @@ static void genet_close_libraries(struct GenetDevice *base)
     }
 }
 
+/**
+ * genet_open_libraries() - Open utility.library and gic400.library, unless both are open already.
+ * @base: the device.
+ *
+ * Return: 0, or -1 when one would not open.
+ */
 static s32 genet_open_libraries(struct GenetDevice *base)
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -170,8 +192,13 @@ static s32 genet_open_libraries(struct GenetDevice *base)
     return 0;
 }
 
-/* reset_guard prepare: stop RX/TX DMA before the machine resets, so the
- * GENET stops writing into RAM the next OS session will reuse. */
+/**
+ * genet_reset_prepare() - The reset guard's prepare hook: stop the DMA of an online unit before the machine resets.
+ * @user: the device.
+ *
+ * reset_guard prepare: stop RX/TX DMA before the machine resets, so the
+ * GENET stops writing into RAM the next OS session will reuse.
+ */
 static void genet_reset_prepare(APTR user)
 {
     struct GenetDevice *base = user;
@@ -181,6 +208,14 @@ static void genet_reset_prepare(APTR user)
         bcmgenet_reset_quiesce(unit);
 }
 
+/**
+ * initFunction() - The device's init: refuse an Emu68 without the range cache operations, then set the base up.
+ * @base: the device base exec made.
+ * @segList: the device's segment list.
+ * @SysBase: exec.library.
+ *
+ * Return: @base, or NULL when the device refused to load (the base freed).
+ */
 APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), struct ExecBase *SysBase asm("a6"))
 {
     /* the id string carries the build date — the log's deploy beacon */
@@ -208,6 +243,13 @@ APTR initFunction(struct GenetDevice *base asm("d0"), ULONG segList asm("a0"), s
     return base;
 }
 
+/**
+ * openLib() - OpenDevice(): open the unit, and give an IOSana2Req-sized request an opener.
+ * @io: the opening request.
+ * @unitNumber: the unit; only 0.
+ * @flags: the open flags (SANA2OPF_MINE, SANA2OPF_PROM).
+ * @base: the device.
+ */
 void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
              ULONG flags asm("d1"), struct GenetDevice *base asm("a6"))
 {
@@ -276,6 +318,17 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
         return;
     }
 
+    if ((flags & SANA2OPF_MINE) && base->unit->unit.unit_OpenCnt > 0)
+    {
+        KprintfT("[genet] %s: unit in use, no exclusive open\n", __func__);
+        io->io_Error = IOERR_UNITBUSY;
+        io->io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+        io->io_Unit = NULL;
+        if (firstOpen)
+            genet_close_libraries(base);
+        return;
+    }
+
     if (base->unit->unit.unit_OpenCnt == 0)
     {
         /* Configuration is reloaded only when the unit has no other opener. */
@@ -283,11 +336,40 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
         DumpGenetRuntimeConfig(&base->runtimeConfig);
     }
 
+    /* An IOSana2Req-sized open gets an Opener for its buffer-management tags,
+     * which takes their place in ios2_BufferManagement - the SANA-II
+     * convention for the driver's per-opener cookie. */
+    struct IOSana2Req *s2io = (struct IOSana2Req *)io;
+    struct Opener *opener = NULL;
+    if (io->io_Message.mn_Length >= sizeof(struct IOSana2Req))
+    {
+        opener = sana2_opener_create(SysBase, base->utilityBase, s2io->ios2_BufferManagement, flags);
+        if (opener == NULL)
+        {
+            io->io_Error = IOERR_OPENFAIL;
+            io->io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
+            io->io_Unit = NULL;
+            if (createdUnit)
+            {
+                FreeMem(base->unit, sizeof(struct GenetUnit));
+                base->unit = NULL;
+            }
+            if (firstOpen)
+                genet_close_libraries(base);
+            return;
+        }
+    }
+
     u32 result = UnitOpen(base->unit, (u32)unitNumber, (u32)flags);
 
     if (result == GENET_OK)
     {
         KprintfT("[genet] %s: Unit opened successfully\n", __func__);
+        if (opener != NULL)
+        {
+            sana2_opener_attach(base->unit, opener);
+            s2io->ios2_BufferManagement = opener;
+        }
         io->io_Unit = (struct Unit *)base->unit;
         base->device.dd_Library.lib_OpenCnt++;
         base->device.dd_Library.lib_Flags &= (UBYTE)~LIBF_DELEXP;
@@ -297,6 +379,8 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
     {
         Kprintf("[genet] %s: Failed to open unit, error code %ld\n", __func__, result);
         /* Leave nothing usable behind. */
+        if (opener != NULL)
+            sana2_opener_free(SysBase, opener);
         io->io_Error = IOERR_OPENFAIL;
         io->io_Device = NULL; /* a CloseDevice() after the failed open must not reach closeLib */
         io->io_Unit = NULL;
@@ -313,11 +397,25 @@ void openLib(struct IOStdReq *io asm("a1"), LONG unitNumber asm("d0"),
     return;
 }
 
+/**
+ * closeLib() - CloseDevice(): take the opener back, close the unit, and expunge at the last close if one is pending.
+ * @io: the closing request.
+ * @base: the device.
+ *
+ * Return: expungeLib()'s segment list when the close expunged, else 0.
+ */
 ULONG closeLib(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     struct ExecBase *SysBase = base->sysBase;
     struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
     KprintfT("[genet] %s: Closing device\n", __func__);
+
+    /* The unit task unlinks and frees the opener - on the last close too,
+     * which drains the unit port before the task ends - so a claimer's close
+     * hands the unit back on the task that owns it. Only an Opener this
+     * driver handed out is taken back (sana2_opener_detach()). */
+    if (io->io_Message.mn_Length >= sizeof(struct IOSana2Req))
+        sana2_opener_detach(unit, ((struct IOSana2Req *)io)->ios2_BufferManagement);
 
     u32 result = UnitClose(unit);
     if (result == 0) // last user of Unit disappeared
@@ -341,6 +439,12 @@ ULONG closeLib(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6")
     return 0;
 }
 
+/**
+ * expungeLib() - Expunge the device, or mark it to go at the last close.
+ * @base: the device.
+ *
+ * Return: the segment list to unload, or 0 while it is open or its reset guard cannot be removed.
+ */
 ULONG expungeLib(struct GenetDevice *base asm("a6"))
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -377,17 +481,27 @@ ULONG expungeLib(struct GenetDevice *base asm("a6"))
     }
 }
 
+/**
+ * extFunc() - The reserved vector.
+ * @base: the device.
+ *
+ * Return: @base.
+ */
 APTR extFunc(struct GenetDevice *base asm("a6"))
 {
     return base;
 }
 
-/*
-    Every packet moves through the direct-call surface exchanged at
-    NETDEV_CMD_ATTACH, so no data-path command reaches BeginIO. The netdev
-    control ops and NSCMD_DEVICEQUERY are serialized by the unit task;
-    everything else is IOERR_NOCMD.
-*/
+/**
+ * beginIO() - BeginIO(): serve the SANA-II reads and writes in the caller's task, queue the other commands for the unit task.
+ * @io: the request.
+ * @base: the device.
+ *
+ * netdev packets move through the direct-call surface exchanged at
+ * NETDEV_CMD_ATTACH, so none reaches BeginIO. The netdev control ops,
+ * NSCMD_DEVICEQUERY and the SANA-II commands are serialized by the unit
+ * task; everything else is IOERR_NOCMD.
+ */
 void beginIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -403,7 +517,31 @@ void beginIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
         return;
     }
 
-    if (NETDEV_IS_CMD(cmd) || cmd == NSCMD_DEVICEQUERY)
+    /* SANA-II reads go onto their opener's ring, in the reader's task. */
+    if (cmd == CMD_READ || cmd == S2_READORPHAN)
+    {
+        if (io->io_Message.mn_Length < sizeof(struct IOSana2Req))
+            io->io_Error = IOERR_BADLENGTH;
+        else if (sana2_read(unit, (struct IOSana2Req *)io) == COMMAND_SCHEDULED)
+            return; /* replied with a frame, or by a flush */
+        if (!(io->io_Flags & IOF_QUICK))
+            ReplyMsg(&io->io_Message);
+        return;
+    }
+
+    /* SANA-II writes go straight to the ring, in the writer's task. */
+    if (cmd == CMD_WRITE || cmd == S2_BROADCAST || cmd == S2_MULTICAST)
+    {
+        if (io->io_Message.mn_Length < sizeof(struct IOSana2Req))
+            io->io_Error = IOERR_BADLENGTH;
+        else if (sana2_write(unit, (struct IOSana2Req *)io) == COMMAND_SCHEDULED)
+            return; /* waits for ring room: replied by the unit task */
+        if (!(io->io_Flags & IOF_QUICK))
+            ReplyMsg(&io->io_Message);
+        return;
+    }
+
+    if (NETDEV_IS_CMD(cmd) || cmd == NSCMD_DEVICEQUERY || sana2_is_command(cmd))
     {
         KprintfT("[genet] %s: Queuing %04lx\n", __func__, (ULONG)cmd);
         io->io_Error = 0;
@@ -418,11 +556,17 @@ void beginIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
         ReplyMsg(&io->io_Message);
 }
 
-/*
-    The only queued requests are the control commands waiting at the unit
-    port; nothing long-lived is abortable. Best-effort: pull a still-queued
-    message off the port, otherwise let it complete.
-*/
+/**
+ * abortIO() - AbortIO(): take a request back where it waits, or let it complete.
+ * @io: the request.
+ * @base: the device.
+ *
+ * Queued requests are the commands waiting at the unit port and the SANA-II
+ * writes waiting for ring room. Best-effort: take a still-queued one back,
+ * otherwise let it complete.
+ *
+ * Return: 0.
+ */
 LONG abortIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 {
     struct ExecBase *SysBase = base->sysBase;
@@ -430,6 +574,13 @@ LONG abortIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
 
     struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
     if (unit == NULL)
+        return 0;
+
+    /* A SANA-II write waiting for ring room. */
+    UWORD cmd = io->io_Command;
+    if ((cmd == CMD_WRITE || cmd == S2_BROADCAST || cmd == S2_MULTICAST) &&
+        io->io_Message.mn_Length >= sizeof(struct IOSana2Req) &&
+        sana2_tx_backlog_remove(unit, (struct IOSana2Req *)io))
         return 0;
 
     BOOL pulled = FALSE;
@@ -447,13 +598,41 @@ LONG abortIO(struct IOStdReq *io asm("a1"), struct GenetDevice *base asm("a6"))
     Enable();
 
     /* Once removed the request is ours alone, so the reply happens outside the
-     * critical section. Not queued: the unit task already owns it, or it was
-     * never sent — either way it completes on its own. AbortIO is a wish. */
+     * critical section. */
     if (pulled)
     {
         io->io_Error = IOERR_ABORTED;
         ReplyMsg(&io->io_Message);
+        return 0;
     }
 
+    /* A read, an event wait, the throughput sampling or a parked S2_ONLINE is
+     * kept by the unit task, on lists only it touches: the abort travels
+     * there, and AbortIO waits for it. So the request is aborted or completed
+     * when this returns, and no abort can arrive late for a request the
+     * caller has meanwhile freed or sent again. Anything else completes on
+     * its own; AbortIO is a wish, and so is this one without a reply port. */
+    if ((cmd == CMD_READ || cmd == S2_READORPHAN || cmd == S2_ONEVENT || cmd == S2_SAMPLE_THROUGHPUT ||
+         cmd == S2_ONLINE || cmd == S2_CONFIGINTERFACE) &&
+        io->io_Message.mn_Length >= sizeof(struct IOSana2Req))
+    {
+        struct MsgPort *reply = CreateMsgPort();
+        if (reply != NULL)
+        {
+            struct GenetOpenerControl abort;
+            memset(&abort, 0, sizeof(abort));
+            abort.io.io_Message.mn_Node.ln_Type = NT_MESSAGE;
+            abort.io.io_Message.mn_ReplyPort = reply;
+            abort.io.io_Message.mn_Length = sizeof(struct GenetOpenerControl);
+            abort.io.io_Unit = (struct Unit *)unit;
+            abort.io.io_Command = GENET_CMD_OPENER_CONTROL;
+            abort.op = GENET_OPENER_ABORT;
+            abort.target = (struct IOSana2Req *)io;
+            PutMsg(&unit->unit.unit_MsgPort, &abort.io.io_Message);
+            WaitPort(reply);
+            GetMsg(reply);
+            DeleteMsgPort(reply);
+        }
+    }
     return 0;
 }

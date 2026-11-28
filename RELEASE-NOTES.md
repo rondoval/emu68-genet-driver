@@ -1,3 +1,71 @@
+# Release notes - genet.device 5.0
+
+Changes since v4.4 and v3.17.
+
+**One driver for every network stack.** genet.device 5.0 replaces both 4.4 (for
+lwip-amiga) and 3.17 (for SANA-II stacks): the same file serves lwip-amiga
+through its fast netdev interface, and Roadshow, AmiTCP, Miami or any other
+SANA-II stack. The installer no longer asks which one you want. It runs as fast
+as 4.4 under lwip-amiga and as 3.17 under SANA-II.
+
+Update lwip-amiga to 1.9 or newer with it: 1.4 to 1.8 take the SANA-II
+interface, which works but is slower, unless its interface file in
+`DEVS:NetInterfaces/` says `TYPE=NETDEV`. Nothing else to change in your
+configuration.
+
+---
+
+## What's new
+
+- **One stack uses the port at a time.** The first to bring its interface up
+  has it until it closes it; the other stack's start fails. `genet-stats` and
+  `netdev-stats` work beside either.
+- **SANA-II stacks come up without a cable.** `S2_ONLINE` waits up to 6
+  seconds for the link and then goes online without one; 3.17 failed it.
+- **SANA-II stacks hear about the cable:** plugging it in or out raises the
+  connect and disconnect events.
+- **SANA-II stacks get 4.4's link handling:** the `LINK_MODE`, `AUTONEG` and
+  `FLOW_CONTROL` settings, and a 10 Mbps link that is noticed coming up.
+- **`netdev-stats RXUSECS <n> RXFRAMES <n> TXFRAMES <n>` tunes the interrupt
+  coalescing under a SANA-II stack too**, instead of the 3.17 settings below.
+- **`genet-stats` ships with the driver**, and works beside lwip-amiga as well.
+
+---
+
+## Settings
+
+- 3.17's `BUDGET`, `PERIODIC_TASK_MS`, `RX_COALESCE_USECS`,
+  `RX_COALESCE_FRAMES`, `TX_COALESCE_FRAMES`, `UNIT_STACK_SIZE` and `USE_DMA`
+  are ignored, so an old `ENV:genet.prefs` still works.
+- `USE_MIAMI_WORKAROUND` takes `on`/`off` as well as `1`/`0`.
+
+---
+
+## Bug fixes (since 3.17)
+
+- **With more than 15 multicast groups joined, or a promiscuous program
+  running, stacks no longer receive other machines' traffic:** it goes only to
+  the programs that asked for promiscuous mode.
+- **Aborting a read on a quiet network returns at once.** It used to wait for
+  the next packet, so a program could hang while quitting.
+- **A program that checks a read with `CheckIO()` just after sending it no
+  longer crashes the machine.** The read looked finished before any packet had
+  arrived, and waiting for it then corrupted memory (Guru 8000000B, or a
+  freeze). The usual network stacks never check a read that early.
+- **A failed open no longer pulls the port from under the programs that already
+  have it open.**
+
+---
+
+## Build & tooling
+
+- `genet-stats` builds in this repository; the separate 3.x repository is no
+  longer needed.
+- Building needs emu68-common 2.5 or newer (`be16()` for the EtherType);
+  `find_package()` names it.
+
+---
+
 # Release notes - genet.device 4.4
 
 Changes since v4.3.

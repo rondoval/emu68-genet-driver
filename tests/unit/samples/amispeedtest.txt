@@ -1,0 +1,20 @@
+Download test (megabit/sec)...
+
+    100 kB  /  0.008 secs  =   95.9 Mb/s
+   1200 kB  /  0.024 secs  =  384.5 Mb/s
+  14400 kB  /  0.148 secs  =  777.4 Mb/s
+  86400 kB  /  0.821 secs  =  841.5 Mb/s
+ 345600 kB  /  3.230 secs  =  855.8 Mb/s
+ 604800 kB  /  5.639 secs  =  858.0 Mb/s
+
+   Average download speed  =  852.8 Mb/s
+
+Upload test (megabit/sec)...
+
+    100 kB  /  0.028 secs  =   28.5 Mb/s
+   1200 kB  /  0.041 secs  =  233.2 Mb/s
+  14400 kB  /  0.806 secs  =  142.8 Mb/s
+  57600 kB  /  5.408 secs  =   85.2 Mb/s
+  86400 kB  /  9.367 secs  =   73.8 Mb/s
+
+     Average upload speed  =   81.6 Mb/s

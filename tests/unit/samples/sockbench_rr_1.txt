@@ -1,0 +1,2 @@
+bench tcp rr: port 5003, 5 s per point, 128 byte requests
+rr resp=1 req=128: 1783 trans/s  lat us avg/min/p50/p90/p99/max 538/317/496/721/1082/3195  0.0 MB/s

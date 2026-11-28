@@ -17,6 +17,12 @@
 #include <device.h>
 #include <types.h>
 
+/**
+ * DevTreeParse() - Find the unit's GENET in the device tree: its registers, interrupt, station address, PHY and GPIO.
+ * @unit: the unit; fills compatible, phy_interface, localMacAddress, genetBase, irq0_number, phyaddr and gpioBase.
+ *
+ * Return: GENET_OK, or ENOMEM when devicetree.resource, a key or a property the driver needs is missing.
+ */
 u32 DevTreeParse(struct GenetUnit *unit)
 {
 	struct ExecBase *SysBase = unit->sysBase;

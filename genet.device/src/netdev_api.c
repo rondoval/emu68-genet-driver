@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0 OR GPL-2.0+
 /*
- * netdev_api.c — the netdev ABI personality: command processing (unit task),
- * the direct-call ops table (foreign task context), RX buffer pool and the
- * SPSC rings that decouple the two.
+ * netdev_api.c — the netdev ABI personality: command processing and the
+ * datapath half of the unit task (unit task), the direct-call ops table
+ * (foreign task context), and the SPSC rings that decouple the two. The RX
+ * buffer pool itself belongs to the hardware layer (bcmgenet-rxpool.c).
  *
  * Context rules (see netdev.h): ndo_* entries are called from arbitrary
  * tasks, serialized by the stack's core lock — one logical producer; every
@@ -19,58 +20,27 @@
 #include <proto/exec.h>
 #endif
 
-#include <devices/newstyle.h>
 #include <exec/errors.h>
 
 #include <cache_ops.h>
 #include <debug.h>
 #include <device.h>
+#include <sana2_unit.h>
 #include <iomem.h>
 #include <memory.h>
 
+#include <genet/bcmgenet-irq.h>
 #include <genet/bcmgenet-mib.h>
 #include <genet/bcmgenet-regs.h>
 #include <genet/bcmgenet.h>
 #include <genet/phy.h>
 
-/* ------------------------------------------------------------------ pool --- */
-#ifdef DEBUG
-/* TRUE iff the pointer is a valid, slot-aligned pool buffer. */
-static BOOL netdev_rx_buf_ok(const struct GenetUnit *unit, APTR buffer)
-{
-    ULONG off = (ULONG)buffer - (ULONG)unit->ndRxSlab;
-    return unit->ndRxSlab != NULL &&
-           off < unit->ndRxPoolTotal * RX_BUF_LENGTH &&
-           (off % RX_BUF_LENGTH) == 0;
-}
-#endif
+/* --------------------------------------------------------- recycle ring --- */
 
-APTR netdev_rx_pop(struct GenetUnit *unit)
-{
-    if (unit->ndRxFreeCount == 0)
-        return NULL;
-    return unit->ndRxFree[--unit->ndRxFreeCount];
-}
-
-void netdev_rx_push(struct GenetUnit *unit, APTR buffer)
-{
-#ifdef DEBUG
-    /* Guard the pool invariant (live buffers == pool size) instead of
-     * trusting it: a double-release or a poisoned recycle-ring entry would
-     * otherwise overrun ndRxFree[] and re-arm a buffer twice — the DMA
-     * writes through anything that follows. Refusing leaks one buffer;
-     * corrupting loses the machine. */
-    if (!netdev_rx_buf_ok(unit, buffer) ||
-        unit->ndRxFreeCount >= unit->ndRxPoolTotal)
-    {
-        Kprintf("[genet] %s: RX-POOL-GUARD: push rejected buf=%lx free=%lu total=%lu\n",
-                __func__, buffer, (ULONG)unit->ndRxFreeCount, (ULONG)unit->ndRxPoolTotal);
-        return;
-    }
-#endif
-    unit->ndRxFree[unit->ndRxFreeCount++] = buffer;
-}
-
+/**
+ * netdev_drain_recycle() - Take the RX buffers the stack released back into the pool.
+ * @unit: the unit.
+ */
 void netdev_drain_recycle(struct GenetUnit *unit)
 {
     struct ExecBase *SysBase = unit->sysBase;
@@ -86,7 +56,7 @@ void netdev_drain_recycle(struct GenetUnit *unit)
 #ifdef DEBUG
         /* a poisoned ring entry must not reach the cache op (a wild-range
          * invalidate discards foreign dirty lines */
-        if (!netdev_rx_buf_ok(unit, buffer))
+        if (!bcmgenet_rx_buf_ok(unit, buffer))
         {
             Kprintf("[genet] %s: RX-POOL-GUARD: recycle rejected buf=%lx\n",
                     __func__, buffer);
@@ -115,7 +85,7 @@ void netdev_drain_recycle(struct GenetUnit *unit)
         cache_pre_dma(buffer, RX_BUF_LENGTH,
                       ((cons != prod) ? DMAF_NoSync : 0) | DMA_WriteToRAM);
 
-        netdev_rx_push(unit, buffer);
+        bcmgenet_rx_pool_push(unit, buffer);
         unit->ndRxHeld--;
     }
 
@@ -125,36 +95,103 @@ void netdev_drain_recycle(struct GenetUnit *unit)
 
 /* ------------------------------------------------------------- link state --- */
 
-void netdev_link_update(struct GenetUnit *unit, BOOL up, BOOL force)
+/**
+ * netdev_link_notify() - Tell the attached netdev stack the link as unit->linkState has it.
+ * @unit: the unit.
+ */
+void netdev_link_notify(struct GenetUnit *unit)
 {
-    struct NetDevLinkState fresh;
-    fresh.ndls_Flags = 0;
-    fresh.ndls_SpeedMbps = 0;
+    if (unit->ndStackOps != NULL)
+        unit->ndStackOps->nso_LinkChange(unit->ndStackCtx, &unit->linkState);
+}
 
-    if (up && unit->phydev != NULL)
+/* ------------------------------------------------------ unit-task datapath --- */
+
+/**
+ * netdev_service() - The datapath half of a unit-task wakeup while a netdev
+ * stack is attached and started: TX harvest, the RX poll its interrupt asked
+ * for, and the re-arm.
+ * @unit: the unit.
+ * @sigset: the signals that woke the unit task.
+ *
+ * Both halves read the rings rather than replaying ISR status bits, but they
+ * are woken differently on purpose:
+ *
+ *   TX  — harvested on EVERY wakeup. It is lock-free and costs one index
+ *         compare when idle, and completing early only frees the stack's
+ *         memory sooner. Those wakeups are all the TX side gets in steady
+ *         state: the TX-done interrupt stays masked, because nothing waits for
+ *         a completion and an interrupt plus a wakeup per lone frame — every
+ *         request, every ACK — costs more than a hundred microseconds apiece.
+ *         The exception is a stack that ndo_TxSubmit answered short: the ABI
+ *         tells it to retry after the next nso_TxDone. The submitter counts
+ *         those calls and signals us; if this pass's harvest had nothing to
+ *         hand back, the hardware is asked for one interrupt.
+ *   RX  — polled only when its own interrupt says so. Handing frames up takes
+ *         the stack's core lock, so the batch size IS the lock cadence (see
+ *         unit->ndRxBatch) and it is also the GRO merge window. The hardware
+ *         coalescer (frames + usecs) is the policy that decides when a batch
+ *         is worth that; draining on unrelated wakeups just shreds it into
+ *         single-frame handups that contend with the sending task.
+ */
+void netdev_service(struct GenetUnit *unit, ULONG sigset)
+{
+    /* Sampled before the harvest, so every refusal counted here precedes it:
+     * cookies delivered below are the nso_TxDone those callers were told to
+     * wait for. A later refusal signals again. */
+    u32 refused = unit->ndTxRefused;
+    ULONG delivered = bcmgenet_tx_harvest(unit);
+    if (unlikely(refused != unit->ndTxRefusedSeen))
     {
-        fresh.ndls_Flags = NDLF_UP;
-        if (unit->phydev->duplex)
-            fresh.ndls_Flags |= NDLF_FULL_DUPLEX;
-        fresh.ndls_SpeedMbps = (UWORD)unit->phydev->speed;
+        unit->ndTxRefusedSeen = refused;
+        if (delivered == 0)
+            bcmgenet_tx_done_arm(unit);
     }
 
-    if (!force &&
-        fresh.ndls_Flags == unit->ndLink.ndls_Flags &&
-        fresh.ndls_SpeedMbps == unit->ndLink.ndls_SpeedMbps)
-        return;
+    /* Re-arm the RX interrupt the ISR masked. It stays masked while we are
+     * still behind, and the ISR already ACKed, so a writeback that latched
+     * STAT during the drain re-fires on unmask — nothing is lost. */
+    u32 rearm = 0;
 
-    unit->ndLink = fresh;
-    Kprintf("[genet] %s: link %s, %lu Mbps\n", __func__,
-            (fresh.ndls_Flags & NDLF_UP) ? "up" : "down",
-            (ULONG)fresh.ndls_SpeedMbps);
+    if (sigset & (1UL << unit->rx_signal))
+    {
+        genet_rx_wake_account(unit);
+        /* Poll one negotiated batch. If the ring still held a full batch we
+         * re-signal to poll again, so TX harvest and commands get a turn
+         * between batches instead of RX draining the whole ring in one hold. */
+        if (likely(bcmgenet_netdev_rx(unit, unit->ndRxBatch) != (s32)unit->ndRxBatch))
+        {
+            rearm |= UMAC_IRQ_RXDMA_DONE;
+        }
+        else
+        {
+            /* still behind. SysBase is loaded here, not at entry: this runs
+             * inlined into the unit task, which reaches the branch rarely. */
+            struct ExecBase *SysBase = unit->sysBase;
+            Signal(unit->task, 1UL << unit->rx_signal);
+        }
+    }
 
-    if (unit->ndStackOps != NULL)
-        unit->ndStackOps->nso_LinkChange(unit->ndStackCtx, &unit->ndLink);
+    if (rearm != 0)
+    {
+        /* latency profile: decide from the ring what the next interrupt
+         * should wait for, before it can fire. */
+        if (unit->rxLadder)
+            bcmgenet_rx_moderate(unit);
+        bcmgenet_irq0_enable(unit, rearm);
+    }
 }
 
 /* -------------------------------------------------- direct-call ops table --- */
 
+/**
+ * genet_ndo_txsubmit() - ndo_TxSubmit, marked in progress for the STOP quiesce.
+ * @drvctx: the unit, as the ops table's context.
+ * @descs: the descriptors.
+ * @count: how many.
+ *
+ * Return: bcmgenet_netdev_tx_submit()'s: how many were accepted, from the front.
+ */
 static LONG genet_ndo_txsubmit(APTR drvctx, const struct NetDevTxDesc *descs, ULONG count)
 {
     struct GenetUnit *unit = drvctx;
@@ -173,15 +210,25 @@ static LONG genet_ndo_txsubmit(APTR drvctx, const struct NetDevTxDesc *descs, UL
     return accepted;
 }
 
-/* Ring the deferred TX doorbell for the batch staged by genet_ndo_txsubmit
+/**
+ * genet_ndo_txkick() - ndo_TxKick: ring the deferred TX doorbell.
+ * @drvctx: the unit, as the ops table's context.
+ *
+ * Ring the deferred TX doorbell for the batch staged by genet_ndo_txsubmit
  * calls since the last kick. No ndTxBusy guard: it queues no cookies, just
- * publishes the producer index, so it cannot extend the STOP quiesce. */
+ * publishes the producer index, so it cannot extend the STOP quiesce.
+ */
 static VOID genet_ndo_txkick(APTR drvctx)
 {
     struct GenetUnit *unit = drvctx;
     bcmgenet_netdev_tx_kick(unit);
 }
 
+/**
+ * genet_ndo_rxrelease() - ndo_RxRelease: hand an RX buffer back through the recycle ring.
+ * @drvctx: the unit, as the ops table's context.
+ * @cookie: the buffer, as nso_RxInput gave it.
+ */
 static VOID genet_ndo_rxrelease(APTR drvctx, APTR cookie)
 {
     struct GenetUnit *unit = drvctx;
@@ -195,12 +242,26 @@ static VOID genet_ndo_rxrelease(APTR drvctx, APTR cookie)
     unit->ndRecycleProd = prod + 1;
 }
 
+/**
+ * genet_ndo_dmaalloc() - ndo_DmaAlloc: memory the GENET DMA can reach, from the unit's DMA pool.
+ * @drvctx: the unit, as the ops table's context.
+ * @size: its size.
+ * @align: its alignment.
+ *
+ * Return: the memory, or NULL.
+ */
 static APTR genet_ndo_dmaalloc(APTR drvctx, ULONG size, ULONG align)
 {
     struct GenetUnit *unit = drvctx;
     return dma_alloc(unit->dmaPool, align, size);
 }
 
+/**
+ * genet_ndo_dmafree() - ndo_DmaFree: give ndo_DmaAlloc() memory back.
+ * @drvctx: the unit, as the ops table's context.
+ * @ptr: the memory.
+ * @size: its size; unused.
+ */
 static VOID genet_ndo_dmafree(APTR drvctx, APTR ptr, ULONG size)
 {
     struct GenetUnit *unit = drvctx;
@@ -218,23 +279,18 @@ static const struct NetDevDrvOps genet_netdev_ops = {
 
 /* ------------------------------------------------------- command handlers --- */
 
+/**
+ * netdev_teardown_pool() - Free what ATTACH made: the RX pool, the TX status blocks, the recycle ring, the RX batch, the TX-done FIFO.
+ * @unit: the unit.
+ */
 static void netdev_teardown_pool(struct GenetUnit *unit)
 {
     struct ExecBase *SysBase = unit->sysBase;
-    if (unit->ndRxSlab != NULL)
-    {
-        dma_free(unit->dmaPool, unit->ndRxSlab);
-        unit->ndRxSlab = NULL;
-    }
+    bcmgenet_rx_pool_destroy(unit);
     if (unit->ndTxTsb != NULL)
     {
         dma_free(unit->dmaPool, unit->ndTxTsb);
         unit->ndTxTsb = NULL;
-    }
-    if (unit->ndRxFree != NULL)
-    {
-        pool_free(unit->metaPool, unit->ndRxFree);
-        unit->ndRxFree = NULL;
     }
     if (unit->ndRecycle != NULL)
     {
@@ -251,25 +307,35 @@ static void netdev_teardown_pool(struct GenetUnit *unit)
         pool_free(unit->metaPool, unit->ndRxBatchDescs);
         unit->ndRxBatchDescs = NULL;
     }
-    unit->ndRxFreeCount = 0;
-    unit->ndRxPoolTotal = 0;
-    unit->ndRxHeld = 0;
     unit->ndRecycleProd = unit->ndRecycleCons = 0;
     unit->ndTxDoneProd = unit->ndTxDoneCons = 0;
 }
 
-/*
+/**
+ * netdev_is_owner() - Whether @io comes from the opener that attached, which alone may stop, detach or rename the unit.
+ * @unit: the unit.
+ * @io: the request.
+ *
  * Only the opener that attached may stop, detach or rename the unit: a
  * diagnostic tool holding the same unit open must not be able to tear a live
  * stack's attachment down underneath it. Identity is the request's reply port,
  * which is per-opener and stable (BeginIO clears IOF_QUICK, so every netdev
  * command carries one).
+ *
+ * Return: TRUE for the owner, or while nobody is attached.
  */
 static BOOL netdev_is_owner(const struct GenetUnit *unit, const struct IOStdReq *io)
 {
     return unit->ndOwnerPort == NULL || unit->ndOwnerPort == io->io_Message.mn_ReplyPort;
 }
 
+/**
+ * Do_NETDEV_ATTACH() - NETDEV_CMD_ATTACH: take the unit for a netdev stack, configure it, and hand out the ops table.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevAttach.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short or empty NetDevAttach, NDERR_BUSY while another stack or a SANA-II claimer holds the unit, NDERR_BADVERSION without a common ABI version, NDERR_NOMEM when configuring or allocating failed.
+ */
 static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
 {
     struct ExecBase *SysBase = unit->sysBase;
@@ -279,7 +345,9 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
         return NDERR_BADPARAMS;
     if (att->nda_StackOps == NULL)
         return NDERR_BADPARAMS;
-    if (unit->ndStackOps != NULL)
+    /* one holder at a time: another netdev stack, or a SANA-II opener from
+     * its S2_CONFIGINTERFACE or S2_ONLINE until it closes */
+    if (unit->ndStackOps != NULL || sana2_holds_unit(unit->s2))
         return NDERR_BUSY;
     if (att->nda_AbiVersion == 0)
         return NDERR_BADVERSION;
@@ -330,15 +398,13 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
     while (recycle_n < pool_bufs)
         recycle_n <<= 1;
 
-    unit->ndRxSlab = dma_zalloc(unit->dmaPool, DMA_ALIGN_MIN,
-                                pool_bufs * RX_BUF_LENGTH);
+    u32 pool_result = bcmgenet_rx_pool_create(unit, pool_bufs);
     unit->ndTxTsb = dma_zalloc(unit->dmaPool, DMA_ALIGN_MIN,
                                TX_DESCS * GENET_STATUS64_LEN);
-    unit->ndRxFree = pool_alloc(unit->metaPool, pool_bufs * sizeof(APTR));
     unit->ndRecycle = pool_alloc(unit->metaPool, recycle_n * sizeof(APTR));
     unit->ndTxDone = pool_alloc(unit->metaPool, ND_TXDONE_RING_N * sizeof(struct GenetTxDone));
     unit->ndRxBatchDescs = pool_alloc(unit->metaPool, unit->ndRxBatch * sizeof(struct NetDevRxDesc));
-    if (unit->ndRxSlab == NULL || unit->ndTxTsb == NULL || unit->ndRxFree == NULL ||
+    if (pool_result != GENET_OK || unit->ndTxTsb == NULL ||
         unit->ndRecycle == NULL || unit->ndTxDone == NULL || unit->ndRxBatchDescs == NULL)
     {
         Kprintf("[genet] %s: pool alloc failed (%lu bufs, %lu KB slab)\n",
@@ -347,20 +413,12 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
         return NDERR_NOMEM;
     }
     unit->ndRecycleMask = recycle_n - 1;
-    unit->ndRxPoolTotal = pool_bufs;
 
-    cache_pre_dma(unit->ndRxSlab, pool_bufs * RX_BUF_LENGTH, 0);
-
-    unit->ndRxFreeCount = 0;
-    for (u32 i = 0; i < pool_bufs; i++)
-        netdev_rx_push(unit, (u8 *)unit->ndRxSlab + i * RX_BUF_LENGTH);
-
-    unit->ndRxHeld = 0;
     unit->ndFilterFlags = 0;
     unit->ndPromisc = FALSE;
     unit->ndMcastCount = 0;
-    unit->ndLink.ndls_Flags = 0;
-    unit->ndLink.ndls_SpeedMbps = 0;
+    unit->linkState.ndls_Flags = 0;
+    unit->linkState.ndls_SpeedMbps = 0;
 
     /* NetDevStats is monotonic since ATTACH, and every counter lives in this
      * one struct so the guarantee costs one clear and covers counters added
@@ -405,6 +463,13 @@ static BYTE Do_NETDEV_ATTACH(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
+/**
+ * Do_NETDEV_DETACH() - NETDEV_CMD_DETACH: let the unit go, once the stack has stopped it and returned every RX buffer.
+ * @unit: the unit.
+ * @io: the request.
+ *
+ * Return: 0; NDERR_NOTATTACHED, NDERR_BUSY for another opener or RX buffers still out, NDERR_BADPARAMS before NETDEV_CMD_STOP.
+ */
 static BYTE Do_NETDEV_DETACH(struct GenetUnit *unit, struct IOStdReq *io)
 {
     if (unit->ndStackOps == NULL)
@@ -430,6 +495,64 @@ static BYTE Do_NETDEV_DETACH(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
+/**
+ * netdev_stop_datapath() - Stop the hardware under an attached stack.
+ * @unit: the unit, online.
+ *
+ * The doorbell for a batch the stack staged but did not kick goes first,
+ * while the DMA still runs — otherwise those frames would be completed as
+ * dropped without reaching the wire (the stack normally kicks at the unlock
+ * before STOP, so this is a backstop). Once the DMA is off, every TX cookie
+ * still queued is completed, so the stack's memory accounting closes.
+ */
+static void netdev_stop_datapath(struct GenetUnit *unit)
+{
+    bcmgenet_netdev_tx_kick(unit);
+    UnitOffline(unit); /* quiesces DMA, returns ring buffers to the pool */
+    bcmgenet_netdev_tx_quiesce(unit);
+}
+
+/**
+ * netdev_force_detach() - Drop the attachment of a stack that never sent
+ * NETDEV_CMD_DETACH, so that nothing calls back into it.
+ * @unit: the unit.
+ *
+ * The last close while still attached: UnitClose() calls it in the closing
+ * task, before it stops the unit task, and netdev_force_stop() once the task
+ * is gone.
+ */
+void netdev_force_detach(struct GenetUnit *unit)
+{
+    unit->ndStarted = FALSE;
+    unit->ndStackOps = NULL;
+    unit->ndStackCtx = NULL;
+    unit->ndOwnerPort = NULL;
+}
+
+/**
+ * netdev_force_stop() - Stop the datapath a forced detach left running, and
+ * free what the attachment allocated.
+ * @unit: the unit, its task stopped.
+ *
+ * Runs in the closing task after UnitTaskStop(), so the rings and the pool
+ * have no other user. With no stack left, the quiesce retires the queued TX
+ * cookies silently. The datapath is stopped only when the unit is
+ * STATE_ONLINE; the RX pool, the TX status blocks and the rings go either way,
+ * as at NETDEV_CMD_DETACH.
+ */
+void netdev_force_stop(struct GenetUnit *unit)
+{
+    if (unit->state == STATE_ONLINE)
+        netdev_stop_datapath(unit);
+    netdev_teardown_pool(unit);
+}
+
+/**
+ * Do_NETDEV_START() - NETDEV_CMD_START: bring the hardware up and open the datapath gate.
+ * @unit: the unit.
+ *
+ * Return: 0, also when started already; NDERR_NOTATTACHED, NDERR_NOMEM when the start failed.
+ */
 static BYTE Do_NETDEV_START(struct GenetUnit *unit)
 {
     if (unit->ndStackOps == NULL)
@@ -437,6 +560,7 @@ static BYTE Do_NETDEV_START(struct GenetUnit *unit)
     if (unit->ndStarted)
         return 0;
 
+    unit->rxAlign2 = FALSE; /* the frame right behind the RSB: the buffer itself goes up */
     u32 result = UnitOnline(unit);
     if (result != GENET_OK)
         return NDERR_NOMEM;
@@ -444,11 +568,18 @@ static BYTE Do_NETDEV_START(struct GenetUnit *unit)
     unit->ndStarted = TRUE;
     /* Forced: the ABI promises one link callback shortly after START carrying
      * the current state, and a start with no cable changes nothing that
-     * netdev_link_update() would otherwise report. */
-    netdev_link_update(unit, unit->phydev != NULL && unit->phydev->link, TRUE);
+     * bcmgenet_link_publish() would otherwise report. */
+    bcmgenet_link_publish(unit, unit->phydev != NULL && unit->phydev->link, TRUE);
     return 0;
 }
 
+/**
+ * Do_NETDEV_STOP() - NETDEV_CMD_STOP: close the datapath gate, take the hardware down, and complete every TX cookie.
+ * @unit: the unit.
+ * @io: the request.
+ *
+ * Return: 0, also when stopped already; NDERR_NOTATTACHED, NDERR_BUSY for another opener.
+ */
 static BYTE Do_NETDEV_STOP(struct GenetUnit *unit, struct IOStdReq *io)
 {
     if (unit->ndStackOps == NULL)
@@ -462,11 +593,18 @@ static BYTE Do_NETDEV_STOP(struct GenetUnit *unit, struct IOStdReq *io)
      * point does nothing, and bcmgenet_netdev_tx_quiesce() waits out any that
      * passed it before. */
     unit->ndStarted = FALSE;
-    UnitOffline(unit); /* quiesces DMA, returns ring buffers, completes TX cookies */
-    netdev_link_update(unit, FALSE, FALSE);
+    netdev_stop_datapath(unit);
+    bcmgenet_link_publish(unit, FALSE, FALSE);
     return 0;
 }
 
+/**
+ * Do_NETDEV_SET_RXFILTER() - NETDEV_CMD_SET_RXFILTER: the reception filter, exact-match multicast or promiscuous.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevRxFilter.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short filter or a list it does not point to, NDERR_NOTATTACHED.
+ */
 static BYTE Do_NETDEV_SET_RXFILTER(struct GenetUnit *unit, struct IOStdReq *io)
 {
     const struct NetDevRxFilter *filter = io->io_Data;
@@ -504,13 +642,22 @@ static BYTE Do_NETDEV_SET_RXFILTER(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
+/**
+ * Do_NETDEV_SET_COALESCE() - NETDEV_CMD_SET_COALESCE: store interrupt moderation, and program it on a running unit.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevCoalesce, 0 for a driver default.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short request or a value the hardware cannot take, NDERR_NOTATTACHED while nobody holds the unit.
+ */
 static BYTE Do_NETDEV_SET_COALESCE(struct GenetUnit *unit, struct IOStdReq *io)
 {
     const struct NetDevCoalesce *coal = io->io_Data;
 
     if (coal == NULL || io->io_Length < sizeof(struct NetDevCoalesce))
         return NDERR_BADPARAMS;
-    if (unit->ndStackOps == NULL)
+    /* the hardware's, whichever stack holds the unit: netdev-stats tunes a
+     * SANA-II stack's interrupts too */
+    if (unit->ndStackOps == NULL && !sana2_holds_unit(unit->s2))
         return NDERR_NOTATTACHED;
 
     /* 0 = keep the driver default */
@@ -535,8 +682,16 @@ static BYTE Do_NETDEV_SET_COALESCE(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
-/* Frequent by design - the stack follows its conversations - so it is quiet
- * and touches the RX half only. */
+/**
+ * Do_NETDEV_SET_RX_PROFILE() - NETDEV_CMD_SET_RX_PROFILE: the stack's RX intent, which picks the RX moderation.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevRxProfile.
+ *
+ * Frequent by design - the stack follows its conversations - so it is quiet
+ * and touches the RX half only.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short request or an unknown profile, NDERR_NOTATTACHED.
+ */
 static BYTE Do_NETDEV_SET_RX_PROFILE(struct GenetUnit *unit, struct IOStdReq *io)
 {
     const struct NetDevRxProfile *prof = io->io_Data;
@@ -557,6 +712,13 @@ static BYTE Do_NETDEV_SET_RX_PROFILE(struct GenetUnit *unit, struct IOStdReq *io
     return 0;
 }
 
+/**
+ * Do_NETDEV_GET_STATS() - NETDEV_CMD_GET_STATS: the portable counters.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevStats.
+ *
+ * Return: 0, or NDERR_BADPARAMS for a short request.
+ */
 static BYTE Do_NETDEV_GET_STATS(struct GenetUnit *unit, struct IOStdReq *io)
 {
     struct NetDevStats *stats = io->io_Data;
@@ -600,9 +762,15 @@ static BYTE Do_NETDEV_GET_STATS(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
-/*
+/**
+ * Do_NETDEV_GET_COUNTERS() - NETDEV_CMD_GET_COUNTERS: every counter by name, sized in two calls.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevCounterSet.
+ *
  * The self-describing counter list: everything NetDevStats has no field for.
  * Two-call sizing — ndcs_Max 0 probes for ndcs_Count without a buffer.
+ *
+ * Return: 0, or NDERR_BADPARAMS when the set does not fit io_Length.
  */
 static BYTE Do_NETDEV_GET_COUNTERS(struct GenetUnit *unit, struct IOStdReq *io)
 {
@@ -623,6 +791,13 @@ static BYTE Do_NETDEV_GET_COUNTERS(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
+/**
+ * Do_NETDEV_GET_LINK() - NETDEV_CMD_GET_LINK: the link as last published.
+ * @unit: the unit.
+ * @io: the request; io_Data is the NetDevLinkState.
+ *
+ * Return: 0, or NDERR_BADPARAMS for a short request.
+ */
 static BYTE Do_NETDEV_GET_LINK(struct GenetUnit *unit, struct IOStdReq *io)
 {
     struct NetDevLinkState *link = io->io_Data;
@@ -630,16 +805,23 @@ static BYTE Do_NETDEV_GET_LINK(struct GenetUnit *unit, struct IOStdReq *io)
     if (link == NULL || io->io_Length < sizeof(struct NetDevLinkState))
         return NDERR_BADPARAMS;
 
-    *link = unit->ndLink;
+    *link = unit->linkState;
     io->io_Actual = sizeof(struct NetDevLinkState);
     return 0;
 }
 
+/**
+ * Do_NETDEV_SET_MAC() - NETDEV_CMD_SET_MAC: the station address for the next start.
+ * @unit: the unit.
+ * @io: the request; io_Data is the address.
+ *
+ * Return: 0; NDERR_BADPARAMS for a short request or a running unit, NDERR_BUSY for another opener or while SANA-II holds the unit.
+ */
 static BYTE Do_NETDEV_SET_MAC(struct GenetUnit *unit, struct IOStdReq *io)
 {
     if (io->io_Data == NULL || io->io_Length < sizeof(unit->currentMacAddress))
         return NDERR_BADPARAMS;
-    if (!netdev_is_owner(unit, io))
+    if (!netdev_is_owner(unit, io) || sana2_holds_unit(unit->s2))
         return NDERR_BUSY;
     if (unit->state == STATE_ONLINE)
         return NDERR_BADPARAMS; /* set before START; applied by UMAC bring-up */
@@ -655,94 +837,46 @@ static BYTE Do_NETDEV_SET_MAC(struct GenetUnit *unit, struct IOStdReq *io)
     return 0;
 }
 
-/* ----------------------------------------------------------- NSD + dispatch --- */
+/* --------------------------------------------------------------- dispatch --- */
 
-static const UWORD GENET_SupportedCommands[] = {
-    NETDEV_CMD_ATTACH,
-    NETDEV_CMD_DETACH,
-    NETDEV_CMD_START,
-    NETDEV_CMD_STOP,
-    NETDEV_CMD_SET_RXFILTER,
-    NETDEV_CMD_SET_COALESCE,
-    NETDEV_CMD_SET_RX_PROFILE,
-    NETDEV_CMD_GET_STATS,
-    NETDEV_CMD_GET_COUNTERS,
-    NETDEV_CMD_GET_LINK,
-    NETDEV_CMD_SET_MAC,
-    NSCMD_DEVICEQUERY,
-    0};
-
-static BYTE Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
+/**
+ * netdev_process_command() - Carry out a netdev control command from the
+ * unit port.
+ * @unit: the unit.
+ * @io: the request.
+ *
+ * Unit task (ProcessCommand(), which sets io_Error and replies).
+ *
+ * Return: the io_Error to set: 0, the handler's NDERR_* code, or IOERR_NOCMD
+ * for a command not in the netdev ABI.
+ */
+BYTE netdev_process_command(struct GenetUnit *unit, struct IOStdReq *io)
 {
-    struct NSDeviceQueryResult *dq = io->io_Data;
-
-    if (dq == NULL)
-        return NDERR_BADPARAMS;
-
-    dq->nsdqr_SizeAvailable = sizeof(struct NSDeviceQueryResult);
-    if (io->io_Length < dq->nsdqr_SizeAvailable)
-        return IOERR_BADLENGTH;
-
-    dq->nsdqr_DevQueryFormat = 0; /* the only format NSD defines */
-    /* No NSD device type describes a netdev NIC, and NSDEVTYPE_SANA2 would be a
-     * lie — no SANA-II command works here. The command list is the answer. */
-    dq->nsdqr_DeviceType = NSDEVTYPE_UNKNOWN;
-    dq->nsdqr_DeviceSubType = 0;
-    dq->nsdqr_SupportedCommands = (UWORD *)GENET_SupportedCommands;
-    io->io_Actual = dq->nsdqr_SizeAvailable;
-    return 0;
-}
-
-void ProcessCommand(struct IOStdReq *io)
-{
-    struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
-    struct ExecBase *SysBase = unit->sysBase;
-    BYTE error;
-
     switch (io->io_Command)
     {
-    case NSCMD_DEVICEQUERY:
-        error = Do_NSCMD_DEVICEQUERY(io);
-        break;
     case NETDEV_CMD_ATTACH:
-        error = Do_NETDEV_ATTACH(unit, io);
-        break;
+        return Do_NETDEV_ATTACH(unit, io);
     case NETDEV_CMD_DETACH:
-        error = Do_NETDEV_DETACH(unit, io);
-        break;
+        return Do_NETDEV_DETACH(unit, io);
     case NETDEV_CMD_START:
-        error = Do_NETDEV_START(unit);
-        break;
+        return Do_NETDEV_START(unit);
     case NETDEV_CMD_STOP:
-        error = Do_NETDEV_STOP(unit, io);
-        break;
+        return Do_NETDEV_STOP(unit, io);
     case NETDEV_CMD_SET_RXFILTER:
-        error = Do_NETDEV_SET_RXFILTER(unit, io);
-        break;
+        return Do_NETDEV_SET_RXFILTER(unit, io);
     case NETDEV_CMD_SET_COALESCE:
-        error = Do_NETDEV_SET_COALESCE(unit, io);
-        break;
+        return Do_NETDEV_SET_COALESCE(unit, io);
     case NETDEV_CMD_SET_RX_PROFILE:
-        error = Do_NETDEV_SET_RX_PROFILE(unit, io);
-        break;
+        return Do_NETDEV_SET_RX_PROFILE(unit, io);
     case NETDEV_CMD_GET_STATS:
-        error = Do_NETDEV_GET_STATS(unit, io);
-        break;
+        return Do_NETDEV_GET_STATS(unit, io);
     case NETDEV_CMD_GET_COUNTERS:
-        error = Do_NETDEV_GET_COUNTERS(unit, io);
-        break;
+        return Do_NETDEV_GET_COUNTERS(unit, io);
     case NETDEV_CMD_GET_LINK:
-        error = Do_NETDEV_GET_LINK(unit, io);
-        break;
+        return Do_NETDEV_GET_LINK(unit, io);
     case NETDEV_CMD_SET_MAC:
-        error = Do_NETDEV_SET_MAC(unit, io);
-        break;
+        return Do_NETDEV_SET_MAC(unit, io);
     default:
-        error = IOERR_NOCMD;
-        break;
+        return IOERR_NOCMD;
     }
-
-    io->io_Error = error;
-    if (!(io->io_Flags & IOF_QUICK))
-        ReplyMsg(&io->io_Message);
 }

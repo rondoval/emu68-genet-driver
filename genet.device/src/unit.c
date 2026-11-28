@@ -13,11 +13,16 @@
 
 #include <debug.h>
 #include <device.h>
+#include <sana2_unit.h>
 #include <bcm_gpio.h>
 #include <memory.h>
 #include <minlist.h>
 #include <runtime_config.h>
 
+/**
+ * SetupMDIO() - Route the MDIO bus's pins to GENET.
+ * @unit: the unit.
+ */
 static void SetupMDIO(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Setting up MDIO bus\n", __func__);
@@ -27,6 +32,10 @@ static void SetupMDIO(struct GenetUnit *unit)
 	gpioSetPull(unit->gpioBase, PIN_RGMII_MDC, GPIO_PULL_DOWN);
 }
 
+/**
+ * SetupRGMII() - Route the RGMII pins to GENET, with their pulls.
+ * @unit: the unit.
+ */
 static void SetupRGMII(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Setting up RGMII bus\n", __func__);
@@ -42,6 +51,14 @@ static void SetupRGMII(struct GenetUnit *unit)
 	}
 }
 
+/**
+ * UnitOpen() - Open the unit: count one more open, or set the first one up.
+ * @unit: the unit.
+ * @unitNumber: the unit's number, the device tree's ethernetN.
+ * @flags: the OpenDevice() flags; unused.
+ *
+ * Return: GENET_OK, or the error of the step that failed (ENOMEM, DevTreeParse()'s, UnitTaskStart()'s), with everything undone.
+ */
 u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags)
 {
 	struct ExecBase *SysBase = unit->sysBase;
@@ -82,6 +99,21 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags)
 		result = ENOMEM;
 		goto fail;
 	}
+	/* From the unit's pool: nothing else uses it until the unit task starts.
+	 * Freed at the last close (UnitClose), or below on failure. */
+	unit->s2 = pool_zalloc(unit->metaPool, sizeof(struct GenetS2));
+	if (unit->s2 == NULL)
+	{
+		Kprintf("[genet] %s: no memory for the SANA-II state\n", __func__);
+		result = ENOMEM;
+		goto fail;
+	}
+	_NewMinList(&unit->s2->openers);
+	_NewMinList(&unit->s2->issued);
+	_NewMinList(&unit->s2->txBacklog);
+	_NewMinList(&unit->s2->onlineWaiters);
+	_NewMinList(&unit->s2->multicastRanges);
+
 	result = DevTreeParse(unit);
 	if (result != GENET_OK)
 	{
@@ -102,6 +134,11 @@ u32 UnitOpen(struct GenetUnit *unit, u32 unitNumber, u32 flags)
 	return GENET_OK;
 
 fail:
+	if (unit->s2 != NULL)
+	{
+		pool_free(unit->metaPool, unit->s2);
+		unit->s2 = NULL;
+	}
 	if (unit->dmaPool)
 	{
 		dma_pool_delete(unit->dmaPool);
@@ -115,6 +152,12 @@ fail:
 	return result;
 }
 
+/**
+ * UnitConfigure() - Bring the hardware up: the pins, then the UMAC and the PHY.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or bcmgenet_eth_probe()'s error.
+ */
 u32 UnitConfigure(struct GenetUnit *unit)
 {
 	SetupMDIO(unit);
@@ -132,6 +175,12 @@ u32 UnitConfigure(struct GenetUnit *unit)
 	return GENET_OK;
 }
 
+/**
+ * UnitOnline() - Start the UMAC and the DMA.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or bcmgenet_gmac_eth_start()'s error, the start undone.
+ */
 u32 UnitOnline(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: About to start UMAC\n", __func__);
@@ -149,6 +198,10 @@ u32 UnitOnline(struct GenetUnit *unit)
 	return GENET_OK;
 }
 
+/**
+ * UnitOffline() - Stop the UMAC and the DMA; the unit stays configured.
+ * @unit: the unit.
+ */
 void UnitOffline(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Stopping UMAC\n", __func__);
@@ -156,6 +209,12 @@ void UnitOffline(struct GenetUnit *unit)
 	unit->state = STATE_CONFIGURED;
 }
 
+/**
+ * UnitClose() - Close the unit: count one open less, and take everything down at the last.
+ * @unit: the unit.
+ *
+ * Return: the opens left.
+ */
 u32 UnitClose(struct GenetUnit *unit)
 {
 	struct ExecBase *SysBase = unit->sysBase;
@@ -172,16 +231,24 @@ u32 UnitClose(struct GenetUnit *unit)
 		 * this point writes through freed memory - nothing the driver can
 		 * defend against. Drop the attachment so at least no callback goes
 		 * out to a stack that is already gone, and say so. */
-		if (unit->ndStackOps != NULL)
+		BOOL forced = unit->ndStackOps != NULL;
+		if (forced)
 		{
 			Kprintf("[genet] %s: closed while attached (%lu RX buffers still out) - forcing detach\n",
 					__func__, (ULONG)unit->ndRxHeld);
-			unit->ndStarted = FALSE;
-			unit->ndStackOps = NULL;
-			unit->ndStackCtx = NULL;
-			unit->ndOwnerPort = NULL;
+			netdev_force_detach(unit);
 		}
 
+		/* The task goes first: stopping it drains the unit port, where the
+		 * closing opener's removal waits - a SANA-II holder's release, which
+		 * takes the hardware down on the task that owns it. Whatever is still
+		 * running after that stops here, with the rings to itself; the PHY
+		 * goes last, since the task's link handling dereferences it. */
+		UnitTaskStop(unit);
+		if (forced)
+		{
+			netdev_force_stop(unit);
+		}
 		if (unit->state == STATE_ONLINE)
 		{
 			UnitOffline(unit);
@@ -190,7 +257,9 @@ u32 UnitClose(struct GenetUnit *unit)
 		{
 			bcmgenet_eth_unconfigure(unit);
 		}
-		UnitTaskStop(unit);
+		sana2_multicast_clear(unit);
+		pool_free(unit->metaPool, unit->s2);
+		unit->s2 = NULL;
 		dma_pool_delete(unit->dmaPool);
 		unit->dmaPool = NULL;
 		DeletePool(unit->metaPool);

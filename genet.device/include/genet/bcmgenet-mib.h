@@ -38,4 +38,8 @@ void bcmgenet_mib_rbuf_ovfl_rebase(struct GenetUnit *unit);
 /* Sum of the UniMAC transmit-error counters, for NetDevStats' nds_TxErrors. */
 u32 bcmgenet_mib_tx_errors(struct GenetUnit *unit);
 
+/* One UniMAC MIB register, raw (UMAC_MIB_* or a misc counter offset; never
+ * the RBUF overflow register, which goes through bcmgenet_mib_rbuf_ovfl). */
+u32 bcmgenet_mib_read(struct GenetUnit *unit, u16 reg);
+
 #endif /* _GENET_BCMGENET_MIB_H */

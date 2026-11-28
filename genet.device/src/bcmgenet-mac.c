@@ -66,11 +66,15 @@ void bcmgenet_umac_reset(struct GenetUnit *unit)
 	 *
 	 * Status blocks on, both directions: RX frames arrive with a 64-byte
 	 * RSB (RXCHK checksum), TX frames carry a 64-byte TSB (checksum
-	 * offload parameters). ALIGN_2B is deliberately OFF with the RSB: the
-	 * 2-byte IP-alignment pad would make the frame offset 66. */
+	 * offload parameters). ALIGN_2B adds the 2-byte IP-alignment pad behind
+	 * the RSB, making the frame offset 66: only when the unit's holder asks
+	 * for it (unit->rxAlign2). */
 	u32 reg = mmio_read32(BCMGENET_REG(unit, RBUF_CTRL));
 	reg |= RBUF_64B_EN;
-	reg &= ~(u32)RBUF_ALIGN_2B;
+	if (unit->rxAlign2)
+		reg |= RBUF_ALIGN_2B;
+	else
+		reg &= ~(u32)RBUF_ALIGN_2B;
 	mmio_write32(reg, BCMGENET_REG(unit, RBUF_CTRL));
 
 	mmio_write32(TBUF_64B_EN, BCMGENET_REG(unit, TBUF_CTRL));

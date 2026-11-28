@@ -10,11 +10,15 @@
 #endif
 
 #include <dos/dos.h>
+#include <devices/newstyle.h>
+#include <devices/timer.h>
+#include <exec/errors.h>
 
 #include <genet/bcmgenet.h>
 #include <genet/bcmgenet-regs.h>
 #include <genet/bcmgenet-irq.h>
 #include <device.h>
+#include <sana2_unit.h>
 #include <minlist.h>
 #include <debug.h>
 #include <iomem.h>
@@ -28,10 +32,123 @@
  * only matters under abuse; if hit, the loop re-signals to finish next wakeup. */
 #define CMD_DRAIN_MAX 64u
 
-/*
- * The unit task: netdev command processing, interrupt bottom half (RX
- * delivery, TX-done), periodic housekeeping. It is the ONLY context that
- * calls the stack's nso_* callbacks.
+/* ---------------------------------------------------------- commands --- */
+
+/* Both personalities' commands: a stack decides which ABI to speak by
+ * NETDEV_CMD_ATTACH in this list, never by the device type. */
+static const UWORD GENET_SupportedCommands[] = {
+    NETDEV_CMD_ATTACH,
+    NETDEV_CMD_DETACH,
+    NETDEV_CMD_START,
+    NETDEV_CMD_STOP,
+    NETDEV_CMD_SET_RXFILTER,
+    NETDEV_CMD_SET_COALESCE,
+    NETDEV_CMD_SET_RX_PROFILE,
+    NETDEV_CMD_GET_STATS,
+    NETDEV_CMD_GET_COUNTERS,
+    NETDEV_CMD_GET_LINK,
+    NETDEV_CMD_SET_MAC,
+    CMD_READ,
+    CMD_WRITE,
+    CMD_FLUSH,
+    S2_DEVICEQUERY,
+    S2_GETSTATIONADDRESS,
+    S2_CONFIGINTERFACE,
+    S2_ADDMULTICASTADDRESS,
+    S2_DELMULTICASTADDRESS,
+    S2_MULTICAST,
+    S2_BROADCAST,
+    S2_GETSPECIALSTATS,
+    S2_GETGLOBALSTATS,
+    S2_ONEVENT,
+    S2_READORPHAN,
+    S2_ONLINE,
+    S2_OFFLINE,
+    S2_ADDMULTICASTADDRESSES,
+    S2_DELMULTICASTADDRESSES,
+    S2_GETEXTENDEDGLOBALSTATS,
+    S2_SAMPLE_THROUGHPUT,
+    NSCMD_DEVICEQUERY,
+    0};
+
+/**
+ * Do_NSCMD_DEVICEQUERY() - NSCMD_DEVICEQUERY: fill the caller's
+ * NSDeviceQueryResult.
+ * @io: the request; io_Data is the NSDeviceQueryResult, io_Length its size.
+ *
+ * Return: 0, with io_Actual set; IOERR_BADADDRESS for no io_Data,
+ * IOERR_BADLENGTH when io_Length is short of the structure.
+ */
+static BYTE Do_NSCMD_DEVICEQUERY(struct IOStdReq *io)
+{
+    struct NSDeviceQueryResult *dq = io->io_Data;
+
+    if (dq == NULL)
+        return IOERR_BADADDRESS;
+
+    dq->nsdqr_SizeAvailable = sizeof(struct NSDeviceQueryResult);
+    if (io->io_Length < dq->nsdqr_SizeAvailable)
+        return IOERR_BADLENGTH;
+
+    dq->nsdqr_DevQueryFormat = 0; /* the only format NSD defines */
+    /* A SANA-II device that also speaks netdev: NSD has no device type for
+     * the latter, and the command list says it. */
+    dq->nsdqr_DeviceType = NSDEVTYPE_SANA2;
+    dq->nsdqr_DeviceSubType = 0;
+    dq->nsdqr_SupportedCommands = (UWORD *)GENET_SupportedCommands;
+    io->io_Actual = dq->nsdqr_SizeAvailable;
+    return 0;
+}
+
+/**
+ * ProcessCommand() - Route a request from the unit port to its personality,
+ * and reply it when it is done.
+ * @io: the request; io_Unit is the unit.
+ *
+ * Unit task. netdev commands and NSCMD_DEVICEQUERY are answered here, with
+ * io_Error from their handler. GENET_CMD_OPENER_CONTROL goes to
+ * sana2_opener_control() and is not replied here. Everything else goes to
+ * sana2_process_command(); a request it keeps (COMMAND_SCHEDULED) is replied
+ * when it completes. A request without IOF_QUICK is replied with ReplyMsg().
+ */
+void ProcessCommand(struct IOStdReq *io)
+{
+    struct GenetUnit *unit = (struct GenetUnit *)io->io_Unit;
+    struct ExecBase *SysBase = unit->sysBase;
+    UWORD cmd = io->io_Command;
+
+    if (NETDEV_IS_CMD(cmd))
+    {
+        io->io_Error = netdev_process_command(unit, io);
+    }
+    else if (cmd == NSCMD_DEVICEQUERY)
+    {
+        io->io_Error = Do_NSCMD_DEVICEQUERY(io);
+    }
+    else if (cmd == GENET_CMD_OPENER_CONTROL)
+    {
+        sana2_opener_control(unit, (struct GenetOpenerControl *)io);
+        return; /* one-way, and possibly freed with its opener */
+    }
+    else if (sana2_process_command(unit, (struct IOSana2Req *)io) == COMMAND_SCHEDULED)
+    {
+        return; /* kept: replied when it completes */
+    }
+
+    if (!(io->io_Flags & IOF_QUICK))
+        ReplyMsg(&io->io_Message);
+}
+
+/* ----------------------------------------------------------- the task --- */
+
+/**
+ * UnitTask() - The unit task: both personalities' commands, the interrupt bottom half and the housekeeping tick.
+ * @unit: the unit.
+ * @parent: the task that spawned it, told when it is up (drv_task_spawn()).
+ *
+ * The unit task: command processing for both personalities, interrupt
+ * bottom half (RX delivery, TX-done), periodic housekeeping. It is the ONLY
+ * context that calls the stack's nso_* callbacks.
  *
  * The datapath is state-driven, not event-driven: every wakeup, whatever
  * woke it, harvests TX and polls RX, then re-arms. That is why the ISR needs
@@ -71,6 +188,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         goto free_signals;
     }
     drv_timer_arm_ms(&tick, GENET_PERIODIC_TASK_MS);
+    unit->timerBase = tick.req->tr_node.io_Device;
 
     unit->task = FindTask(NULL);
     /* Signal parent that Unit task is up and running now */
@@ -93,78 +211,13 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         sigset = Wait(waitMask);
         // KprintfT("[genet] %s: Woke up, sigset=0x%08lx\n", __func__, sigset);
 
-        /*
-         * Datapath. Both halves read the rings rather than replaying ISR
-         * status bits, but they are woken differently on purpose:
-         *
-         *   TX  — harvested on EVERY wakeup. It is lock-free and costs one
-         *         index compare when idle, and completing early only frees
-         *         the stack's memory sooner. Those wakeups are all the TX side
-         *         gets in steady state: the TX-done interrupt stays masked,
-         *         because nothing waits for a completion and an interrupt plus
-         *         a wakeup per lone frame — every request, every ACK — costs
-         *         more than a hundred microseconds apiece. The exception is a
-         *         stack that ndo_TxSubmit answered short: the ABI tells it to
-         *         retry after the next nso_TxDone. The submitter counts those
-         *         calls and signals us; if this pass's harvest had nothing to
-         *         hand back, the hardware is asked for one interrupt.
-         *   RX  — polled only when its own interrupt says so. Handing frames
-         *         up takes the stack's core lock, so the batch size IS the
-         *         lock cadence (see unit->ndRxBatch) and it is also the GRO merge
-         *         window. The hardware coalescer (frames + usecs) is the
-         *         policy that decides when a batch is worth that; draining on
-         *         unrelated wakeups just shreds it into single-frame handups
-         *         that contend with the sending task.
-         */
-        if (likely(unit->state == STATE_ONLINE))
-        {
-            /* Sampled before the harvest, so every refusal counted here
-             * precedes it: cookies delivered below are the nso_TxDone those
-             * callers were told to wait for. A later refusal signals again. */
-            u32 refused = unit->ndTxRefused;
-            ULONG delivered = bcmgenet_tx_harvest(unit);
-            if (unlikely(refused != unit->ndTxRefusedSeen))
-            {
-                unit->ndTxRefusedSeen = refused;
-                if (delivered == 0)
-                    bcmgenet_tx_done_arm(unit);
-            }
-
-            /* Re-arm the RX interrupt the ISR masked. It stays masked while we
-             * are still behind, and the ISR already ACKed, so a writeback that
-             * latched STAT during the drain re-fires on unmask — nothing is
-             * lost. */
-            u32 rearm = 0;
-
-            if (sigset & (1UL << unit->rx_signal))
-            {
-#ifdef PROFILE
-                /* interrupt wakeups only: a poll we signalled ourselves has no stamp */
-                if (unit->gu_RxIrqPending != 0)
-                {
-                    PERF_ADD(&unit->gu_Perf, GP_RX_WAKE, unit->gu_RxIrqPending);
-                    unit->gu_RxIrqPending = 0;
-                }
-#endif
-                /* Poll one negotiated batch. If the ring still held a full
-                 * batch we re-signal to poll again, so TX harvest and commands
-                 * get a turn between batches instead of RX draining the whole
-                 * ring in one hold. */
-                if (likely(bcmgenet_netdev_rx(unit, unit->ndRxBatch) != (s32)unit->ndRxBatch))
-                    rearm |= UMAC_IRQ_RXDMA_DONE;
-                else
-                    Signal(unit->task, 1UL << unit->rx_signal); /* still behind */
-            }
-
-            if (rearm != 0)
-            {
-                /* latency profile: decide from the ring what the next
-                 * interrupt should wait for, before it can fire. */
-                if (unit->rxLadder)
-                    bcmgenet_rx_moderate(unit);
-                bcmgenet_irq0_enable(unit, rearm);
-            }
-        }
+        /* Datapath: every wakeup, whatever woke it (see netdev_service) -
+         * netdev's while a stack is attached and started, SANA-II's while it
+         * has the unit online. */
+        if (likely(unit->ndStarted))
+            netdev_service(unit, sigset);
+        else if (unit->state == STATE_ONLINE)
+            sana2_service(unit, sigset);
 
         // IO queue got a new message
         if (sigset & (1UL << unit->unit.unit_MsgPort.mp_SigBit))
@@ -219,6 +272,7 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
                     bcmgenet_link_poll(unit, TRUE); /* poll: keep the latch, so short drops are seen */
                 }
 
+                sana2_tick(unit);         /* a parked S2_ONLINE's wait for the link */
                 bcmgenet_perf_tick(unit); /* telemetry; compiled out below PROFILE */
             }
 
@@ -233,6 +287,22 @@ static void UnitTask(struct GenetUnit *unit, struct Task *parent)
         }
     } while ((sigset & SIGBREAKF_CTRL_C) == 0);
 
+    /* Whatever reached the unit port after the last pass: an opener's list
+     * change is still made (a removal frees the opener), a request is
+     * answered rather than left waiting for a task that is gone. */
+    struct IOStdReq *pending;
+    while ((pending = (struct IOStdReq *)GetMsg(&unit->unit.unit_MsgPort)) != NULL)
+    {
+        if (pending->io_Command == GENET_CMD_OPENER_CONTROL)
+        {
+            sana2_opener_control(unit, (struct GenetOpenerControl *)pending);
+            continue;
+        }
+        pending->io_Error = IOERR_ABORTED;
+        ReplyMsg(&pending->io_Message);
+    }
+
+    unit->timerBase = NULL;
     drv_timer_close(&tick);
 free_signals:
     /* Reachable before every signal exists — freeing an unallocated -1 (or
@@ -253,6 +323,13 @@ free_signals:
     drv_task_exit(SysBase, &unit->task, parent, unit->task != NULL);
 }
 
+/**
+ * UnitTaskStart() - Start the unit task at the configured priority, and wait until it is up.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK once the task reached its loop; ENOMEM when it could not be
+ * started or its set-up failed.
+ */
 u32 UnitTaskStart(struct GenetUnit *unit)
 {
     struct ExecBase *SysBase = unit->sysBase;
@@ -263,6 +340,10 @@ u32 UnitTaskStart(struct GenetUnit *unit)
                : ENOMEM;
 }
 
+/**
+ * UnitTaskStop() - Stop the unit task and wait until it has gone.
+ * @unit: the unit; the task clears unit->task as it ends.
+ */
 void UnitTaskStop(struct GenetUnit *unit)
 {
     struct ExecBase *SysBase = unit->sysBase;

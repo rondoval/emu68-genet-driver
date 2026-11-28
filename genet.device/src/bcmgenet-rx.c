@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Broadcom GENETv5 — netdev RX datapath: the ring drain that hands frames up to
- * the stack and swaps fresh pool buffers into the descriptors, plus RX ring
- * init.
+ * Broadcom GENETv5 — RX datapath: the ring drain and RX ring init. The buffer
+ * pool the ring draws from is bcmgenet-rxpool.c.
+ *
+ * The drain is one template, bcmgenet_rx_drain(), instantiated once per
+ * personality with the personality as a compile-time constant. Its walk of the
+ * ring - status, errors, the cache maintenance and the re-arm - is the
+ * hardware's and shared; only what happens to a good frame differs. netdev
+ * hands the buffer itself up to the stack and swaps a fresh pool buffer into
+ * the slot; SANA-II copies the frame out to its openers' reads and leaves the
+ * buffer where it is.
  */
 
 #ifdef __INTELLISENSE__
@@ -29,6 +36,7 @@
 #include <timing.h>
 #include <types.h>
 #include <device.h>
+#include <sana2_unit.h>
 
 #include <genet/phy.h>
 #include <genet/unimac.h>
@@ -37,10 +45,26 @@
 #include <genet/bcmgenet-irq.h>
 #include <genet/bcmgenet-priv.h>
 
-/* netdev zero-copy RX: hand completed buffers to the stack and swap fresh
+/* The personality a drain instance serves: a compile-time constant in each
+ * instance, so every test on it folds away and an instance carries its own
+ * path only. */
+enum genet_rx_mode
+{
+	GENET_RX_NETDEV, /* zero-copy: the frame's buffer goes up, a pool buffer takes its slot */
+	GENET_RX_SANA2,	 /* copying: the frame goes to the openers' reads, the buffer stays */
+};
+
+/**
+ * netdev_rx_flush() - Hand a batch of received frames up to the netdev stack.
+ * @unit: the unit.
+ * @batch: the frames' descriptors.
+ * @n: how many.
+ *
+ * netdev zero-copy RX: hand completed buffers to the stack and swap fresh
  * pool buffers into the ring slots. A batch of descriptors per nso_RxInput
  * call; refused or unswappable frames recycle in place (counted). Unit task
- * context only. */
+ * context only.
+ */
 static void netdev_rx_flush(struct GenetUnit *unit, struct NetDevRxDesc *batch, ULONG n)
 {
 	PERF_T0(t_flush);
@@ -55,18 +79,28 @@ static void netdev_rx_flush(struct GenetUnit *unit, struct NetDevRxDesc *batch, 
 	/* backpressure: the tail goes straight back to the pool */
 	for (ULONG i = consumed; i < n; i++)
 	{
-		netdev_rx_push(unit, batch[i].nrd_Cookie);
+		bcmgenet_rx_pool_push(unit, batch[i].nrd_Cookie);
 		unit->internalStats.rx_dropped++;
 	}
 }
 
-s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
+/**
+ * bcmgenet_rx_drain() - Take the frames the RX DMA has completed, for the personality @mode serves.
+ * @unit: the unit.
+ * @limit: the most frames to take.
+ * @mode: the personality: netdev's zero-copy or SANA-II's copy.
+ *
+ * Return: the frames taken, or -EAGAIN when the ring had none.
+ */
+static inline __attribute__((always_inline)) s32 bcmgenet_rx_drain(struct GenetUnit *unit, u16 limit,
+																	const enum genet_rx_mode mode)
 {
 	struct ExecBase *SysBase = unit->sysBase;
-	/* Released buffers become swap candidates before anything else — this
-	 * runs on every unit-task wakeup, so the pool is replenished (and the
+	/* netdev: released buffers become swap candidates before anything else —
+	 * this runs on every unit-task wakeup, so the pool is replenished (and the
 	 * re-arm cache maintenance paid) even on a tick with no traffic. */
-	netdev_drain_recycle(unit);
+	if (mode == GENET_RX_NETDEV)
+		netdev_drain_recycle(unit);
 
 	u32 rx_prod_reg = mmio_read32(BCMGENET_REG(unit, RDMA_PROD_INDEX));
 	u16 discards = (u16)((rx_prod_reg >> DMA_P_INDEX_DISCARD_CNT_SHIFT) & DMA_P_INDEX_DISCARD_CNT_MASK);
@@ -96,7 +130,7 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 	}
 
 	PERF_T0(t_drain);
-	struct NetDevRxDesc *batch = unit->ndRxBatchDescs; /* ndRxBatch entries, ATTACH-allocated */
+	struct NetDevRxDesc *batch = unit->ndRxBatchDescs; /* netdev: ndRxBatch entries, ATTACH-allocated */
 	ULONG batched = 0;
 
 	u16 rx_cons_index = unit->rx_ring.rx_cons_index;
@@ -117,8 +151,8 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 	 * re-arm stores are relaxed as well: the barrier before RDMA_CONS_INDEX,
 	 * the write that hands the slots back to the DMA, orders them (iomem.h,
 	 * rule 1). Every drop - error, oversize, !ndStarted, pool-dry - keeps its
-	 * buffer, reads nothing and re-arms through the recycle path's pre-DMA
-	 * clean, so it needs no invalidate, as before.
+	 * buffer and reads nothing, so it needs no invalidate: the buffer was
+	 * cleaned before it entered the ring (the pool, or netdev's recycle path).
 	 */
 	struct
 	{
@@ -176,33 +210,46 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 			continue;
 		} /* error packet */
 
-		if (unlikely(length <= GENET_STATUS64_LEN))
+		if (mode == GENET_RX_NETDEV)
 		{
+			if (unlikely(length <= GENET_STATUS64_LEN))
+			{
+				unit->internalStats.rx_length_errors++;
+				continue;
+			}
+		}
+		else if (unlikely(length < S2_RX_FRAME_OFFSET + ETH_HLEN))
+		{
+			/* SANA-II reads the header: a frame has to have one */
 			unit->internalStats.rx_length_errors++;
 			continue;
 		}
 
-		if (unlikely(!unit->ndStarted))
-			continue;
+		APTR fresh = NULL;
+		if (mode == GENET_RX_NETDEV)
+		{
+			if (unlikely(!unit->ndStarted))
+				continue;
 
-		APTR fresh = netdev_rx_pop(unit);
-		if (unlikely(fresh == NULL))
-		{
-			/* Pool dry — usually releases parked in the recycle ring:
-			 * on one CPU the app frees buffers whenever we block on
-			 * ns_Core mid-flush, after this pass's entry drain. Reclaim
-			 * and retry before declaring a drop, since pool-dry from parked
-			 * releases dominates genuine ring overrun. */
-			netdev_drain_recycle(unit);
-			fresh = netdev_rx_pop(unit);
-		}
-		if (unlikely(fresh == NULL))
-		{
-			/* genuinely exhausted: keep the buffer in the ring, drop
-			 * the frame (the peer is window-limited anyway) */
-			unit->internalStats.rx_dropped++;
-			unit->internalStats.rx_pool_dry++;
-			continue;
+			fresh = bcmgenet_rx_pool_pop(unit);
+			if (unlikely(fresh == NULL))
+			{
+				/* Pool dry — usually releases parked in the recycle ring:
+				 * on one CPU the app frees buffers whenever we block on
+				 * ns_Core mid-flush, after this pass's entry drain. Reclaim
+				 * and retry before declaring a drop, since pool-dry from parked
+				 * releases dominates genuine ring overrun. */
+				netdev_drain_recycle(unit);
+				fresh = bcmgenet_rx_pool_pop(unit);
+			}
+			if (unlikely(fresh == NULL))
+			{
+				/* genuinely exhausted: keep the buffer in the ring, drop
+				 * the frame (the peer is window-limited anyway) */
+				unit->internalStats.rx_dropped++;
+				unit->internalStats.rx_pool_dry++;
+				continue;
+			}
 		}
 
 		u8 *addr = (u8 *)rx_cb->data_buffer;
@@ -210,9 +257,12 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 		scan[k].ls = ls;
 		scan[k].addr = addr;
 
-		/* the buffer leaves the ring: swap the slot */
-		rx_cb->data_buffer = (dma_addr_t)fresh;
-		mmio_write32_relaxed((u32)(dma_addr_t)fresh, desc_base + DMA_DESC_ADDRESS_LO);
+		if (mode == GENET_RX_NETDEV)
+		{
+			/* the buffer leaves the ring: swap the slot */
+			rx_cb->data_buffer = (dma_addr_t)fresh;
+			mmio_write32_relaxed((u32)(dma_addr_t)fresh, desc_base + DMA_DESC_ADDRESS_LO);
+		}
 	}
 	emu68_barrier(); /* the one dsb: every invalidate above is complete, buffer bytes may be read from here on */
 	PERF_ADD(&unit->gu_Perf, GP_RX_SCAN, t_scan);
@@ -225,42 +275,80 @@ s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
 		u8 *addr = scan[k].addr;
 		u32 length = (ls >> DMA_BUFLENGTH_SHIFT) & DMA_BUFLENGTH_MASK;
 
-		/* The 64-byte RSB precedes the frame. RXCHK's result (L3
-		 * parser off) is the PLAIN 1's-complement sum over the frame
-		 * past the Ethernet header, in the low half of the LE word.
-		 * The halfword needs NO further swap. Zero
-		 * means the block produced no result: pass the frame up
-		 * unvalidated (the Ethernet FCS covered the wire). The OK/FR
-		 * bits are L3-parser-only and stay clear in this mode. */
-		const struct genet_status_64 *rsb = (const struct genet_status_64 *)addr;
-		u16 rx_csum = (u16)le32(rsb->rx_csum);
-
-		struct NetDevRxDesc *d = &batch[batched++];
-		d->nrd_Data = addr + GENET_STATUS64_LEN;
-		d->nrd_Len = length - GENET_STATUS64_LEN;
-		d->nrd_Flags = (rx_csum != 0) ? NDRF_CSUM_RAW : 0;
-		d->nrd_CsumRaw = rx_csum;
-		d->nrd_Cookie = addr;
-
-		if (batched == unit->ndRxBatch)
+		if (mode == GENET_RX_NETDEV)
 		{
-			netdev_rx_flush(unit, batch, batched);
-			batched = 0;
+			/* The 64-byte RSB precedes the frame. RXCHK's result (L3
+			 * parser off) is the PLAIN 1's-complement sum over the frame
+			 * past the Ethernet header, in the low half of the LE word.
+			 * The halfword needs NO further swap. Zero
+			 * means the block produced no result: pass the frame up
+			 * unvalidated (the Ethernet FCS covered the wire). The OK/FR
+			 * bits are L3-parser-only and stay clear in this mode. */
+			const struct genet_status_64 *rsb = (const struct genet_status_64 *)addr;
+			u16 rx_csum = (u16)le32(rsb->rx_csum);
+
+			struct NetDevRxDesc *d = &batch[batched++];
+			d->nrd_Data = addr + GENET_STATUS64_LEN;
+			d->nrd_Len = length - GENET_STATUS64_LEN;
+			d->nrd_Flags = (rx_csum != 0) ? NDRF_CSUM_RAW : 0;
+			d->nrd_CsumRaw = rx_csum;
+			d->nrd_Cookie = addr;
+
+			if (batched == unit->ndRxBatch)
+			{
+				netdev_rx_flush(unit, batch, batched);
+				batched = 0;
+			}
+		}
+		else
+		{
+			/* the length counts the RSB and the RBUF_ALIGN_2B pad */
+			sana2_receive_frame(unit, addr + S2_RX_FRAME_OFFSET, length - S2_RX_FRAME_OFFSET);
 		}
 	}
 
-	if (batched != 0)
+	if (mode == GENET_RX_NETDEV && batched != 0)
 		netdev_rx_flush(unit, batch, batched);
 
 	rx_cons_index = (u16)((u32)(rx_cons_index + to_process) & DMA_C_INDEX_MASK);
 	unit->rx_ring.rx_cons_index = rx_cons_index;
-	emu68_barrier(); /* the relaxed re-arm stores land before the DMA is handed the slots */
+	emu68_barrier(); /* the relaxed re-arm stores, and every CPU read of a kept buffer, land before the DMA is handed the slots */
 	mmio_write32(rx_cons_index, BCMGENET_REG(unit, RDMA_CONS_INDEX));
 
 	PERF_ADD(&unit->gu_Perf, GP_RX_DRAIN, t_drain);
 	return to_process;
 }
 
+/**
+ * bcmgenet_netdev_rx() - An RX pass for the netdev personality.
+ * @unit: the unit.
+ * @limit: the most frames to take.
+ *
+ * Return: bcmgenet_rx_drain()'s.
+ */
+s32 bcmgenet_netdev_rx(struct GenetUnit *unit, u16 limit)
+{
+	return bcmgenet_rx_drain(unit, limit, GENET_RX_NETDEV);
+}
+
+/**
+ * bcmgenet_sana2_rx() - An RX pass for the SANA-II personality.
+ * @unit: the unit.
+ * @limit: the most frames to take.
+ *
+ * Return: bcmgenet_rx_drain()'s.
+ */
+s32 bcmgenet_sana2_rx(struct GenetUnit *unit, u16 limit)
+{
+	return bcmgenet_rx_drain(unit, limit, GENET_RX_SANA2);
+}
+
+/**
+ * bcmgenet_init_rx_ring() - Give every RX ring slot a pool buffer, and reset the ring's indices.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or ENOMEM when the pool runs out before the ring is full.
+ */
 static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 {
 	KprintfT("[genet] %s: Initializing RX ring\n", __func__);
@@ -273,11 +361,11 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 
 	const u32 len_stat = (RX_BUF_LENGTH << DMA_BUFLENGTH_SHIFT); // | DMA_OWN;
 
-	/* Ring slots draw their buffers from the netdev pool (allocated at
-	 * ATTACH, larger than the ring); the pool must cover the whole ring. */
+	/* Ring slots draw their buffers from the pool (bcmgenet_rx_pool_create),
+	 * which must cover the whole ring. */
 	for (u32 i = 0; i < RX_DESCS; i++)
 	{
-		dma_addr_t buffer = (dma_addr_t)netdev_rx_pop(unit);
+		dma_addr_t buffer = (dma_addr_t)bcmgenet_rx_pool_pop(unit);
 		APTR descriptor_address = desc_base + i * DMA_DESC_SIZE;
 
 		if (buffer == 0)
@@ -309,6 +397,12 @@ static u32 bcmgenet_init_rx_ring(struct GenetUnit *unit)
 	return GENET_OK;
 }
 
+/**
+ * bcmgenet_init_rx_queues() - Set up the RX ring and enable it as a descriptor ring.
+ * @unit: the unit.
+ *
+ * Return: GENET_OK, or bcmgenet_init_rx_ring()'s error.
+ */
 u32 bcmgenet_init_rx_queues(struct GenetUnit *unit)
 {
 	u32 ret = bcmgenet_init_rx_ring(unit);

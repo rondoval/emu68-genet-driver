@@ -1,0 +1,7 @@
+TAP version 12
+# bsdsocktest 0.2.3
+ok 1 - socket(): create SOCK_STREAM (TCP) [BSD 4.4]
+not ok 2 - select(): writable after connect [BSD 4.4]
+not ok 3 - WaitSelect(): signal mask  # KNOWN RS-7: Roadshow clears the mask
+ok 4 - # SKIP no IPv6
+# Results: 2 passed, 1 failed, 1 known, 1 skipped (5 total)

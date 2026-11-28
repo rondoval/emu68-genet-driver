@@ -74,6 +74,12 @@
  * driver neither asks for pause nor honours it - the two halves always agree. */
 #define DEFAULT_FLOW_CONTROL 1
 
+/* Miami DX's CopyFromBuff copies whole longwords, so a SANA-II write's length
+ * is rounded up to a multiple of four for it (the staging slot has the room;
+ * only the frame's own length goes on the wire). Off by default: every other
+ * stack copies exactly. */
+#define DEFAULT_USE_MIAMI_WORKAROUND 0
+
 struct GenetRuntimeConfig
 {
     s8 unit_task_priority;
@@ -82,6 +88,7 @@ struct GenetRuntimeConfig
     u8 link_duplex;  /* DUPLEX_*_CFG; meaningful only with link_speed set */
     u8 link_autoneg; /* 0 forces link_speed/link_duplex outright */
     u8 flow_control;
+    u8 use_miami_workaround;
 };
 
 struct ExecBase;

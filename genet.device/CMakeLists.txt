@@ -36,8 +36,14 @@ add_executable(genet.device
     src/unit.c
     src/unit_task.c
     src/netdev_api.c
+    src/sana2_api.c
+    src/sana2_io.c
+    src/sana2_mcast.c
+    src/sana2_stats.c
+    src/sana2_tx.c
     src/bcmgenet.c
     src/bcmgenet-rx.c
+    src/bcmgenet-rxpool.c
     src/bcmgenet-tx.c
     src/bcmgenet-dma.c
     src/bcmgenet-mac.c
